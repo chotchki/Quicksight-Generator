@@ -38,6 +38,7 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_ACCOUNT_NETWORK,
     DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
+    DS_INV_MONEY_TRAIL_ROOTS,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
@@ -48,9 +49,6 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
-    FG_INV_MONEY_TRAIL_AMOUNT,
-    FG_INV_MONEY_TRAIL_HOPS,
-    FG_INV_MONEY_TRAIL_ROOT,
     FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
@@ -67,12 +65,16 @@ from quicksight_gen.apps.investigation.constants import (
 )
 from quicksight_gen.apps.investigation.datasets import (
     MONEY_TRAIL_CONTRACT,
+    MONEY_TRAIL_ROOTS_CONTRACT,
     RECIPIENT_FANOUT_CONTRACT,
     VOLUME_ANOMALIES_CONTRACT,
     build_all_datasets,
 )
 from quicksight_gen.cli import main
-from quicksight_gen.common.models import SheetVisualScopingConfiguration
+from quicksight_gen.common.models import (
+    IntegerDatasetParameterDefaultValues,
+    SheetVisualScopingConfiguration,
+)
 from tests._test_helpers import make_test_config
 
 
@@ -233,25 +235,29 @@ def test_investigation_datasets_in_expected_order():
     """K.4.3 dataset first, K.4.4 matview-backed dataset second,
     Y.1.b.companion distribution dataset third (no σ pushdown — for
     the unfiltered distribution chart), K.4.5 money-trail matview
-    dataset fourth, K.4.8 account-network wrapper fifth, K.4.8k
-    narrow accounts dataset sixth. M.4.4.5 appended the 2 App Info
-    datasets last. Order matters — analysis.py's
-    DataSetIdentifierDeclarations zip relies on it."""
+    dataset fourth, Y.2.a.companion roots dataset fifth (no parameter
+    pushdown — feeds only the chain-root dropdown), K.4.8
+    account-network wrapper sixth, K.4.8k narrow accounts dataset
+    seventh. M.4.4.5 appended the 2 App Info datasets last. Order
+    matters — analysis.py's DataSetIdentifierDeclarations zip relies
+    on it."""
     datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
-    assert len(datasets) == 8
+    assert len(datasets) == 9
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
     assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-distribution-dataset")
     assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
-    assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
-    assert datasets[5].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
-    assert datasets[6].DataSetId == _TEST_CFG.prefixed("inv-app-info-liveness-dataset")
-    assert datasets[7].DataSetId == _TEST_CFG.prefixed("inv-app-info-matviews-dataset")
+    assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-money-trail-roots-dataset")
+    assert datasets[5].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
+    assert datasets[6].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
+    assert datasets[7].DataSetId == _TEST_CFG.prefixed("inv-app-info-liveness-dataset")
+    assert datasets[8].DataSetId == _TEST_CFG.prefixed("inv-app-info-matviews-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():
-    """6 content datasets + the 2 M.4.4.5 App Info datasets.
-    Y.1.b.companion added DS_INV_VOLUME_ANOMALIES_DISTRIBUTION."""
+    """7 content datasets + the 2 M.4.4.5 App Info datasets.
+    Y.1.b.companion added DS_INV_VOLUME_ANOMALIES_DISTRIBUTION;
+    Y.2.a.companion added DS_INV_MONEY_TRAIL_ROOTS."""
     from quicksight_gen.common.sheets.app_info import (
         DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     )
@@ -263,6 +269,7 @@ def test_investigation_datasets_declared_in_analysis():
         DS_INV_VOLUME_ANOMALIES,
         DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
         DS_INV_MONEY_TRAIL,
+        DS_INV_MONEY_TRAIL_ROOTS,
         DS_INV_ACCOUNT_NETWORK,
         DS_INV_ANETWORK_ACCOUNTS,
         DS_APP_INFO_LIVENESS,
@@ -301,20 +308,18 @@ def test_recipient_fanout_sql_filters_recipient_to_leaf_internal_accounts():
 def test_filter_groups_in_expected_order():
     """Two K.4.3 fanout filter groups, then K.4.4 anomalies window
     filter (Y.1.d dropped FG_INV_ANOMALIES_SIGMA — σ now lives in
-    the dataset SQL via ``<<$pInvAnomaliesSigma>>``), then three
-    K.4.5 money-trail filter groups (root / hops / amount), then four
-    K.4.8 account-network filter groups (anchor / inbound / outbound /
-    amount). Order is stable so the deployed Definition diff is
-    readable."""
+    the dataset SQL via ``<<$pInvAnomaliesSigma>>``), then the K.4.5
+    money-trail window date-range filter (Y.2.a dropped the three
+    parameter-bound K.4.5 FGs — root / hops / amount now live in the
+    money-trail dataset SQL), then four K.4.8 account-network filter
+    groups (anchor / inbound / outbound / amount). Order is stable so
+    the deployed Definition diff is readable."""
     groups = _filter_groups()
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
         FG_INV_FANOUT_WINDOW,
         FG_INV_FANOUT_THRESHOLD,
         FG_INV_ANOMALIES_WINDOW,
-        FG_INV_MONEY_TRAIL_ROOT,
-        FG_INV_MONEY_TRAIL_HOPS,
-        FG_INV_MONEY_TRAIL_AMOUNT,
         FG_INV_MONEY_TRAIL_WINDOW,  # Q.1.b
         FG_INV_ANETWORK_ANCHOR,
         FG_INV_ANETWORK_INBOUND,
@@ -475,15 +480,17 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 11 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
-    # — σ now lives in dataset SQL — leaving 2 fanout + 1 anomalies
-    # window + 4 money trail — root/hops/amount/window — + 4 account
-    # network: anchor/inbound/outbound/amount), 5 calc fields (fanout
-    # distinct count + account-network is_anchor_edge + is_inbound_edge
-    # + is_outbound_edge + counterparty_display), 7 parameters (fanout
+    # Top-level: 8 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
+    # — σ now lives in dataset SQL; Y.2.a dropped the 3 parameter-bound
+    # FGs for money-trail root/hops/amount — those now live in the
+    # money-trail dataset SQL too — leaving 2 fanout + 1 anomalies
+    # window + 1 money-trail window + 4 account network:
+    # anchor/inbound/outbound/amount), 5 calc fields (fanout distinct
+    # count + account-network is_anchor_edge + is_inbound_edge +
+    # is_outbound_edge + counterparty_display), 7 parameters (fanout
     # threshold + sigma + money-trail root/hops/amount + account-network
     # anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 11
+    assert len(j["Definition"]["FilterGroups"]) == 8
     assert len(j["Definition"]["CalculatedFields"]) == 5
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
@@ -753,13 +760,17 @@ def test_money_trail_contract_exposes_chain_columns():
     assert "target_display" in names
 
 
-def test_money_trail_dataset_reads_from_matview():
-    """Dataset is a thin SELECT over the per-instance matview — recursive
-    walk + leg join happens at refresh time, not dataset load. The whole
-    point of the matview is to keep the WITH RECURSIVE out of QuickSight
-    Direct Query.
+def test_money_trail_dataset_reads_from_matview_with_pushdown_where():
+    """Dataset is a thin SELECT over the per-instance matview with the
+    Y.2.a parameter pushdowns baked into the WHERE — recursive walk +
+    leg join happens at refresh time, not dataset load. The whole
+    point of the matview is to keep the WITH RECURSIVE out of
+    QuickSight Direct Query.
 
-    N.3.d: matview name is per-instance prefixed.
+    Y.2.a — SQL substitutes ``<<$pInvMoneyTrailRoot>>`` /
+    ``<<$pInvMoneyTrailMaxHops>>`` / ``<<$pInvMoneyTrailMinAmount>>``
+    at query time so the database does the chain narrow + depth cap
+    + amount cutoff before rows cross the wire.
     """
     datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
     money_trail = datasets[3]  # Y.1.b.companion shifted index by +1
@@ -768,83 +779,128 @@ def test_money_trail_dataset_reads_from_matview():
     # Don't reach back into the prefixed base table at dataset load.
     assert "spec_example_transactions" not in sql
     assert "RECURSIVE" not in sql.upper()
+    # Y.2.a — the three pushdowns substitute literals at query time.
+    assert (
+        "e.root_transfer_id = <<$pInvMoneyTrailRoot>>" in sql
+    )
+    assert "e.depth <= <<$pInvMoneyTrailMaxHops>>" in sql
+    assert "e.hop_amount >= <<$pInvMoneyTrailMinAmount>>" in sql
 
 
-# ---------------------------------------------------------------------------
-# K.4.5 — Money Trail filter groups + parameters
-# ---------------------------------------------------------------------------
-
-def test_money_trail_root_filter_is_parameter_bound_category_filter():
-    """The chain root filter is a CategoryFilter with EQUALS match
-    operator bound to ``pInvMoneyTrailRoot`` — the dropdown writes a
-    single root_transfer_id and the filter narrows to that one chain."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    root = groups[FG_INV_MONEY_TRAIL_ROOT]
-    cat = root.Filters[0].CategoryFilter
-    assert cat is not None
-    assert cat.Column.ColumnName == "root_transfer_id"
-    assert cat.Column.DataSetIdentifier == DS_INV_MONEY_TRAIL
-    custom = cat.Configuration.CustomFilterConfiguration
-    assert custom["MatchOperator"] == "EQUALS"
-    assert custom["ParameterName"] == P_INV_MONEY_TRAIL_ROOT
-
-
-def test_money_trail_hops_filter_caps_depth_via_parameter():
-    """Max-hops filter is RangeMaximum bound to pInvMoneyTrailMaxHops on
-    the depth column. Min-only would be the wrong shape — analysts care
-    about ``depth ≤ N``, not a band of depths."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    hops = groups[FG_INV_MONEY_TRAIL_HOPS]
-    nrf = hops.Filters[0].NumericRangeFilter
-    assert nrf is not None
-    assert nrf.Column.ColumnName == "depth"
-    assert nrf.Column.DataSetIdentifier == DS_INV_MONEY_TRAIL
-    assert nrf.RangeMaximum is not None
-    assert nrf.RangeMaximum.Parameter == P_INV_MONEY_TRAIL_MAX_HOPS
-    assert nrf.RangeMinimum is None
-    assert nrf.IncludeMaximum is True
-
-
-def test_money_trail_amount_filter_drops_noise_edges_via_parameter():
-    """Min-hop-amount filter is RangeMinimum bound to
-    pInvMoneyTrailMinAmount on hop_amount — drops edges below the
-    slider so analysts can focus on meaningful flows."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    amt = groups[FG_INV_MONEY_TRAIL_AMOUNT]
-    nrf = amt.Filters[0].NumericRangeFilter
-    assert nrf is not None
-    assert nrf.Column.ColumnName == "hop_amount"
-    assert nrf.Column.DataSetIdentifier == DS_INV_MONEY_TRAIL
-    assert nrf.RangeMinimum is not None
-    assert nrf.RangeMinimum.Parameter == P_INV_MONEY_TRAIL_MIN_AMOUNT
-    assert nrf.RangeMaximum is None
-    assert nrf.IncludeMinimum is True
-
-
-def test_money_trail_filters_are_all_visuals_scope():
-    """Both Sankey and hop-by-hop table reflect the same chain
-    selection — every money-trail filter group scopes ALL_VISUALS so
-    the visual + table read together as one chain."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    for fg_id in (
-        FG_INV_MONEY_TRAIL_ROOT,
-        FG_INV_MONEY_TRAIL_HOPS,
-        FG_INV_MONEY_TRAIL_AMOUNT,
-    ):
-        scope = (
-            groups[fg_id]
-            .ScopeConfiguration.SelectedSheets
-            .SheetVisualScopingConfigurations
+def test_money_trail_dataset_declares_three_pushdown_parameters():
+    """Y.2.a — dataset carries StringDatasetParameter for the chain
+    root + IntegerDatasetParameter for max_hops and min_amount; QS
+    bridges each from its analysis-level twin via
+    MappedDataSetParameters declared in
+    ``apps/investigation/app.py``."""
+    datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
+    money_trail = datasets[3]
+    params = money_trail.DatasetParameters or []
+    by_name = {}
+    for dp in params:
+        if dp.StringDatasetParameter is not None:
+            by_name[dp.StringDatasetParameter.Name] = dp.StringDatasetParameter
+        if dp.IntegerDatasetParameter is not None:
+            by_name[dp.IntegerDatasetParameter.Name] = (
+                dp.IntegerDatasetParameter
+            )
+    assert set(by_name.keys()) == {
+        str(P_INV_MONEY_TRAIL_ROOT),
+        str(P_INV_MONEY_TRAIL_MAX_HOPS),
+        str(P_INV_MONEY_TRAIL_MIN_AMOUNT),
+    }
+    # All three are SINGLE_VALUED — no multi-select on the dropdown
+    # or sliders. (Multi-valued + text-field is the L2FT-cascade
+    # footgun Y.1.m blocked at construction time.)
+    for p in by_name.values():
+        assert p.ValueType == "SINGLE_VALUED"
+    # Slider-bound params carry their analysis-level defaults so the
+    # initial-paint substitution matches what the slider widget shows.
+    assert by_name[str(P_INV_MONEY_TRAIL_MAX_HOPS)].DefaultValues == (
+        IntegerDatasetParameterDefaultValues(
+            StaticValues=[DEFAULT_MONEY_TRAIL_MAX_HOPS],
         )
-        assert len(scope) == 1
-        assert scope[0].SheetId == SHEET_INV_MONEY_TRAIL
-        assert scope[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
+    )
+    assert by_name[str(P_INV_MONEY_TRAIL_MIN_AMOUNT)].DefaultValues == (
+        IntegerDatasetParameterDefaultValues(
+            StaticValues=[DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+        )
+    )
+    # Root dataset parameter has a sentinel default that matches no
+    # row in the matview — initial paint of Sankey + table is empty
+    # until the dropdown commits a real chain root.
+    root_default = by_name[str(P_INV_MONEY_TRAIL_ROOT)].DefaultValues
+    assert root_default is not None
+    assert root_default.StaticValues is not None
+    assert len(root_default.StaticValues) == 1
+    assert "no_chain_selected" in root_default.StaticValues[0]
 
 
-def test_money_trail_root_dropdown_links_to_dataset_column():
-    """Dropdown auto-populates from the matview's distinct
-    root_transfer_id values via LinkToDataSetColumn — analysts get a
-    real list of chains, not an empty text input."""
+def test_money_trail_analysis_params_bridge_to_dataset_params():
+    """Y.2.a — each analysis-level parameter declares a
+    MappedDataSetParameter pointing at the money-trail dataset's
+    same-named parameter. QS resolves <<$pInvMoneyTrail*>> in the
+    dataset SQL by walking the bridge."""
+    decls = _parameter_declarations()
+    by_name = {}
+    for d in decls:
+        if d.IntegerParameterDeclaration:
+            by_name[d.IntegerParameterDeclaration.Name] = (
+                d.IntegerParameterDeclaration
+            )
+        if d.StringParameterDeclaration:
+            by_name[d.StringParameterDeclaration.Name] = (
+                d.StringParameterDeclaration
+            )
+    for pname in (
+        P_INV_MONEY_TRAIL_ROOT,
+        P_INV_MONEY_TRAIL_MAX_HOPS,
+        P_INV_MONEY_TRAIL_MIN_AMOUNT,
+    ):
+        decl = by_name[pname]
+        bridges = decl.MappedDataSetParameters or []
+        assert len(bridges) == 1, (
+            f"{pname} should bridge to one dataset parameter; "
+            f"got {bridges}"
+        )
+        assert bridges[0].DataSetIdentifier == DS_INV_MONEY_TRAIL
+        assert bridges[0].DataSetParameterName == str(pname)
+
+
+def test_money_trail_roots_companion_dataset_is_unfiltered():
+    """Y.2.a.companion — the roots companion wraps the same matview
+    without any pushdown parameters. The dropdown's option fetch
+    reads from this dataset so it sees every chain in the matview;
+    if it pointed at the parameter-bearing money-trail dataset the
+    SELECT DISTINCT root_transfer_id query would inherit the WHERE
+    clause and only return the sentinel-default match (i.e. nothing).
+    """
+    datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
+    roots = datasets[4]  # immediately after the parameter-bearing dataset
+    assert roots.DataSetId == _TEST_CFG.prefixed(
+        "inv-money-trail-roots-dataset",
+    )
+    sql = next(iter(roots.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert "SELECT DISTINCT root_transfer_id" in sql
+    assert "FROM spec_example_inv_money_trail_edges" in sql
+    # Critical: NO pushdown parameters here — the dropdown's option
+    # fetch must see every chain.
+    assert "<<$" not in sql
+    assert not (roots.DatasetParameters or [])
+
+
+def test_money_trail_roots_contract_is_single_column():
+    """Y.2.a.companion — the roots dataset projects exactly one
+    column (``root_transfer_id``) the dropdown reads via
+    LinkedValues."""
+    assert MONEY_TRAIL_ROOTS_CONTRACT.column_names == ["root_transfer_id"]
+
+
+def test_money_trail_root_dropdown_links_to_companion_dataset():
+    """Y.2.a — dropdown auto-populates from the unfiltered companion
+    (DS_INV_MONEY_TRAIL_ROOTS), not the parameter-bearing money-trail
+    dataset. Reading from the parameter-bearing one would inherit the
+    <<$pInvMoneyTrailRoot>> WHERE clause and starve the dropdown."""
     pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     # 3 controls: root dropdown, hops slider, amount slider.
     assert len(pc) == 3
@@ -853,7 +909,7 @@ def test_money_trail_root_dropdown_links_to_dataset_column():
     assert dropdown.SourceParameterName == P_INV_MONEY_TRAIL_ROOT
     assert dropdown.Type == "SINGLE_SELECT"
     link = dropdown.SelectableValues["LinkToDataSetColumn"]
-    assert link["DataSetIdentifier"] == DS_INV_MONEY_TRAIL
+    assert link["DataSetIdentifier"] == DS_INV_MONEY_TRAIL_ROOTS
     assert link["ColumnName"] == "root_transfer_id"
 
 

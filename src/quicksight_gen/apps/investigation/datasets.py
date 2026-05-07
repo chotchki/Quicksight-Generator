@@ -22,10 +22,14 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_ACCOUNT_NETWORK,
     DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
+    DS_INV_MONEY_TRAIL_ROOTS,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
     P_INV_ANOMALIES_SIGMA,
+    P_INV_MONEY_TRAIL_MAX_HOPS,
+    P_INV_MONEY_TRAIL_MIN_AMOUNT,
+    P_INV_MONEY_TRAIL_ROOT,
 )
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
@@ -40,6 +44,8 @@ from quicksight_gen.common.models import (
     DatasetParameter,
     IntegerDatasetParameter,
     IntegerDatasetParameterDefaultValues,
+    StringDatasetParameter,
+    StringDatasetParameterDefaultValues,
 )
 from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
@@ -157,6 +163,15 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
     # own dataset wrapper and stay zero-cost at query time.
     ColumnSpec("source_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY),
     ColumnSpec("target_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY),
+])
+
+
+# Y.2.a — companion contract for the chain-root dropdown's options
+# source. Single column ``root_transfer_id`` distinct'd over the
+# matview so the dropdown's option fetch is O(distinct chains) instead
+# of O(matview rows). Same shape as ANETWORK_ACCOUNTS_CONTRACT.
+MONEY_TRAIL_ROOTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("root_transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
 ])
 
 
@@ -373,20 +388,63 @@ def build_volume_anomalies_distribution_dataset(cfg: Config) -> DataSet:
     )
 
 
+# Defaults matched to the analysis-level parameter declarations in
+# ``apps/investigation/app.py``. The dataset-parameter default is what
+# QS substitutes when the bridge has no value (initial load before any
+# widget interaction); the analysis-level default is what the slider /
+# dropdown widget shows. Both must match or the user sees one number
+# in the control and a different filter applied at the DB.
+_DEFAULT_MONEY_TRAIL_MAX_HOPS = 5
+_DEFAULT_MONEY_TRAIL_MIN_AMOUNT = 0
+
+
+_DSP_ID_INV_MONEY_TRAIL_ROOT = "dsp-inv-money-trail-root"
+_DSP_ID_INV_MONEY_TRAIL_MAX_HOPS = "dsp-inv-money-trail-max-hops"
+_DSP_ID_INV_MONEY_TRAIL_MIN_AMOUNT = "dsp-inv-money-trail-min-amount"
+
+# Sentinel default for the chain-root dataset parameter. The analysis-
+# level ``pInvMoneyTrailRoot`` carries an empty default by design (the
+# dropdown auto-populates from the companion roots dataset on first
+# paint); QS dataset parameters need a literal default to substitute
+# when the bridge has no value, so we pick a sentinel that matches
+# nothing in the matview. Initial paint of the Sankey + table is empty
+# until the analyst commits a chain root via the dropdown — which fires
+# the bridge per Y.1 finding.
+_MONEY_TRAIL_ROOT_SENTINEL = "__no_chain_selected__"
+
+
 def build_money_trail_dataset(cfg: Config) -> DataSet:
-    """Per-edge money trail rows sourced from the recursive-CTE matview.
+    """Per-edge money trail rows — Y.2.a SQL pushdown.
 
-    The dataset is a thin SELECT over ``inv_money_trail_edges``; the
-    recursive walk happens at refresh time. Visuals filter via:
+    Three analysis-level parameters bridge into dataset-level
+    parameters substituted by QS into the dataset SQL at query time:
 
-    - ``CategoryFilter`` on ``root_transfer_id`` bound to
-      ``pInvMoneyTrailRoot`` — narrows to a single chain.
-    - ``NumericRangeFilter`` on ``depth`` bound to
-      ``pInvMoneyTrailMaxHops`` — caps chain depth.
-    - ``NumericRangeFilter`` on ``hop_amount`` bound to
-      ``pInvMoneyTrailMinAmount`` — drops noise edges.
+    - ``pInvMoneyTrailRoot`` → ``WHERE root_transfer_id = <<$...>>``
+      narrows to a single chain. Initial paint substitutes a sentinel
+      that matches nothing; the dropdown's first commit fires the
+      bridge and the visuals populate.
+    - ``pInvMoneyTrailMaxHops`` → ``AND depth <= <<$...>>`` caps chain
+      depth. Default 5 substitutes literally on first paint.
+    - ``pInvMoneyTrailMinAmount`` → ``AND hop_amount >= <<$...>>``
+      drops noise edges. Default 0 = keep all on first paint.
+
+    The chain-root dropdown reads from the
+    ``build_money_trail_roots_dataset`` companion (no parameters) so
+    the dropdown's DISTINCT-roots query doesn't inherit the WHERE
+    clause we just baked in here. Pattern: Y.1.b.companion.
+
+    App2 reads the same SQL after the
+    ``translate_qs_dataset_params`` preprocessor in ``_sql_executor``
+    rewrites ``<<$pName>>`` → ``:param_pName`` bind variables.
     """
-    sql = _money_trail_base_sql(_require_prefix(cfg))
+    p = _require_prefix(cfg)
+    base = _money_trail_base_sql(p)
+    sql = (
+        f"{base}WHERE 1=1\n"
+        f"  AND e.root_transfer_id = <<${P_INV_MONEY_TRAIL_ROOT}>>\n"
+        f"  AND e.depth <= <<${P_INV_MONEY_TRAIL_MAX_HOPS}>>\n"
+        f"  AND e.hop_amount >= <<${P_INV_MONEY_TRAIL_MIN_AMOUNT}>>"
+    )
     return build_dataset(
         cfg,
         cfg.prefixed("inv-money-trail-dataset"),
@@ -395,6 +453,61 @@ def build_money_trail_dataset(cfg: Config) -> DataSet:
         sql,
         MONEY_TRAIL_CONTRACT,
         visual_identifier=DS_INV_MONEY_TRAIL,
+        dataset_parameters=[
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_INV_MONEY_TRAIL_ROOT,
+                Name=str(P_INV_MONEY_TRAIL_ROOT),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=[_MONEY_TRAIL_ROOT_SENTINEL],
+                ),
+            )),
+            DatasetParameter(IntegerDatasetParameter=IntegerDatasetParameter(
+                Id=_DSP_ID_INV_MONEY_TRAIL_MAX_HOPS,
+                Name=str(P_INV_MONEY_TRAIL_MAX_HOPS),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=IntegerDatasetParameterDefaultValues(
+                    StaticValues=[_DEFAULT_MONEY_TRAIL_MAX_HOPS],
+                ),
+            )),
+            DatasetParameter(IntegerDatasetParameter=IntegerDatasetParameter(
+                Id=_DSP_ID_INV_MONEY_TRAIL_MIN_AMOUNT,
+                Name=str(P_INV_MONEY_TRAIL_MIN_AMOUNT),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=IntegerDatasetParameterDefaultValues(
+                    StaticValues=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+                ),
+            )),
+        ],
+    )
+
+
+def build_money_trail_roots_dataset(cfg: Config) -> DataSet:
+    """Companion to ``build_money_trail_dataset`` — distinct chain roots.
+
+    Y.2.a — the parameter-bearing money-trail dataset filters rows by
+    ``root_transfer_id = <<$pInvMoneyTrailRoot>>``. The chain-root
+    dropdown can't read its options from that dataset (its
+    ``SELECT DISTINCT root_transfer_id`` would inherit the WHERE
+    clause). This companion wraps the same matview without the
+    parameter so the dropdown's option fetch sees every chain root.
+    Same pattern as ``build_volume_anomalies_distribution_dataset``
+    (Y.1.b.companion) and ``build_account_network_accounts_dataset``
+    (K.4.8k).
+    """
+    p = _require_prefix(cfg)
+    sql = (
+        f"SELECT DISTINCT root_transfer_id\n"
+        f"FROM {p}_inv_money_trail_edges"
+    )
+    return build_dataset(
+        cfg,
+        cfg.prefixed("inv-money-trail-roots-dataset"),
+        "Investigation Money Trail — Roots",
+        "inv-money-trail-roots",
+        sql,
+        MONEY_TRAIL_ROOTS_CONTRACT,
+        visual_identifier=DS_INV_MONEY_TRAIL_ROOTS,
     )
 
 
@@ -458,6 +571,7 @@ def build_all_datasets(
         build_volume_anomalies_dataset(cfg),
         build_volume_anomalies_distribution_dataset(cfg),
         build_money_trail_dataset(cfg),
+        build_money_trail_roots_dataset(cfg),
         build_account_network_dataset(cfg),
         build_account_network_accounts_dataset(cfg),
         # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
@@ -479,6 +593,7 @@ _CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
     (DS_INV_VOLUME_ANOMALIES, VOLUME_ANOMALIES_CONTRACT),
     (DS_INV_VOLUME_ANOMALIES_DISTRIBUTION, VOLUME_ANOMALIES_CONTRACT),
     (DS_INV_MONEY_TRAIL, MONEY_TRAIL_CONTRACT),
+    (DS_INV_MONEY_TRAIL_ROOTS, MONEY_TRAIL_ROOTS_CONTRACT),
     (DS_INV_ACCOUNT_NETWORK, MONEY_TRAIL_CONTRACT),
     (DS_INV_ANETWORK_ACCOUNTS, ANETWORK_ACCOUNTS_CONTRACT),
 )

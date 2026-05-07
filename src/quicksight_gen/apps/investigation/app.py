@@ -24,6 +24,7 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_ACCOUNT_NETWORK,
     DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
+    DS_INV_MONEY_TRAIL_ROOTS,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
@@ -34,9 +35,6 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
-    FG_INV_MONEY_TRAIL_AMOUNT,
-    FG_INV_MONEY_TRAIL_HOPS,
-    FG_INV_MONEY_TRAIL_ROOT,
     FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
@@ -586,15 +584,23 @@ def _build_money_trail_sheet(
 ) -> Sheet:
     """Money Trail — Sankey + hop-by-hop detail table side-by-side.
 
-    Three parameter-bound filter groups all scope ALL_VISUALS so the
-    Sankey + table share one chain selection:
+    Y.2.a — three analysis-level parameters bridge into dataset-level
+    parameters substituted into the dataset SQL at query time
+    (``WHERE root_transfer_id = <<$pInvMoneyTrailRoot>> AND depth <=
+    <<$pInvMoneyTrailMaxHops>> AND hop_amount >=
+    <<$pInvMoneyTrailMinAmount>>``). Bridges expressed via
+    ``mapped_dataset_params`` on each parameter declaration; the
+    pre-Y.2 ALL_VISUALS-scope FilterGroups are removed (the per-visual
+    filter scope is now expressed through dataset binding rather than
+    FilterGroup scope).
 
-    - Chain root dropdown (parameter-bound `CategoryFilter` with
-      `MatchOperator=EQUALS`, populated from the matview's distinct
-      `root_transfer_id` values via `LinkedValues`).
-    - Max-hops slider (`NumericRangeFilter` max-bound, parameter-bound).
-    - Min-hop-amount slider (`NumericRangeFilter` min-bound,
-      parameter-bound).
+    The chain-root dropdown reads from a separate, unfiltered
+    ``DS_INV_MONEY_TRAIL_ROOTS`` companion dataset — once
+    ``DS_INV_MONEY_TRAIL`` filters by ``<<$pInvMoneyTrailRoot>>``,
+    the dropdown can't read its options from the same dataset
+    (DISTINCT-roots query would inherit the WHERE clause and only
+    return whatever the sentinel default selects). Same pattern as
+    Y.1.b.companion / K.4.8k.
 
     Layout:
       * Row 1: Sankey (⅔ width) + table (⅓ width), both `_TABLE_ROW_SPAN`
@@ -607,21 +613,51 @@ def _build_money_trail_sheet(
         identifier=DS_INV_MONEY_TRAIL,
         arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-money-trail-dataset")),
     ))
+    # Y.2.a.companion — unfiltered roots dataset feeding only the
+    # chain-root dropdown's LinkedValues. Without it, the dropdown's
+    # SELECT DISTINCT root_transfer_id would inherit
+    # ds_money_trail's WHERE clause and only return rows matching the
+    # sentinel default (i.e. nothing).
+    ds_money_trail_roots = app.add_dataset(Dataset(
+        identifier=DS_INV_MONEY_TRAIL_ROOTS,
+        arn=app.cfg.dataset_arn(
+            app.cfg.prefixed("inv-money-trail-roots-dataset"),
+        ),
+    ))
 
+    # Y.2.a — bridge each analysis-level parameter to its
+    # dataset-level twin. QS resolves <<$pInvMoneyTrailRoot>> /
+    # <<$pInvMoneyTrailMaxHops>> / <<$pInvMoneyTrailMinAmount>> in
+    # ds_money_trail's SQL by walking MappedDataSetParameters →
+    # finding the analysis param of the same name → substituting its
+    # current value at query time. The companion roots dataset has no
+    # parameters; nothing bridges into it.
     root_param = analysis.add_parameter(StringParam(
         name=P_INV_MONEY_TRAIL_ROOT,
-        # No default — dropdown auto-populates and SelectAll=HIDDEN
-        # forces QuickSight to land on the first available chain on
-        # first paint instead of an empty "All" state.
+        # No analysis-level default — the dropdown auto-populates from
+        # ds_money_trail_roots and SelectAll=HIDDEN forces QuickSight
+        # to land on the first available chain on first paint. The
+        # dataset-level default is a sentinel that matches nothing in
+        # the matview, so the Sankey + table render empty until the
+        # dropdown commits a real chain root and the bridge fires.
         default=[],
+        mapped_dataset_params=[
+            (ds_money_trail, str(P_INV_MONEY_TRAIL_ROOT)),
+        ],
     ))
     max_hops_param = analysis.add_parameter(IntegerParam(
         name=P_INV_MONEY_TRAIL_MAX_HOPS,
         default=[_DEFAULT_MONEY_TRAIL_MAX_HOPS],
+        mapped_dataset_params=[
+            (ds_money_trail, str(P_INV_MONEY_TRAIL_MAX_HOPS)),
+        ],
     ))
     min_amount_param = analysis.add_parameter(IntegerParam(
         name=P_INV_MONEY_TRAIL_MIN_AMOUNT,
         default=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+        mapped_dataset_params=[
+            (ds_money_trail, str(P_INV_MONEY_TRAIL_MIN_AMOUNT)),
+        ],
     ))
 
     sheet = analysis.add_sheet(Sheet(
@@ -668,48 +704,17 @@ def _build_money_trail_sheet(
         sort_by=(depth_dim, "ASC"),
     )
 
-    # Chain root: parameter-bound CategoryFilter — narrows to one chain.
-    root_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_MONEY_TRAIL_ROOT,
-        filters=[CategoryFilter.with_parameter(
-            filter_id="filter-inv-money-trail-root",
-            dataset=ds_money_trail,
-            column=ds_money_trail["root_transfer_id"],
-            parameter=root_param,
-            match_operator="EQUALS",
-            null_option="NON_NULLS_ONLY",
-        )],
-    ))
-    root_fg.scope_sheet(sheet)
-
-    # Max hops: max-bound numeric filter — IncludeMaximum so slider
-    # value 5 means "depth ≤ 5 surfaces".
-    hops_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_MONEY_TRAIL_HOPS,
-        filters=[NumericRangeFilter(
-            filter_id="filter-inv-money-trail-hops",
-            dataset=ds_money_trail,
-            column=ds_money_trail["depth"],
-            maximum=ParameterBound(max_hops_param),
-            null_option="NON_NULLS_ONLY",
-            include_maximum=True,
-        )],
-    ))
-    hops_fg.scope_sheet(sheet)
-
-    # Min hop amount: min-bound numeric filter.
-    amount_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_MONEY_TRAIL_AMOUNT,
-        filters=[NumericRangeFilter(
-            filter_id="filter-inv-money-trail-amount",
-            dataset=ds_money_trail,
-            column=ds_money_trail["hop_amount"],
-            minimum=ParameterBound(min_amount_param),
-            null_option="NON_NULLS_ONLY",
-            include_minimum=True,
-        )],
-    ))
-    amount_fg.scope_sheet(sheet)
+    # Y.2.a — chain root, max hops, and min amount are now dataset-
+    # level pushdowns substituted into ds_money_trail's CustomSql via
+    # ``<<$pInvMoneyTrailRoot>>`` / ``<<$pInvMoneyTrailMaxHops>>`` /
+    # ``<<$pInvMoneyTrailMinAmount>>`` (see
+    # ``apps/investigation/datasets.py::build_money_trail_dataset``).
+    # The bridges from these analysis parameters into the dataset
+    # parameters live on the parameter declarations above
+    # (``mapped_dataset_params`` on each StringParam/IntegerParam).
+    # Pre-Y.2 ALL_VISUALS-scoped FilterGroups (root / hops / amount)
+    # are removed; the per-visual filter scope is now expressed
+    # through dataset binding rather than FilterGroup scope.
 
     # Q.1.b — Window date-range filter on `posted_at`. Same shape as
     # Recipient Fanout / Volume Anomalies (filter-bound DATE_RANGE
@@ -729,11 +734,17 @@ def _build_money_trail_sheet(
     window_fg.scope_sheet(sheet)
 
     # Controls — three parameter-driven plus the new date-range picker.
+    # Y.2.a — dropdown reads from the unfiltered roots companion so the
+    # option list shows every chain in the matview, not just whichever
+    # root the dataset's <<$pInvMoneyTrailRoot>> sentinel happens to
+    # match (zero rows, on initial load).
     sheet.add_parameter_dropdown(
         parameter=root_param,
         title="Chain root transfer",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues.from_column(ds_money_trail["root_transfer_id"]),
+        selectable_values=LinkedValues.from_column(
+            ds_money_trail_roots["root_transfer_id"],
+        ),
         hidden_select_all=True,
         control_id="ctrl-inv-money-trail-root",
     )

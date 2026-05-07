@@ -46,6 +46,14 @@ DS_INV_VOLUME_ANOMALIES = "inv-volume-anomalies-ds"          # K.4.4
 # in the parameter-bearing dataset doesn't bleed across.
 DS_INV_VOLUME_ANOMALIES_DISTRIBUTION = "inv-volume-anomalies-distribution-ds"  # Y.1
 DS_INV_MONEY_TRAIL = "inv-money-trail-ds"                    # K.4.5
+# Y.2.a.companion — same matview as DS_INV_MONEY_TRAIL but without the
+# three pushdown parameters. Bound only to the chain-root dropdown's
+# LinkedValues source so the dropdown's `SELECT DISTINCT root_transfer_id`
+# query doesn't inherit the parameter-bearing dataset's WHERE clause
+# (which would otherwise narrow the dropdown options to whatever the
+# default-value sentinel selects). Same shape as
+# DS_INV_VOLUME_ANOMALIES_DISTRIBUTION (Y.1.b.companion).
+DS_INV_MONEY_TRAIL_ROOTS = "inv-money-trail-roots-ds"        # Y.2.a
 DS_INV_ACCOUNT_NETWORK = "inv-account-network-ds"            # K.4.8
 # Narrow accounts dataset for the anchor dropdown only — K.4.8k. The
 # main DS_INV_ACCOUNT_NETWORK wraps the matview with per-row concat
@@ -68,9 +76,12 @@ FG_INV_FANOUT_WINDOW = FilterGroupId("fg-inv-fanout-window")        # K.4.3
 # into the dataset SQL by QS at query time. Bridge:
 # ``apps/investigation/app.py``::``sigma_param.mapped_dataset_params``.
 FG_INV_ANOMALIES_WINDOW = FilterGroupId("fg-inv-anomalies-window")  # K.4.4
-FG_INV_MONEY_TRAIL_ROOT = FilterGroupId("fg-inv-money-trail-root")  # K.4.5
-FG_INV_MONEY_TRAIL_HOPS = FilterGroupId("fg-inv-money-trail-hops")  # K.4.5
-FG_INV_MONEY_TRAIL_AMOUNT = FilterGroupId("fg-inv-money-trail-amount")  # K.4.5
+# Y.2.a — FG_INV_MONEY_TRAIL_{ROOT,HOPS,AMOUNT} removed; the three
+# parameter-bound filters are now dataset-level pushdowns substituted
+# into the dataset SQL via ``<<$pInvMoneyTrailRoot>>`` /
+# ``<<$pInvMoneyTrailMaxHops>>`` / ``<<$pInvMoneyTrailMinAmount>>``.
+# Bridges: ``apps/investigation/app.py``::``mapped_dataset_params`` on
+# each parameter declaration.
 FG_INV_MONEY_TRAIL_WINDOW = FilterGroupId("fg-inv-money-trail-window")  # Q.1.b
 FG_INV_ANETWORK_ANCHOR = FilterGroupId("fg-inv-anetwork-anchor")        # K.4.8 — table only
 FG_INV_ANETWORK_INBOUND = FilterGroupId("fg-inv-anetwork-inbound")      # K.4.8 — inbound Sankey only
