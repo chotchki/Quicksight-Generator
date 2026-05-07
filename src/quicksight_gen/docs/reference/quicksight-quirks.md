@@ -20,18 +20,26 @@ This page exists for two reasons:
 
 ## ⚠️ Read this first — the worst footgun
 
-**URL-parameter writes don't sync sheet controls. Filters apply to
-the data; the control widget keeps showing the OLD value. The text
-and the chart disagree, and there is no QS-side fix.**
+**URL-parameter writes don't reach the dataset substitution layer.
+Controls populate, analysis-level filters work, but
+`MappedDataSetParameters` bridges (which carry params from analysis
+into the dataset's `<<$paramName>>` SQL substitution) do NOT fire on
+initial URL-driven load. The data ignores the URL value until a
+manual widget interaction commits it.**
 
-Every cross-sheet drill, every embedded deep link, every
-``CustomActionURLOperation`` and every ``SetParametersOperation``
-that writes a parameter from outside its native picker hits this.
-The data filters correctly, the picker / dropdown / date-range
-control reads "All" or its baked default, and the analyst sees a
-chart that doesn't match the labeled control state. Same defect
-fires inside QS's own Navigation Action — it isn't something the
-embedding SDK or the JSON shape can route around.
+Every cross-app drill, every embedded deep link, every
+``CustomActionURLOperation`` that targets a dataset-bridged
+parameter hits this. The control widget shows the URL value (so the
+analyst thinks the filter is applied) but the dataset SQL runs with
+the parameter at its analysis-default sentinel. They see the
+unfiltered universe under a label that says it's filtered.
+
+**This was studied exhaustively in Y.1.k → Y.1.p. Three
+analysis-level reference shapes were tried — `CategoryFilter` using
+the param as match value, an echo column + tautological filter,
+and a calc field with `${param}` in its expression (LuisBorrego's
+community workaround). All three failed identically. The bug is
+QS-side; no JSON shape on our end works around it.**
 
 **What we've done to minimize the damage**
 
@@ -143,24 +151,79 @@ visual.
 
 ## 2. Drill / parameter-write quirks
 
-### 2.1 URL parameter doesn't sync sheet controls
+### 2.1 URL parameter writes don't reach the dataset substitution layer (the cross-app footgun)
 
 **Observed.** When a deep-link URL sets a parameter via the
-`p.<name>=<value>` query-string convention, the parameter value
-*is* applied to data filters — but the sheet control widget shows
-"All" (or the unmodified default). The control text and the
-filtered data disagree. The same defect hits QS's own Navigation
-Action — there's no way to re-sync the control text with the
-parameter from the embedding side.
+`p.<name>=<value>` query-string convention:
 
-**Workaround.** Per memory `project_qs_url_parameter_no_control_sync`:
-K.4.7 cross-app drills dropped because of this. The sheet
-description for affected sheets tells analysts "trust the chart,
-not the control text".
+- ✅ The control widget DOES populate from the URL (post-Y.1.p
+  finding — earlier K.4.7 read of "controls stay All" was wrong;
+  controls do show the URL value).
+- ✅ Analysis-level filters that take a parameter directly (e.g.
+  `CategoryFilter.with_parameter`, `NumericRangeFilter.with_parameter`,
+  `TimeRangeFilter`) DO read the URL value.
+- ❌ Analysis parameters bridged to dataset-level parameters via
+  `MappedDataSetParameters` DO NOT propagate the URL value into the
+  dataset's `<<$paramName>>` substitution. The bridge stays at the
+  parameter's analysis-default sentinel until the user manually
+  interacts with the widget.
 
-**Suggested fix.** Make `p.<name>=<value>` URL params propagate
-into the sheet control's display value, OR expose a `setParameters`
-method on the embedding SDK that does propagate.
+**Practical impact.** Phase Y SQL pushdown is fine for *manual
+interaction* (the Y.1 σ-slider spike works — drag the slider, the
+pushdown runs). But **cross-app drills that need to land on a sheet
+with the dataset cascade pre-narrowed by URL params will not narrow
+on initial load.** The destination dashboard renders the unfiltered
+universe; the analyst then has to re-pick the values manually.
+
+**Mechanism, by way of pg_stat_statements.** Probe the deployed
+dataset SQL via `scripts/qs_substitution_probe.py inspect` (post-deploy
+the dataset has the right `<<$pKey>>` placeholders + DatasetParameters
+declared). Probe pg_stat_statements with `--filter <sheetId>` after a
+URL-stamp page load: the query fires with the placeholders bound to
+the analysis-level parameter's *default* value, not the URL value.
+After a manual widget interaction, the query re-fires with the URL
+value bound. Confirmed across PG; Oracle path same shape.
+
+**Workarounds attempted (Y.1.p, all failed):**
+
+- **B1**: replace OR-cascade WHERE with a `_meta_match_value`
+  CASE projection + analysis-level `CategoryFilter.with_parameter`
+  on that column. Filter SQL emitted correctly; bridge still bound
+  default on URL load.
+- **B2**: B1 + `_meta_key_echo` echo column + tautological
+  `CategoryFilter.with_parameter` filter on the echo column to
+  give pKey its own analysis-level reference. Same outcome.
+- **B3**: replace the parameter-using filters with analysis-level
+  `CalcField` expressions referencing `${param}` (LuisBorrego's
+  community workaround pattern), then filter on the calc field
+  with literal "match" values. Same outcome — bridges still
+  bound defaults on URL load.
+
+After all three, pg_stat_statements showed the SQL was emitted with
+the right shape (calc fields pushed down as `CASE WHEN _meta_X = $N
+THEN $M ELSE $K END IN ($L)`), but `$N` (the parameter bind)
+remained the sentinel default until manual interaction.
+
+**Workaround we actually use.** Cross-app URL-driven drills target
+*analysis-level* params only — not bridged dataset params. Where the
+data narrowing has to happen at the dataset level (the L2FT
+cascade), accept that URL stamping won't narrow on initial load and
+build the UX around manual interaction (text-field input + Enter,
+dropdown picks). Sheet descriptions tell analysts "pick the Key, type
+the Value" rather than expecting a clickable cross-app link.
+
+**Suggested fix.** Make MappedDataSetParameters bridges fire on
+analysis-parameter VALUE changes including URL-driven initial-load
+writes — not just on widget interaction events. Or expose a
+`setParameters` method on the embedding SDK that triggers the
+bridge synchronously.
+
+**Diagnostic harness.** `scripts/qs_substitution_probe.py` was built
+during Y.1.o specifically for this class of bug. `inspect` dumps the
+deployed dataset's CustomSQL + DataSetParameters. `snapshot` /
+`diff` capture pg_stat_statements deltas across user actions. Reach
+for it before manual screenshot debugging on any future
+parameter-binding issue.
 
 ---
 
