@@ -67,8 +67,15 @@ def test_destructive_sweep_refuses_without_yes() -> None:
 
 
 def test_up_to_creates_run_dir() -> None:
-    """`up_to=<layer>` returns success (skeleton dispatch) — proves the wiring."""
-    code = runner.main(["up_to=unit"])
+    """`up_to=<layer>` returns success when all layers pass — proves the wiring.
+
+    Mocks `dispatch_layer` so the test doesn't recursively run pytest /
+    pyright; that's smoke-tested separately."""
+    fake_pass = lambda layer, run_dir: runner.LayerResult(  # noqa: E731
+        layer=layer, exit_code=0, duration_seconds=0.01
+    )
+    with patch.object(runner, "dispatch_layer", side_effect=fake_pass):
+        code = runner.main(["up_to=unit"])
     assert code == runner.EXIT_SUCCESS
 
 
@@ -296,6 +303,130 @@ def test_prune_old_runs_uses_mtime_not_name(tmp_path: Path) -> None:
     survivors = list(tmp_path.iterdir())
     assert len(survivors) == 1
     assert survivors[0] == old_by_name
+
+
+# Y.2.gate.c.5 — chain + dispatch tests.
+
+
+def test_chain_through_pyright() -> None:
+    assert runner.chain_through("pyright") == ["pyright"]
+
+
+def test_chain_through_db() -> None:
+    assert runner.chain_through("db") == ["pyright", "unit", "db"]
+
+
+def test_chain_through_browser_full() -> None:
+    assert runner.chain_through("browser") == ["pyright", "unit", "db", "deploy", "api", "browser"]
+
+
+def test_layer_command_pyright() -> None:
+    """Layer 1 runs pyright directly — no pytest, no QS_GEN_SKIP_PYRIGHT needed."""
+    cmd_env = runner._layer_command("pyright", Path("/tmp/run"))
+    assert cmd_env is not None
+    cmd, env_addl = cmd_env
+    assert cmd[-1].endswith("pyright")
+    assert env_addl == {"QS_GEN_RUN_DIR": "/tmp/run"}
+
+
+def test_layer_command_unit_skips_pyright() -> None:
+    """Layer 2 sets QS_GEN_SKIP_PYRIGHT=1 so we don't pyright twice in one chain."""
+    cmd_env = runner._layer_command("unit", Path("/tmp/run"))
+    assert cmd_env is not None
+    cmd, env_addl = cmd_env
+    assert cmd[0].endswith("pytest")
+    assert env_addl["QS_GEN_SKIP_PYRIGHT"] == "1"
+    assert env_addl["QS_GEN_RUN_DIR"] == "/tmp/run"
+
+
+def test_layer_command_db_sets_e2e_gate() -> None:
+    """Layer 3 (DB SQL smoke) needs QS_GEN_E2E=1 to bypass the e2e gate."""
+    cmd_env = runner._layer_command("db", Path("/tmp/run"))
+    assert cmd_env is not None
+    cmd, env_addl = cmd_env
+    assert "test_dataset_sql_smoke.py" in cmd[1]
+    assert env_addl["QS_GEN_E2E"] == "1"
+
+
+def test_layer_command_stub_layers_return_none() -> None:
+    """deploy/api/browser are not yet wired (need cfg loading + variants).
+    None signals the dispatch path to record skipped=True."""
+    for layer in ("deploy", "api", "browser"):
+        assert runner._layer_command(layer, Path("/tmp/run")) is None
+
+
+def test_dispatch_layer_stub_returns_skipped() -> None:
+    """Stub layers don't fail the chain — they return skipped=True with rc=0."""
+    result = runner.dispatch_layer("deploy", Path("/tmp/run"))
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.exit_code == 0
+
+
+def test_dispatch_layer_runs_real_subprocess(tmp_path: Path) -> None:
+    """Real dispatch invokes subprocess.run; the result reflects the exit code."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+        result = runner.dispatch_layer("pyright", tmp_path)
+    assert mock_run.called
+    assert result.passed is True
+    assert result.skipped is False
+    assert result.exit_code == 0
+
+
+def test_dispatch_layer_failure_propagates(tmp_path: Path) -> None:
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=1, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        result = runner.dispatch_layer("pyright", tmp_path)
+    assert result.passed is False
+    assert result.exit_code == 1
+
+
+def test_dispatch_layer_passes_run_dir_via_env(tmp_path: Path) -> None:
+    """QS_GEN_RUN_DIR threads through to the pytest subprocess so conftest
+    fixtures (c.10/c.11/c.12) can route artifacts under runs/<run-id>/."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+        runner.dispatch_layer("pyright", tmp_path)
+    call_kwargs = mock_run.call_args
+    env = call_kwargs.kwargs["env"]
+    assert env["QS_GEN_RUN_DIR"] == str(tmp_path)
+
+
+def test_cmd_up_to_stops_on_first_failure() -> None:
+    """When layer N fails, layers >N are NOT dispatched; chain returns FAILURE."""
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path) -> runner.LayerResult:
+        dispatched.append(layer)
+        if layer == "unit":
+            return runner.LayerResult(layer=layer, exit_code=1, duration_seconds=0.01)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+    ):
+        code = runner.main(["up_to=db"])
+    assert code == runner.EXIT_FAILURE
+    # pyright + unit dispatched; db should NOT have run because unit failed.
+    assert dispatched == ["pyright", "unit"]
+
+
+def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+    ):
+        code = runner.main(["up_to=browser"])
+    assert code == runner.EXIT_SUCCESS
+    assert dispatched == ["pyright", "unit", "db", "deploy", "api", "browser"]
 
 
 def test_prune_runs_pattern_accepts_dirty_suffix() -> None:

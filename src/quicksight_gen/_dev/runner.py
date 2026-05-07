@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -192,6 +193,100 @@ _PROBE_FUNCTIONS: Final[dict[str, _ProbeFunc]] = {
 }
 
 
+@dataclass(frozen=True)
+class LayerResult:
+    """Y.2.gate.c.5 — outcome of dispatching one layer.
+
+    `passed` checks the exit code; `duration_seconds` lands in the
+    timings.json capture (c.2). Stub layers (deploy/api/browser until
+    cfg loading lands per Y.2.gate.h.2) report skipped=True.
+    """
+
+    layer: str
+    exit_code: int
+    duration_seconds: float
+    skipped: bool = False
+
+    @property
+    def passed(self) -> bool:
+        return self.exit_code == 0
+
+
+# Y.2.gate.c.5 — pre-resolved venv binaries. Dispatch needs absolute paths so
+# pytest / pyright don't depend on the bash shim's PATH munging (it doesn't do
+# any; this is just defensive against future changes).
+_VENV_BIN: Final = REPO_ROOT / ".venv" / "bin"
+
+
+def _layer_command(layer: str, run_dir: Path) -> tuple[list[str], dict[str, str]] | None:
+    """Map layer → (subprocess argv, env additions). Returns None for layers
+    not yet wired (cfg-loading-blocked: deploy / api / browser).
+
+    Layer 1 (pyright) runs the binary directly; layer 2 (unit) sets
+    ``QS_GEN_SKIP_PYRIGHT=1`` so the conftest sessionstart hook doesn't
+    duplicate the pyright pass we already did at layer 1.
+    """
+    env_addl = {"QS_GEN_RUN_DIR": str(run_dir)}
+    if layer == "pyright":
+        return [str(_VENV_BIN / "pyright")], env_addl
+    if layer == "unit":
+        return (
+            [
+                str(_VENV_BIN / "pytest"),
+                "tests/unit",
+                "tests/json",
+                "tests/cli",
+                "tests/docs",
+                "tests/schema",
+                "tests/l2",
+                "-q",
+            ],
+            {**env_addl, "QS_GEN_SKIP_PYRIGHT": "1"},
+        )
+    if layer == "db":
+        # 3a — DB SQL smoke (parametrized over 37 datasets). Behind QS_GEN_E2E=1.
+        # Real DB connection comes from cfg; until cfg loading lands the test
+        # itself fails fast if cfg is missing. That's the expected shape.
+        return (
+            [str(_VENV_BIN / "pytest"), "tests/e2e/test_dataset_sql_smoke.py", "-q"],
+            {**env_addl, "QS_GEN_E2E": "1", "QS_GEN_SKIP_PYRIGHT": "1"},
+        )
+    # deploy / api / browser: not yet wired. Need cfg loading (Y.2.gate.h.2)
+    # + variant fan-out (b.2 testcontainers + b.3 App2-as-early-gate).
+    return None
+
+
+def dispatch_layer(layer: str, run_dir: Path) -> LayerResult:
+    """Y.2.gate.c.5 — run one layer; return its result.
+
+    Stub layers return a `skipped=True` LayerResult with exit_code=0 so the
+    chain doesn't break — the deferred work is c.5+ follow-up, not a runner
+    bug. Stubs print a clear `dispatch-skip` line so the operator knows.
+    """
+    cmd_env = _layer_command(layer, run_dir)
+    if cmd_env is None:
+        print(f"runner: dispatch-skip [{layer}] not-yet-wired (cfg loading + variants)")
+        return LayerResult(layer=layer, exit_code=0, duration_seconds=0.0, skipped=True)
+
+    cmd, env_addl = cmd_env
+    env = {**os.environ, **env_addl}
+    print(f"runner: dispatch-run [{layer}] {' '.join(cmd)}")
+    start = time.monotonic()
+    result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=False)
+    duration = time.monotonic() - start
+    return LayerResult(layer=layer, exit_code=result.returncode, duration_seconds=duration)
+
+
+def chain_through(target: str) -> list[str]:
+    """Y.2.gate.c.5 — return the slice of LAYERS from start through ``target``.
+
+    Chain semantics (b.9 LOCKED): cross-layer is sequential. ``up_to=db`` means
+    pyright → unit → db; ``up_to=browser`` means the full chain.
+    """
+    idx = LAYERS.index(target)
+    return list(LAYERS[: idx + 1])
+
+
 def probe_dependencies(layer: str) -> list[ProbeFailure]:
     """Y.2.gate.c.8 — probe every dep ``layer`` needs; return all failures.
 
@@ -291,7 +386,13 @@ def cmd_up_to(args: argparse.Namespace) -> int:
 
     Pre-flight: probes the named layer's required deps (c.8). On any failure,
     prints the operator-actionable message and exits NEEDS_OPERATOR — does NOT
-    auto-invoke any interactive flow (b.14.4)."""
+    auto-invoke any interactive flow (b.14.4).
+
+    Then dispatches the chain (c.5): stop on first layer failure (b.9 LOCKED:
+    cross-layer = sequential). Stubbed layers (deploy/api/browser pending cfg
+    loading + variants) report skipped + pass-through so the chain doesn't
+    falsely block.
+    """
     failures = probe_dependencies(args.layer)
     if failures:
         for failure in failures:
@@ -304,11 +405,23 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     print(f"runner: run_id={run_id}")
     print(f"runner: run_dir={run_dir.relative_to(REPO_ROOT)}")
     print(f"runner: up_to={args.layer}")
-    print("runner: skeleton — dispatch not implemented yet (Y.2.gate.c.5+)")
+
+    chain = chain_through(args.layer)
+    print(f"runner: chain={chain}")
+    final_code = EXIT_SUCCESS
+    for layer in chain:
+        result = dispatch_layer(layer, run_dir)
+        marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
+        print(f"runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
+        if not result.passed:
+            print(f"runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
+            final_code = EXIT_FAILURE
+            break
+
     pruned = prune_old_runs()
     if pruned:
         print(f"runner: pruned {len(pruned)} old run(s) (retained last {RUNS_RETAIN_N})")
-    return EXIT_SUCCESS
+    return final_code
 
 
 def cmd_up(args: argparse.Namespace) -> int:
