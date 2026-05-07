@@ -39,8 +39,6 @@ def pytest_runtest_makereport(item: Any, call: Any) -> Generator[None, Any, None
     if not run_dir or not layer:
         return
 
-    timings_dir = Path(run_dir) / "timings"
-    timings_dir.mkdir(parents=True, exist_ok=True)
     record = {
         "layer": layer,
         "test_id": report.nodeid,
@@ -50,6 +48,16 @@ def pytest_runtest_makereport(item: Any, call: Any) -> Generator[None, Any, None
     # Per-worker file when xdist (c.6) is active — avoids append contention.
     worker_id = os.environ.get("PYTEST_XDIST_WORKER", "")
     suffix = f"-{worker_id}" if worker_id else ""
-    target = timings_dir / f"{layer}{suffix}.jsonl"
-    with target.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    # Sidecar contract (Y.2.gate.c.12 alignment): capture failures must
+    # never break a passing test. A test that monkeypatches
+    # QS_GEN_RUN_DIR for its own purposes (e.g., the loader sidecar
+    # tests) might point us at an unwritable path; swallow OSError
+    # rather than crashing the worker.
+    try:
+        timings_dir = Path(run_dir) / "timings"
+        timings_dir.mkdir(parents=True, exist_ok=True)
+        target = timings_dir / f"{layer}{suffix}.jsonl"
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except OSError:
+        pass

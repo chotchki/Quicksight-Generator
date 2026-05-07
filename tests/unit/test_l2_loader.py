@@ -625,3 +625,112 @@ def test_load_instance_validate_false_skips_cross_entity_pass(
 
     inst = load_instance(p, validate=False)
     assert len(inst.limit_schedules) == 2
+
+
+# -- Y.2.gate.c.12 — capture-to-run-dir sidecar -----------------------------
+
+
+_MINIMAL_YAML = dedent("""\
+    instance: cap_test
+
+    accounts:
+      - id: gl-1
+        role: Control
+        scope: internal
+
+    rails:
+      - name: SubCharge
+        transfer_type: charge
+        origin: InternalInitiated
+        leg_role: Control
+        leg_direction: Debit
+    """)
+
+
+def test_capture_no_op_when_run_dir_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Y.2.gate.c.12 — direct invocation (env unset) writes nothing."""
+    monkeypatch.delenv("QS_GEN_RUN_DIR", raising=False)
+    p = tmp_path / "src.yaml"
+    p.write_text(_MINIMAL_YAML)
+
+    load_instance(p, validate=False)
+
+    # The tmp_path tree has only the source YAML — no l2/ subdir.
+    assert list(tmp_path.iterdir()) == [p]
+
+
+def test_capture_writes_yaml_when_run_dir_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Y.2.gate.c.12 — env set → ``<run-dir>/l2/<instance-prefix>.yaml``
+    written with the same bytes as the source."""
+    run_dir = tmp_path / "run"
+    monkeypatch.setenv("QS_GEN_RUN_DIR", str(run_dir))
+    p = tmp_path / "src.yaml"
+    p.write_text(_MINIMAL_YAML)
+
+    load_instance(p, validate=False)
+
+    target = run_dir / "l2" / "cap_test.yaml"
+    assert target.exists()
+    assert target.read_text() == _MINIMAL_YAML
+
+
+def test_capture_filename_is_instance_prefix_not_source_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The destination filename always uses the YAML's own
+    ``instance:`` field, not the source basename. This deduplicates
+    across any path the operator might pass and matches the
+    spec's ``<instance-or-seed>`` naming convention."""
+    run_dir = tmp_path / "run"
+    monkeypatch.setenv("QS_GEN_RUN_DIR", str(run_dir))
+    p = tmp_path / "totally_unrelated_name.yaml"
+    p.write_text(_MINIMAL_YAML)
+
+    load_instance(p, validate=False)
+
+    assert (run_dir / "l2" / "cap_test.yaml").exists()
+    assert not (run_dir / "l2" / "totally_unrelated_name.yaml").exists()
+
+
+def test_capture_overwrites_on_repeat_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loading the same instance twice in one session writes the same
+    bytes to the same target — last write wins (idempotent for the
+    no-mutation case; if the YAML changed mid-run the latest content
+    is what lands)."""
+    run_dir = tmp_path / "run"
+    monkeypatch.setenv("QS_GEN_RUN_DIR", str(run_dir))
+    p = tmp_path / "src.yaml"
+    p.write_text(_MINIMAL_YAML)
+
+    load_instance(p, validate=False)
+    # Tweak content (still valid) and reload.
+    p.write_text(_MINIMAL_YAML + "\n# trailing comment\n")
+    load_instance(p, validate=False)
+
+    target = run_dir / "l2" / "cap_test.yaml"
+    assert target.read_text().endswith("# trailing comment\n")
+
+
+def test_capture_sidecar_failure_doesnt_break_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sidecar contract: if the capture write fails, ``load_instance``
+    must still return the parsed instance. Simulated here by pointing
+    ``QS_GEN_RUN_DIR`` at a path that can't be created (a regular file
+    sitting where a directory should be)."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("I am a file, not a directory.")
+    # /<blocker>/l2/<prefix>.yaml — mkdir(blocker/l2) fails because
+    # blocker is a file, but load_instance must still succeed.
+    monkeypatch.setenv("QS_GEN_RUN_DIR", str(blocker))
+    p = tmp_path / "src.yaml"
+    p.write_text(_MINIMAL_YAML)
+
+    inst = load_instance(p, validate=False)
+    assert str(inst.instance) == "cap_test"

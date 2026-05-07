@@ -35,6 +35,7 @@ caller can pinpoint the bad field.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -1014,6 +1015,34 @@ def _load_limit_schedule(raw: object, *, path: str) -> LimitSchedule:
 # -- Public API --------------------------------------------------------------
 
 
+def _capture_to_run_dir(raw_text: str, instance_prefix: str) -> None:
+    """Y.2.gate.c.12 — copy every loaded L2 YAML into ``$QS_GEN_RUN_DIR/l2/``.
+
+    No-op when ``QS_GEN_RUN_DIR`` is unset (direct ``pytest`` /
+    ``quicksight-gen`` invocations are unchanged). When set, writes
+    the raw YAML bytes to ``<run-dir>/l2/<instance-prefix>.yaml`` so
+    the runner's per-run snapshot captures every L2 the test session
+    touched — fuzzed AND static (the fuzzer constructs a YAML on disk
+    and feeds the path through ``load_instance``, same code path).
+
+    Idempotent: same prefix loaded twice in one session writes the
+    same bytes to the same file (cheap overwrite). Capture failures
+    (disk full, permission denied) are swallowed — the YAML load
+    must never fail because the sidecar can't write.
+    """
+    run_dir = os.environ.get("QS_GEN_RUN_DIR")
+    if not run_dir:
+        return
+    try:
+        target_dir = Path(run_dir) / "l2"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{instance_prefix}.yaml"
+        target.write_text(raw_text)
+    except OSError:
+        # Sidecar — never break the load.
+        pass
+
+
 def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
     """Load + validate an L2 YAML file into an ``L2Instance``.
 
@@ -1033,6 +1062,10 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
     Validator-side errors (reference resolution, uniqueness,
     cardinality, vocabulary, Origin resolution) raise
     ``L2ValidationError``.
+
+    Y.2.gate.c.12 — when ``QS_GEN_RUN_DIR`` is set, the raw YAML is
+    captured to ``<run-dir>/l2/<instance-prefix>.yaml`` for per-run
+    debugging. See ``_capture_to_run_dir``.
     """
     yaml_path = Path(path)
     try:
@@ -1054,6 +1087,7 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
     instance = _load_instance_prefix(
         _require(raw_d, "instance", path="instance"), path="instance",
     )
+    _capture_to_run_dir(raw_text, str(instance))
 
     accounts = tuple(
         _load_account(item, path=f"accounts[{i}]")
