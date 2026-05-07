@@ -156,6 +156,7 @@ Open design questions surfaced by the audit. Need user direction before Y.2.gate
 - **(B) Loud**: keep the gates but make pytest summarize "5 tests skipped because `QS_GEN_DEMO_DB_URL` unset" in red at the bottom. Operator knows what they missed.
 
 **Opinion:** (A). Silent-skip is the bug class that lets Y.2.b-shaped problems through. The runner makes (A) viable because it knows what layer it's running.
+**Chris**: Agree on A and if the runner config is missing its stuff it should fail loudly.
 
 ### 7.3 — `quicksight-gen <verb> test` precedent
 
@@ -166,12 +167,14 @@ Open design questions surfaced by the audit. Need user direction before Y.2.gate
 - **(B) Build as a shell script**: `./run_tests.sh up_to=<layer> variants=<set>`. Explicit, easier to read, doesn't pollute the user-facing CLI.
 
 **Opinion:** (B) for the runner; keep `<verb> test` as is (per-artifact convenience), and have it eventually delegate to the runner under the hood. The runner is dev-tooling, not customer-facing CLI.
+**Chris**: I agreed this is developer focused tooling, not shipable surface. 
 
 ### 7.4 — Dialect coverage gap (browser × Oracle)
 
 **Today:** `e2e-pg-browser` runs nightly. `e2e-oracle-browser` doesn't exist.
 
 **Question:** Is QuickSight's rendering layer dialect-sensitive enough to justify the second cell? (My read: probably not for Sankey/Table/KPI; possibly for date formatting / timezone display.) **Defer decision** but flag as a candidate for nightly addition.
+**Chris**: Yes it is, we should be at parity here.
 
 ### 7.5 — Container-backed local DBs (LOCKED)
 
@@ -185,6 +188,8 @@ The audit found 5 sub-layers under "DB tests". These differ in what they exercis
 
 **Opinion:** Collapse to `up_to=db` for simplicity. Power users can scope further with `--only=…`.
 
+**Chris**: agree
+
 ### 7.7 — Layer 7 (App2) and layer 8 (harness) placement
 
 **Today:** Layer 7 runs alongside layer 6 (in `pytest tests/e2e`); layer 8 runs ONLY via `--harness` (mutually exclusive with layer 5/6).
@@ -195,9 +200,13 @@ The audit found 5 sub-layers under "DB tests". These differ in what they exercis
 - Layer 7 → variant of layer 6 (App2 dialect).
 - Layer 8 → its own layer 9, runs after layer 6, but optional (gated `--harness=true`). Nightly opt-in; not in the default chain.
 
+**Chris**: 6 and 7 are flavors of the same thing.. run the e2e browser tests. By bringing them to the same layer there is a natural comparison point. 8 feels like an entirely different shape, did our dependencies that we don't control break us? it feels like it sits in parallel to the other flavors but I don't know if it needs to exist independently. I want to say optional but optional is where stuff goes to die. We may just have to continue to focus on our test failure troubleshooting tools that we've built up.
+
 ### 7.8 — Wall-clock targets need measurement
 
 The audit table marked some layers as "unknown" wall-clock. Before Y.2.gate.b finalizes the budget targets, we should measure each layer once and lock numbers in.
+
+**Chris**: We may not need to go crazy, as part of building this test orchestrator we'll get timings.
 
 ### 7.10 — App2 against local Docker as the early e2e gate (LOCKED)
 
@@ -273,44 +282,60 @@ Each AWS-touching CI job:
 1. **Pre-test step**: `aws rds start-db-cluster` (Aurora) / `aws rds start-db-instance` (Oracle) — if cluster exists in stopped state.
    - Or alternative: provision a fresh cluster with `aws rds create-db-cluster` per job. More expensive (creation has fixed cost) but isolates concurrent CI runs.
    - Choice depends on test volume: low-volume → start/stop the same cluster; high-volume parallel → create-per-job.
+   - **Chris**: start with start/stop;
 2. Run schema + seed + e2e against the freshly-started DB.
 3. **Always-run cleanup step**: `aws rds stop-db-cluster` / `delete-db-cluster`. Use GHA `if: always()` so the cleanup fires even on test failure.
+  - Should also delete the tables so the storage cost is nothing
 
 Storage cost continues during stop (so the seeded matview state survives between runs), but compute drops to zero. Aurora has a 7-day max-stop window before auto-resume, which is fine for an active project's CI cadence.
 
 #### Local side — explicit `runner up` / `runner down`
 
-The runner exposes infra-lifecycle commands that the developer invokes when they want AWS-side work:
+The runner exposes infra-lifecycle commands. **No-arg defaults to ALL** (matches the project convention from `quicksight-gen json apply` etc. — common path is the default; explicit subset requires arguments):
 
 ```bash
-./run_tests.sh up local           # Docker containers (PG, Oracle) — default; fast loop
-./run_tests.sh up aws             # Start your sleeping Aurora + Oracle; wait for available
-./run_tests.sh up aws,local       # Both — for cross-tool parity testing in one session
-./run_tests.sh down               # Stop everything that's running (idempotent)
-./run_tests.sh status             # What's currently running (Docker + AWS); show idle cost estimate
+./run_tests.sh up                 # default = local + aws — bring everything up
+./run_tests.sh up local           # explicit subset: just Docker containers (PG, Oracle)
+./run_tests.sh up aws             # explicit subset: just start your sleeping Aurora + Oracle
+./run_tests.sh down               # default = stop everything that's running
+./run_tests.sh down aws           # explicit subset: stop only AWS, leave Docker running
+./run_tests.sh down local         # explicit subset: stop only Docker, leave AWS running
+./run_tests.sh status [--cost]    # What's currently running (Docker + AWS); cost estimate per hour
 ```
 
 `status` is the "did I forget to turn it off?" check — list every running resource with its hourly cost so the cost surface is visible, not buried.
+  - I don't care about the running cost, I have a sense of the pain
 
-The runner's layer dispatch (Y.2.gate.b) checks `up` state before invoking AWS-touching layers. If `up aws` wasn't run, the AWS layer skips with a clear message: `"layer 4 needs AWS DB; run './run_tests.sh up aws' first or invoke './run_tests.sh up_to=app2-e2e' to skip"`.
+**Why default-to-all matches the project pattern:** `quicksight-gen json apply` with no args deploys all 4 dashboards. `quicksight-gen schema apply` applies the full schema. The common path is "I'm starting work; bring up everything I might need." Subsetting is for the rare case ("I only want Docker today; AWS stays sleeping").
+
+The runner's layer dispatch (Y.2.gate.b) checks `up` state before invoking AWS-touching layers. If the operator did `up local` (explicitly skipping AWS) and then asks for layer 4, the runner fails fast: `"layer 4 needs AWS DB; run './run_tests.sh up aws' first or invoke './run_tests.sh up_to=app2-e2e' to skip"`. The default `up` covers this case without friction.
+
+**Chris**: I'd like the check to be against the dependency so we don't up with stale lock files
 
 **Implementation slots into Y.2.gate.l (new sub-task).** Specific deliverables:
 
 - `aws rds start/stop` wrapper (boto3 or shell-out to AWS CLI) with idempotency + readiness wait.
 - `docker compose up/down` wrapper for local containers.
 - State file under `runs/.up-state.json` (gitignored) tracks what's running across `up`/`down`/`status` invocations.
+  - **Chris**: I'd like to avoid more hidden state unless the check is too expensive.
 - CI workflow updates: `e2e.yml` + `release.yml::e2e-against-testpypi` gain `start-before` + `stop-after-always` steps.
 - Cost-visibility command: `status --cost` queries AWS pricing API (or hardcoded estimates) for what's currently running.
 - Auto-stop on idle: optional cron/timer that runs `down` after N hours of inactivity (defaults off; opt-in via config).
+  - **Chris**: not needed
 
 **Compounds with §7.10:** The App2-as-fast-gate decision means most iterations don't need AWS at all. `up aws` becomes the explicit "I'm doing parity work" signal, used a handful of times per week, not constantly.
+  - **Chris**: The main end deliverable is still AWS quicksight I think these should be tested in parallel with a fast fail if one fails.
 
 **Decisions for user:**
 
 - **Start-stop existing cluster vs. create-per-job in CI**: lean start-stop (cheaper, preserves seed state). Need confirmation.
+  - Agree start / stop
 - **`up aws` granularity**: single command for both PG + Oracle, or `up aws-pg` / `up aws-oracle`?
+  - single command
 - **Auto-stop timer default**: off (current path) or on with a 4-hour idle threshold? Opt-in seems safer.
+  - feature not needed
 - **Cost visibility surface**: `status --cost` output format — terminal table or write to `runs/<run-id>/cost.json` for tracking?
+  - feature not needed
 
 ---
 
@@ -363,11 +388,15 @@ The numbers above are rough but illustrate the shape: **iteration speed drops fr
 
 **Tracked under:** Y.2.gate.b (variants design — fuzz seed promoted from "Future" to first-class), Y.2.gate.c (implement seed-pool sampling), Y.2.gate.j (parallelism — fuzz-seed parallelism is the biggest single perf win).
 
+**Chris**: I think the fuzz should be a fully baked variant that by default runs a DIFFERENT random seed. the user (especially for ci) can pass larger variant requests but the default is a single random.
+
 ---
 
 ### 7.9 — Per-run output isolation + timing capture (new)
 
 **User direction:** Every run gets its own isolated output dir, and the runner captures per-(layer, variant, test) timings. On the next run, the runner reads the prior run's timings and reports `step took 24s (was 19s, +26%)`. This becomes a smell detector — same shape as hash-locked seed data: a sudden timing delta flags a regression before it crashes the test.
+
+**Chris**: I feel like this output directory is the real home for the hash lock, next run checks for drift when it grabs the timings.
 
 **Output isolation (what gets isolated):**
 
@@ -379,6 +408,8 @@ Every artifact a test layer produces must land under a per-run dir, never overwr
 - **Top-queries dumps:** `dump_top_queries.py` output (today shared); per-run.
 - **Container logs:** PG / Oracle container stdout/stderr from layer 3 — never captured today; per-run.
 - **Per-test fixture data:** if the runner spins per-test ephemeral DBs, each gets its own container ID logged under `runs/<run-id>/containers.jsonl`.
+
+**Chris**: the e2e javascript/network traces should land here too
 
 **Run-id scheme:** `<utc-iso-timestamp>-<git-short-sha>-<dirty-flag>`, e.g. `20260507T184215Z-30a5ac0`. Dirty-flag suffix when working tree has uncommitted changes (so timing deltas across dirty runs don't claim "+50%" because of unrelated edits).
 
