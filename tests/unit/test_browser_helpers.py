@@ -16,6 +16,9 @@ import re
 import pytest
 
 from quicksight_gen.common.browser.helpers import (
+    SCREENSHOT_DIR,
+    _capture_dir_for,
+    _capture_path,
     _test_id_from_pytest_env,
     get_user_arn,
 )
@@ -101,6 +104,65 @@ class TestTestIdFromPytestEnv:
             "tests/foo.py::bar (call)",
         )
         assert _test_id_from_pytest_env() == "tests_foo__bar"
+
+
+class TestCaptureDirAndPath:
+    """Y.2.gate.c.11 — failure dumps + Playwright trace.zip route to
+    ``$QS_GEN_RUN_DIR/browser/<test_id>/`` when running under the
+    test layer chain runner; fall back to the legacy
+    ``<SCREENSHOT_DIR>/_failures/`` flat dir otherwise."""
+
+    def test_capture_dir_runner_mode(self, monkeypatch, tmp_path) -> None:
+        run_dir = tmp_path / "run"
+        monkeypatch.setenv("QS_GEN_RUN_DIR", str(run_dir))
+        out = _capture_dir_for("tests_e2e_test_foo__bar")
+        assert out == run_dir / "browser" / "tests_e2e_test_foo__bar"
+
+    def test_capture_dir_legacy_mode(self, monkeypatch) -> None:
+        monkeypatch.delenv("QS_GEN_RUN_DIR", raising=False)
+        out = _capture_dir_for("any_test_id")
+        assert out == SCREENSHOT_DIR / "_failures"
+
+    def test_capture_path_runner_mode_uses_short_filenames(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        """Per-test directory means we don't need the test_id prefix
+        on every file — names like ``screenshot.png`` are already
+        scoped by their parent dir."""
+        run_dir = tmp_path / "run"
+        monkeypatch.setenv("QS_GEN_RUN_DIR", str(run_dir))
+        test_id = "tests_e2e_test_foo__bar"
+        assert _capture_path("screenshot.png", test_id) == (
+            run_dir / "browser" / test_id / "screenshot.png"
+        )
+        assert _capture_path("console.txt", test_id) == (
+            run_dir / "browser" / test_id / "console.txt"
+        )
+        assert _capture_path("trace.zip", test_id) == (
+            run_dir / "browser" / test_id / "trace.zip"
+        )
+
+    def test_capture_path_legacy_mode_keeps_test_id_prefix(
+        self, monkeypatch,
+    ) -> None:
+        """Flat-dir legacy mode needs the test_id prefix so files
+        from concurrent test runs don't collide. Special-case:
+        ``screenshot.png`` lands at ``<test_id>.png`` (no underscore
+        prefix) per the M.4.4.11-era convention."""
+        monkeypatch.delenv("QS_GEN_RUN_DIR", raising=False)
+        test_id = "tests_e2e_test_foo__bar"
+        assert _capture_path("screenshot.png", test_id) == (
+            SCREENSHOT_DIR / "_failures" / f"{test_id}.png"
+        )
+        assert _capture_path("console.txt", test_id) == (
+            SCREENSHOT_DIR / "_failures" / f"{test_id}_console.txt"
+        )
+        assert _capture_path("network.txt", test_id) == (
+            SCREENSHOT_DIR / "_failures" / f"{test_id}_network.txt"
+        )
+        assert _capture_path("qs_errors.txt", test_id) == (
+            SCREENSHOT_DIR / "_failures" / f"{test_id}_qs_errors.txt"
+        )
 
 
 class TestNoHardcodedArnInSource:

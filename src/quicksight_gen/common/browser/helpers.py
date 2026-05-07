@@ -126,22 +126,43 @@ def webkit_page(
 ) -> Generator[Page, None, None]:
     """Yield a Playwright WebKit page; tears down browser on exit.
 
-    On exception inside the ``with`` body, captures four diagnostics
-    under ``tests/e2e/screenshots/_failures/<test_id>.*`` before
-    browser teardown:
+    On exception inside the ``with`` body, captures five diagnostics
+    per failing test:
 
-    - ``.png`` — full-page screenshot of the failure state
-    - ``_console.txt`` — every JS console message + uncaught
+    - ``screenshot.png`` (or ``<test_id>.png`` in legacy mode) —
+      full-page screenshot of the failure state
+    - ``console.txt`` — every JS console message + uncaught
       ``pageerror`` accumulated since page creation (M.4.4.11 pattern,
       lifted from ``_harness_browser._attach_console_capture``)
-    - ``_qs_errors.txt`` — text content of any QS error overlays
+    - ``qs_errors.txt`` — text content of any QS error overlays
       visible on the page (the "Failed to load visual" / SQL error
       tooltips that classic-QS shows for failed dataset queries)
-    - ``_network.txt`` — HTTP status + URL for every non-2xx
+    - ``network.txt`` — HTTP status + URL for every non-2xx
       response the page made. The X.1.b investigation revealed
       multiple ``404 Not Found`` responses paired with the
       ``Sample values not found`` JS errors — the URL pattern
       should disambiguate which QS-side resource is missing.
+    - ``trace.zip`` (Y.2.gate.c.11) — Playwright trace bundle:
+      full action timeline, DOM snapshots per action, screenshots,
+      network, and console. Open with ``playwright show-trace
+      trace.zip``.
+
+    Output destination depends on ``QS_GEN_RUN_DIR``:
+
+    - **Set** (running under the test layer chain runner):
+      ``$QS_GEN_RUN_DIR/browser/<test_id>/{screenshot.png,console.txt,
+      qs_errors.txt,network.txt,trace.zip}`` — per-test directory so
+      artifacts cluster cleanly.
+    - **Unset** (legacy ``./run_e2e.sh`` / direct ``pytest`` invocation):
+      ``tests/e2e/screenshots/_failures/<test_id>.png`` etc., flat
+      directory with per-file ``<test_id>_`` prefix to disambiguate.
+      Trace.zip is NOT written in legacy mode (no run-dir to put it in).
+
+    Trace capture policy:
+    - On exception → trace always written (under the run-dir mode).
+    - On clean exit → trace written iff ``QS_GEN_TRACE_ALL=1`` is set
+      (operator opt-in for "I want the full trace even on green tests";
+      flag plumbed by ``Y.2.gate.c.7``).
 
     All capture is best-effort — exceptions inside the dump path are
     swallowed so the original assertion bubbles up unchanged.
@@ -153,22 +174,123 @@ def webkit_page(
         context = browser.new_context(
             viewport={"width": viewport[0], "height": viewport[1]},
         )
+        # Y.2.gate.c.11 — start tracing immediately so the trace bundle
+        # captures EVERYTHING the test does. We decide whether to save
+        # vs. discard in the finally block based on outcome + env flag.
+        # screenshots/snapshots/sources are the kitchen-sink set —
+        # enables full timeline replay in `playwright show-trace`.
+        try:
+            context.tracing.start(
+                screenshots=True, snapshots=True, sources=True,
+            )
+        except Exception:
+            # Old Playwright versions or odd configs — keep going
+            # without tracing; the other 4 diagnostics still fire.
+            pass
         page = context.new_page()
         console_messages: list[str] = []
         network_responses: list[str] = []
         _attach_console_capture(page, console_messages)
         _attach_network_capture(page, network_responses)
+        failed = False
         try:
             yield page
         except BaseException:
+            failed = True
             _capture_failure_screenshot(page)
             _capture_failure_console(console_messages)
             _capture_failure_qs_errors(page)
             _capture_failure_network(network_responses)
             raise
         finally:
+            _stop_and_maybe_save_trace(context, failed=failed)
             context.close()
             browser.close()
+
+
+def _stop_and_maybe_save_trace(context: object, *, failed: bool) -> None:
+    """Y.2.gate.c.11 — finalize the Playwright trace.
+
+    Saves + unpacks to ``$QS_GEN_RUN_DIR/browser/<test_id>/`` when:
+    - ``failed`` is True (always capture failure traces), OR
+    - ``QS_GEN_TRACE_ALL=1`` (operator opt-in for full traces on green).
+
+    Otherwise discards the trace (call ``stop()`` with no path).
+    No-op when ``QS_GEN_RUN_DIR`` isn't set — there's nowhere to put
+    the trace file in legacy mode.
+
+    Two outputs land per saved trace:
+    - ``trace.zip`` — original Playwright bundle, openable with
+      ``playwright show-trace trace.zip`` (full UI replay).
+    - ``trace/`` (extracted) — sibling directory with the unpacked
+      contents: ``trace.network`` / ``trace.trace`` / ``trace.stacks``
+      (text) plus ``resources/`` (snapshot images, sources). Makes the
+      contents directly ``grep``/``ls``-able without spinning up the
+      trace viewer — operator-friendly for "what did this test
+      actually do" inspection.
+
+    All errors swallowed (sidecar contract; matches c.2 / c.10 / c.12).
+    """
+    import zipfile
+
+    run_dir = os.environ.get("QS_GEN_RUN_DIR")
+    trace_all = bool(os.environ.get("QS_GEN_TRACE_ALL"))
+    should_save = bool(run_dir) and (failed or trace_all)
+    try:
+        if should_save:
+            trace_dir = (
+                Path(run_dir) / "browser" / _test_id_from_pytest_env()  # type: ignore[arg-type]
+            )
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            zip_path = trace_dir / "trace.zip"
+            context.tracing.stop(path=str(zip_path))  # type: ignore[attr-defined]
+            try:
+                # Extract for grepability — sibling "trace/" dir.
+                # ZIP slip not a concern: Playwright generates the
+                # archive itself, not user-supplied content.
+                extract_dir = trace_dir / "trace"
+                with zipfile.ZipFile(zip_path) as zf:
+                    zf.extractall(extract_dir)
+            except Exception:
+                pass
+        else:
+            context.tracing.stop()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _capture_dir_for(test_id: str) -> Path:
+    """Y.2.gate.c.11 — pick where per-failure dumps land.
+
+    Returns ``$QS_GEN_RUN_DIR/browser/<test_id>/`` when the runner
+    env is set, else the legacy ``<SCREENSHOT_DIR>/_failures/`` flat
+    dir.
+    """
+    run_dir = os.environ.get("QS_GEN_RUN_DIR")
+    if run_dir:
+        return Path(run_dir) / "browser" / test_id
+    return SCREENSHOT_DIR / "_failures"
+
+
+def _capture_path(filename_short: str, test_id: str) -> Path:
+    """Y.2.gate.c.11 — resolve the per-test path for one capture file.
+
+    In run-dir mode: ``<run-dir>/browser/<test_id>/<filename_short>``
+    (clean per-test directory; ``screenshot.png``, ``console.txt``).
+
+    In legacy mode: ``<SCREENSHOT_DIR>/_failures/<test_id>_<filename_short>``
+    (flat directory with per-test prefix). Backwards-compat with the
+    pre-c.11 file naming so existing CI artifact-upload steps still
+    pick the same files. Special-case: the screenshot in legacy mode
+    is just ``<test_id>.png`` (no underscore prefix), matching the
+    M.4.4.11-era convention.
+    """
+    if os.environ.get("QS_GEN_RUN_DIR"):
+        return _capture_dir_for(test_id) / filename_short
+    legacy_dir = _capture_dir_for(test_id)
+    if filename_short == "screenshot.png":
+        return legacy_dir / f"{test_id}.png"
+    return legacy_dir / f"{test_id}_{filename_short}"
 
 
 def _attach_console_capture(page: Page, sink: list[str]) -> None:
@@ -252,31 +374,31 @@ def _test_id_from_pytest_env(raw: str | None = None) -> str:
 
 def _capture_failure_screenshot(page: Page) -> None:
     """Best-effort failure screenshot. Writes to
-    ``<SCREENSHOT_DIR>/_failures/<test_id>.png``. All errors swallowed
-    — a screenshot-capture exception must never mask the original
-    test failure (closed page, missing env var, full disk, etc.).
+    ``<capture_dir>/screenshot.png`` (or legacy ``<test_id>.png``).
+    All errors swallowed — a screenshot-capture exception must never
+    mask the original test failure (closed page, missing env var,
+    full disk, etc.).
     """
     try:
-        out_dir = SCREENSHOT_DIR / "_failures"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        page.screenshot(
-            path=str(out_dir / f"{_test_id_from_pytest_env()}.png"),
-            full_page=True,
-        )
+        test_id = _test_id_from_pytest_env()
+        path = _capture_path("screenshot.png", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(path), full_page=True)
     except Exception:
         pass
 
 
 def _capture_failure_console(messages: list[str]) -> None:
     """Dump accumulated JS console + pageerror messages to
-    ``<SCREENSHOT_DIR>/_failures/<test_id>_console.txt``. Empty file
-    when nothing was logged (so the artifact bundle reliably contains
-    the file and the absence of content is itself a signal).
+    ``<capture_dir>/console.txt`` (or legacy ``<test_id>_console.txt``).
+    Empty file when nothing was logged (so the artifact bundle
+    reliably contains the file and the absence of content is itself
+    a signal).
     """
     try:
-        out_dir = SCREENSHOT_DIR / "_failures"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{_test_id_from_pytest_env()}_console.txt"
+        test_id = _test_id_from_pytest_env()
+        path = _capture_path("console.txt", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(messages), encoding="utf-8")
     except Exception:
         pass
@@ -284,14 +406,15 @@ def _capture_failure_console(messages: list[str]) -> None:
 
 def _capture_failure_network(responses: list[str]) -> None:
     """Dump the captured non-2xx HTTP responses to
-    ``<SCREENSHOT_DIR>/_failures/<test_id>_network.txt``. Empty file
-    when every request succeeded (so the artifact bundle reliably
-    contains the file and the absence of content is itself a signal).
+    ``<capture_dir>/network.txt`` (or legacy ``<test_id>_network.txt``).
+    Empty file when every request succeeded (so the artifact bundle
+    reliably contains the file and the absence of content is itself
+    a signal).
     """
     try:
-        out_dir = SCREENSHOT_DIR / "_failures"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{_test_id_from_pytest_env()}_network.txt"
+        test_id = _test_id_from_pytest_env()
+        path = _capture_path("network.txt", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(responses), encoding="utf-8")
     except Exception:
         pass
@@ -299,15 +422,16 @@ def _capture_failure_network(responses: list[str]) -> None:
 
 def _capture_failure_qs_errors(page: Page) -> None:
     """Dump the text of any QuickSight error overlays visible on the
-    page to ``<SCREENSHOT_DIR>/_failures/<test_id>_qs_errors.txt``.
-    Targets the well-known QS error markers — the "Failed to load
-    visual" tooltip, the visual-error icon's accessible label, and
-    error banners. Empty file when nothing matched.
+    page to ``<capture_dir>/qs_errors.txt`` (or legacy
+    ``<test_id>_qs_errors.txt``). Targets the well-known QS error
+    markers — the "Failed to load visual" tooltip, the visual-error
+    icon's accessible label, and error banners. Empty file when
+    nothing matched.
     """
     try:
-        out_dir = SCREENSHOT_DIR / "_failures"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{_test_id_from_pytest_env()}_qs_errors.txt"
+        test_id = _test_id_from_pytest_env()
+        path = _capture_path("qs_errors.txt", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         # JS-side scan: collect text from any DOM nodes whose
         # automation-id, role, or class hint at an error / failure
         # surface. Broad on purpose — the cost of an extra string is
