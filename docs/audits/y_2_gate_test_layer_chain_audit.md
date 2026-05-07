@@ -395,6 +395,20 @@ The numbers above are rough but illustrate the shape: **iteration speed drops fr
 
 **Single-source-of-drift principle:** Any stable artifact (timing, seed hash, output bytes, dataset row counts) lands in `runs/<run-id>/` and is diffed against the prior run. The hash lock as a separate mechanism collapses into the runner's drift detection.
 
+### 7.13 — Tunable generator parameters (downstream unlock from §7.9 hash-lock collapse)
+
+**The unlock** (LOCKED 2026-05-07): Today the seed-data SHA256 is a fixed-forever value pinned by `tests/data/test_l2_baseline_seed.py` (per the M.2a.8 hash-lock-L2-seed-SHA256 entry). Any change that shifts a single byte fails that test loudly; re-locking requires explicit operator action.
+
+That's the right design when the lock is the only drift signal. But once §7.9 captures hashes into `runs/<run-id>/` and diffs against the prior run, **the global frozen lock isn't load-bearing anymore** — drift detection happens at the run-pair level instead. This unlocks:
+
+- **Tunable generator parameters**: e.g. `--seed-density=N` to ask for more/fewer synthetic transactions per L2. Today we'd have to re-lock the global hash; under the new shape, each run records its own hash and the next run flags drift relative to it.
+- **Per-fuzz-seed sizing**: heavier fuzz seeds for nightly (more rows, deeper chains) without touching the default. Compounds with §7.11 — the operator-opted-in larger sample can also opt into denser data.
+- **Generator regression detection still works**: a previously-green seed that suddenly produces different bytes for the same `--seed-density` = signal. The runner reports the diff; the operator decides if it's a legit generator improvement or a bug.
+
+**Migration path** (out of scope for Y.2.gate but tracked here for visibility): once the runner lands and the run-pair drift detection is proven, the global SHA256 lock in `tests/data/test_l2_baseline_seed.py` can transition from "pin the bytes forever" to "match the most-recent green run + any explicitly-locked baseline." Lower-friction generator tuning falls out of this.
+
+**For now**: Y.2.gate.c just needs to capture the hash to `runs/<run-id>/`; the global lock stays in place. The full transition to tunable parameters is a Y.2.gate-or-later follow-up once the run-pair pattern is proven.
+
 **Output isolation (what gets isolated):**
 
 Every artifact a test layer produces must land under a per-run dir, never overwriting the prior run. Candidates today:
@@ -406,6 +420,9 @@ Every artifact a test layer produces must land under a per-run dir, never overwr
 - **Container logs:** PG / Oracle container stdout/stderr from layer 3 — never captured today; per-run.
 - **Per-test fixture data:** if the runner spins per-test ephemeral DBs, each gets its own container ID logged under `runs/<run-id>/containers.jsonl`.
 - **e2e Playwright traces (LOCKED 2026-05-07):** browser test JS console + network traces / HAR / video / screenshots all land under `runs/<run-id>/traces/<test-id>/`. Existing screenshot dir collapses into this. Failure-only by default; opt-in `--trace-all` for the noisy debugging case.
+- **L2 YAML, always copied — fuzzed AND static** (LOCKED 2026-05-07): every L2 instance the run touches gets its YAML copied to `runs/<run-id>/l2/<instance-or-seed>.yaml`. Reasons: (1) fuzzed YAML is unique per seed and needed to reproduce a failure; (2) static YAML (spec_example / sasquatch_pr) is mutable in-tree — without per-run capture, an edit between runs that breaks something can't be diffed against the prior green run. The `_FUZZ_DUMP_DIR` precedent (`tests/data/test_l2_seed_contract.py:97`) generalizes to all L2 inputs.
+
+**Capture liberally — "disk is cheap compared to time"** (user principle, LOCKED 2026-05-07). Default to capturing every artifact that *might* be useful for triage; pruning is the runner's job (last N=20 runs auto-pruned), not the test author's. The friction of "I wish I had X from the failed run" dwarfs the cost of always-on capture.
 
 **Run-id scheme:** `<utc-iso-timestamp>-<git-short-sha>-<dirty-flag>`, e.g. `20260507T184215Z-30a5ac0`. Dirty-flag suffix when working tree has uncommitted changes (so timing deltas across dirty runs don't claim "+50%" because of unrelated edits).
 
