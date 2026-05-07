@@ -42,7 +42,6 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_TT_LEGS,
     DS_UNIFIED_L2_EXCEPTIONS,
     META_KEY_ALL_SENTINEL,
-    META_MATCH_PASSTHROUGH_SENTINEL,
     META_VALUE_PLACEHOLDER_SENTINEL,
     build_all_l2_flow_tracing_datasets,
     bundle_status_values,
@@ -626,19 +625,22 @@ def _populate_rails_sheet(
             (ds_postings, "pKey"),
         ],
     ))
-    # Value: single-string text-field input bound to pL2ftMetaValue.
+    # Value: single-string text-field input bound to pL2ftMetaValue,
+    # mapped to `pValues` on the postings dataset.
     #
-    # Y.1.p: bridge to (postings, pValues) dropped — pValues no longer
-    # exists at the dataset level. The analysis-level CategoryFilter
-    # below uses pL2ftMetaValue directly to gate rows on the dataset's
-    # `_meta_match_value` projection. Default is the passthrough
-    # sentinel (matches every row's projection when pKey is __ALL__);
-    # any user-typed value narrows to legs whose metadata key=value
-    # pair matches the chosen key.
+    # Y.1.m: was multi_valued=True; the text-field control silently
+    # reverts non-empty commits to default on multi-valued params
+    # (whole cascade broke). Single-valued is the correct shape for
+    # text-field input. Trade-off: analyst can only filter to one
+    # metadata value at a time on this sheet — an acceptable cost since
+    # the multi-value path was 100% broken in production.
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftMetaValue"),
-        default=[META_MATCH_PASSTHROUGH_SENTINEL],
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
         multi_valued=False,
+        mapped_dataset_params=[
+            (ds_postings, "pValues"),
+        ],
     ))
     declared_keys = declared_metadata_keys(l2_instance)
     key_dropdown = sheet.add_parameter_dropdown(
@@ -661,31 +663,6 @@ def _populate_rails_sheet(
         parameter=p_meta_value,
         title="Metadata Value",
     )
-
-    # Y.1.p — Analysis-level CategoryFilter that gates rows on the
-    # dataset-projected `_meta_match_value` column AND wakes the
-    # MappedDataSetParameters bridge for `pKey` (per the AWS docs:
-    # cross-layer parameter substitution requires an analysis-level
-    # filter referencing a parameter; otherwise URL-stamped values
-    # reach widget state but not the dataset substitution layer).
-    #
-    # When pKey = '__ALL__' (default), the dataset projects the
-    # passthrough sentinel for every row, and pL2ftMetaValue's default
-    # IS the same sentinel — every row matches → unfiltered.
-    # When user types a real value, the filter narrows to rows where
-    # `_meta_match_value` (the user-picked key's JSON_VALUE) equals
-    # the typed value.
-    fg_meta = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-meta-cascade",  # type: ignore[arg-type]
-        cross_dataset="SINGLE_DATASET",
-        filters=[CategoryFilter.with_parameter(
-            filter_id="filter-l2ft-meta-cascade",
-            dataset=ds_postings,
-            column=ds_postings["_meta_match_value"],
-            parameter=p_meta_value,
-        )],
-    ))
-    fg_meta.scope_sheet(sheet)
 
     # Transactions table — the postings dataset's SQL handles the
     # metadata-cascade WHERE clause via dataset parameters; the four
@@ -817,12 +794,15 @@ def _populate_chains_sheet(
             (ds_chain_instances, "pKey"),
         ],
     ))
-    # Y.1.p: pValues bridge dropped, default flipped to passthrough
-    # sentinel — see Rails sheet for the AWS-pattern diagnostic.
+    # Y.1.m: single-valued (was multi_valued=True, broke under text-field
+    # control — see Rails sheet for the diagnostic).
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftChainsMetaValue"),
-        default=[META_MATCH_PASSTHROUGH_SENTINEL],
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
         multi_valued=False,
+        mapped_dataset_params=[
+            (ds_chain_instances, "pValues"),
+        ],
     ))
     declared_keys = declared_metadata_keys(l2_instance)
     key_dropdown = sheet.add_parameter_dropdown(
@@ -838,20 +818,6 @@ def _populate_chains_sheet(
         parameter=p_meta_value,
         title="Metadata Value",
     )
-    # Y.1.p — analysis-level filter that wakes the pKey bridge AND
-    # gates rows on `_meta_match_value`. See Rails sheet for the full
-    # explanation.
-    fg_meta_chains = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-chains-meta-cascade",  # type: ignore[arg-type]
-        cross_dataset="SINGLE_DATASET",
-        filters=[CategoryFilter.with_parameter(
-            filter_id="filter-l2ft-chains-meta-cascade",
-            dataset=ds_chain_instances,
-            column=ds_chain_instances["_meta_match_value"],
-            parameter=p_meta_value,
-        )],
-    ))
-    fg_meta_chains.scope_sheet(sheet)
 
     sheet.layout.row(height=21).add_table(
         width=36,
@@ -987,12 +953,16 @@ def _populate_transfer_templates_sheet(
             (ds_tt_legs, "pKey"),
         ],
     ))
-    # Y.1.p: pValues bridges dropped, default flipped to passthrough
-    # sentinel — see Rails sheet for the AWS-pattern diagnostic.
+    # Y.1.m: single-valued (was multi_valued=True, broke under text-field
+    # control — see Rails sheet for the diagnostic).
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftTtMetaValue"),
-        default=[META_MATCH_PASSTHROUGH_SENTINEL],
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
         multi_valued=False,
+        mapped_dataset_params=[
+            (ds_tt_instances, "pValues"),
+            (ds_tt_legs, "pValues"),
+        ],
     ))
     declared_keys = declared_metadata_keys(l2_instance)
     key_dropdown = sheet.add_parameter_dropdown(
@@ -1008,29 +978,6 @@ def _populate_transfer_templates_sheet(
         parameter=p_meta_value,
         title="Metadata Value",
     )
-    # Y.1.p — analysis-level filter wakes the pKey bridge AND gates rows
-    # on `_meta_match_value`. ALL_DATASETS scope so it narrows tt-instances
-    # (Sankey) AND tt-legs (table) together. See Rails sheet for the full
-    # explanation.
-    fg_meta_tt = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-tt-meta-cascade",  # type: ignore[arg-type]
-        cross_dataset="ALL_DATASETS",
-        filters=[
-            CategoryFilter.with_parameter(
-                filter_id="filter-l2ft-tt-meta-cascade-instances",
-                dataset=ds_tt_instances,
-                column=ds_tt_instances["_meta_match_value"],
-                parameter=p_meta_value,
-            ),
-            CategoryFilter.with_parameter(
-                filter_id="filter-l2ft-tt-meta-cascade-legs",
-                dataset=ds_tt_legs,
-                column=ds_tt_legs["_meta_match_value"],
-                parameter=p_meta_value,
-            ),
-        ],
-    ))
-    fg_meta_tt.scope_sheet(sheet)
 
     # Edge legend. QuickSight Sankey doesn't support data-driven
     # ribbon colors (colors auto-assign per source/target node by the
