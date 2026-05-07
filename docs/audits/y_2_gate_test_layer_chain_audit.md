@@ -172,13 +172,9 @@ Open design questions surfaced by the audit. Need user direction before Y.2.gate
 
 **Question:** Is QuickSight's rendering layer dialect-sensitive enough to justify the second cell? (My read: probably not for Sankey/Table/KPI; possibly for date formatting / timezone display.) **Defer decision** but flag as a candidate for nightly addition.
 
-### 7.5 — Container-backed local DBs
+### 7.5 — Container-backed local DBs (LOCKED)
 
-**Per Y.2.gate.b:** layer 3a/3b dialects move to per-variant Docker containers (testcontainers-python). Today they target a live Aurora — fine for one developer, breaks for parallel runs.
-
-**Question:** Does the user want both modes supported (containerized for fast loop, live Aurora for "is the deployed DB still healthy" sanity), or commit fully to containers locally and reserve Aurora for layer 4+?
-
-**Opinion:** Containers as default for layer 3; Aurora reserved for layer 4+. Keep an opt-in flag (`--live-db`) for the rare "test against the actual deployed DB" case.
+**Decision:** Containers as default for layer 3 (testcontainers-python). Aurora reserved for layer 4+ (deploy / QS e2e). Opt-in `--live-db` flag for the rare "test against the actual deployed DB" case. **Locked by user 2026-05-07** (consistent with §7.10's App2 promotion — both flow from "local-Docker is the fast-feedback substrate").
 
 ### 7.6 — Layer 3 substructure (3a/3b/3c/3d/3e)
 
@@ -202,11 +198,16 @@ The audit found 5 sub-layers under "DB tests". These differ in what they exercis
 
 The audit table marked some layers as "unknown" wall-clock. Before Y.2.gate.b finalizes the budget targets, we should measure each layer once and lock numbers in.
 
-### 7.10 — App2 against local Docker as the early e2e gate (user-flagged)
+### 7.10 — App2 against local Docker as the early e2e gate (LOCKED)
 
-**User question:** Can we expose local Docker databases to QuickSight as an early e2e gate? That would remove the AWS autoscaling contention in AWS and CI.
+**Decision:** App2 (HTMX dialect, layer 7 today) becomes the canonical fast-feedback e2e gate at **layer 3.7** in the new chain. QS layer 4-6 demotes to nightly + pre-release parity cell. **Locked by user 2026-05-07.**
 
-**Direct answer:** Technically yes (VPC connection + Tailscale-into-VPC tunnel; we already have `vpc_connection_arn` plumbed via the parked `hotfix-v8.7.4-vpc-connection-arn` branch). But heavy infra, fragile, and doesn't actually solve the AWS contention because QS is still in AWS and still rate-limits at the API/render layer regardless of where the DB lives.
+**Rejected paths** (don't re-litigate):
+
+- **VPC connection + Tailscale-into-VPC tunnel** to expose local Docker to QS. Plumbed via parked `hotfix-v8.7.4-vpc-connection-arn` branch. Rejected: QS VPC connections are expensive (per-hour billing) AND don't relieve the QS API throttle anyway — QS is still in AWS, still rate-limits at the render layer.
+- **Public IP + port-forward** from local Docker to QS. User has the public IP available but explicitly chose not to use it: layering works given App2 is maturing and we'd rather invest in App2's maturity than build perimeter infra around QS.
+
+**Why the reframe works:** App2's "immaturity" is a feature for this decision — it means every Phase Y / Phase X.2 sweep deepens its coverage. The percentage of bug classes App2 catches is monotonically increasing as the project progresses. QS coverage stays roughly constant (it's a frozen render layer); App2 grows. The chain placement reflects the trajectory, not just today's snapshot.
 
 **Better answer that's already built — promote App2 in the chain:**
 
@@ -240,9 +241,7 @@ App2 (layer 7 in the audit, X.2.f/g/h) runs the **same dataset SQL** as QS, agai
 - **AWS invocation** (`./run_tests.sh up_to=qs-e2e` or similar) is opt-in for the cases where you actually changed QS-side wiring. Includes layer 4-6.
 - **CI**: PR-quick = App2 only (fast PR feedback). Push:main = App2 + QS PG-API. Nightly = full matrix including QS browser. Existing `e2e.yml` cells become the QS-side cells; new `app2-e2e.yml` cell becomes the high-frequency gate.
 
-**This is a strategic reprioritization** — not a Y.2.gate-only decision. Likely owned by Phase X.2.j (4-way cross-tool agreement). **Decision needed from user:** is this the right framing, or is QS still meant to be the canonical e2e and App2 the auxiliary?
-
-**Opinion:** Yes, flip it. App2 is faster, cheaper, catches more bugs per minute, doesn't require AWS auth. QS remains the "did the actual deployed thing render?" check, but at lower frequency. **This also relieves the QS-throttle bottleneck** Y.2.gate.j called out — and Y.2's SQL pushdown reduces it further. Compounding wins.
+**Strategic reprioritization scope:** Not Y.2.gate-only. Y.2.gate.b/c slot App2 ahead of QS in the chain; Phase X.2.j (4-way cross-tool agreement) owns the App2-coverage growth that justifies it. Compounding wins: Y.2 SQL pushdown reduces QS query pressure → AWS contention easier; App2 layering reduces AWS dependency further → iteration speed compounds.
 
 ---
 
