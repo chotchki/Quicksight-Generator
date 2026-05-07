@@ -38,6 +38,15 @@ jobs:
         # `--frozen` fails the build if the lock is out of date.
         run: uv sync --frozen --extra dev --extra audit
 
+      - name: Install Playwright WebKit browser
+        # X.2.a.2 added a Playwright JS unit harness under tests/js/
+        # that launches WebKit. Playwright ships its CLI but not the
+        # browser binaries; CI must `playwright install` the browser
+        # explicitly. Otherwise pytest fails with
+        # "Executable doesn't exist at /home/runner/.cache/ms-playwright/webkit-…/pw_run.sh"
+        # — same install used by the e2e workflow's browser job.
+        run: .venv/bin/playwright install --with-deps webkit
+
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
         # W.8b — drop ``--cov-report=xml --cov-report=term`` from this
         # job: the coverage aggregator job below downloads each
