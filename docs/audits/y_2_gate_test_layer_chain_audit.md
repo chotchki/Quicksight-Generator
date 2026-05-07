@@ -147,66 +147,56 @@ Open design questions surfaced by the audit. Need user direction before Y.2.gate
 
 **Question for user:** Are there other "CLI tests" you know about? (`scripts/*.py` is unclear — `dump_top_queries.py`, `harness_manual_deploy.py`, `m2_6_verify.py`, `qs_substitution_probe.py`, `sweep_harness_orphans.py` — are any of these "tests" in disguise?)
 
-### 7.2 — Silent-skip env gates vs runner-driven gates
+**Chris**: I think these are one off tools that have been built as we hit stuff. I think the product + testing tool covers it.
+
+### 7.2 — Silent-skip env gates vs runner-driven gates (LOCKED — option A)
 
 **Today:** `QS_GEN_DB_TESTS=1`, `QS_GEN_DEMO_DB_URL=…`, `QS_E2E_USER_ARN=…` all silently skip (or raise) when the env is missing. The operator can't tell from a green pytest output that the env-gated tests didn't run.
 
-**Decision options:**
-- **(A) Strict**: rip out the silent-skip gates. The runner sets the env vars based on `--up-to=<layer>`. If a test is meant for layer 3c, the runner sets `QS_GEN_DEMO_DB_URL` (resolved from cfg or container); if not running layer 3c, the test isn't collected.
-- **(B) Loud**: keep the gates but make pytest summarize "5 tests skipped because `QS_GEN_DEMO_DB_URL` unset" in red at the bottom. Operator knows what they missed.
+**Decision (LOCKED 2026-05-07):** Option A. Rip out the silent-skip gates. The runner sets env vars based on the layer it's running. If a test is meant for layer 3c, the runner provides `QS_GEN_DEMO_DB_URL` (resolved from cfg or container); if not running layer 3c, the test isn't collected.
 
-**Opinion:** (A). Silent-skip is the bug class that lets Y.2.b-shaped problems through. The runner makes (A) viable because it knows what layer it's running.
-**Chris**: Agree on A and if the runner config is missing its stuff it should fail loudly.
+**Plus:** runner config that's missing required values fails loudly — not a polite skip, an explicit error pointing at the missing config item.
 
-### 7.3 — `quicksight-gen <verb> test` precedent
+**Why:** Silent-skip is the bug class that let Y.2.b through. The runner makes "no env vars to remember" viable because it knows what layer it's running. Loud failure on missing config completes the contract — the operator can never get into the state of "I thought the tests ran but they were silently skipped."
+
+### 7.3 — Runner shape: shell script, not Click subcommand (LOCKED — option B)
 
 **Discovered:** `cli/{json,schema,data,docs,audit}.py::test` already shell out to `pytest + pyright` for per-artifact testing. This is a precedent for "CLI invokes the test layers it cares about".
 
-**Decision options:**
-- **(A) Build the runner as a Click subcommand**: `quicksight-gen test up_to=<layer> variants=<set>`. Rides the existing CLI infrastructure; operator's muscle memory carries over.
-- **(B) Build as a shell script**: `./run_tests.sh up_to=<layer> variants=<set>`. Explicit, easier to read, doesn't pollute the user-facing CLI.
+**Decision (LOCKED 2026-05-07):** Option B. Build the runner as a shell script (`./run_tests.sh`). Developer-focused tooling, not shippable customer-facing surface. Existing `quicksight-gen <verb> test` subcommands stay as-is (per-artifact convenience) and may eventually delegate to the runner internally.
 
-**Opinion:** (B) for the runner; keep `<verb> test` as is (per-artifact convenience), and have it eventually delegate to the runner under the hood. The runner is dev-tooling, not customer-facing CLI.
-**Chris**: I agreed this is developer focused tooling, not shipable surface. 
+**Why:** The runner is dev infrastructure, not part of the customer-facing CLI. Shell script keeps it explicit + readable + outside the Click surface where customers might stumble onto it.
 
-### 7.4 — Dialect coverage gap (browser × Oracle)
+### 7.4 — Dialect coverage gap (browser × Oracle) (LOCKED — add)
 
 **Today:** `e2e-pg-browser` runs nightly. `e2e-oracle-browser` doesn't exist.
 
-**Question:** Is QuickSight's rendering layer dialect-sensitive enough to justify the second cell? (My read: probably not for Sankey/Table/KPI; possibly for date formatting / timezone display.) **Defer decision** but flag as a candidate for nightly addition.
-**Chris**: Yes it is, we should be at parity here.
+**Decision (LOCKED 2026-05-07):** Add `e2e-oracle-browser` to the nightly cron. PG and Oracle are at parity for every other layer; the browser cell shouldn't be the asymmetric exception. Tracked in Y.2.gate.k.
 
 ### 7.5 — Container-backed local DBs (LOCKED)
 
 **Decision:** Containers as default for layer 3 (testcontainers-python). Aurora reserved for layer 4+ (deploy / QS e2e). Opt-in `--live-db` flag for the rare "test against the actual deployed DB" case. **Locked by user 2026-05-07** (consistent with §7.10's App2 promotion — both flow from "local-Docker is the fast-feedback substrate").
 
-### 7.6 — Layer 3 substructure (3a/3b/3c/3d/3e)
+### 7.6 — Layer 3 substructure: collapsed to `up_to=db` (LOCKED)
 
-The audit found 5 sub-layers under "DB tests". These differ in what they exercise (parse vs counts vs invariant assertions vs PDF agreement vs SQLite recompute) and how they're gated.
+The audit found 5 sub-layers under "DB tests" (3a/3b/3c/3d/3e — parse, counts, runtime assertions, PDF-vs-DB, PDF-vs-SQLite).
 
-**Question:** Worth collapsing to fewer layers in the runner's UX (`up_to=db` runs all of them), or keep the granularity (`up_to=db.smoke` vs `up_to=db.runtime`)?
+**Decision (LOCKED 2026-05-07):** Collapse all 5 sub-layers under a single runner UX flag `up_to=db`. Power users scope further with `--only=…`. Internally the runner still tracks per-sub-layer for timing + failure attribution, but the operator-facing knob is one symbol.
 
-**Opinion:** Collapse to `up_to=db` for simplicity. Power users can scope further with `--only=…`.
-
-**Chris**: agree
-
-### 7.7 — Layer 7 (App2) and layer 8 (harness) placement
+### 7.7 — Layer 7/8 placement (LOCKED)
 
 **Today:** Layer 7 runs alongside layer 6 (in `pytest tests/e2e`); layer 8 runs ONLY via `--harness` (mutually exclusive with layer 5/6).
 
-**Question:** Are these really the same conceptual layer? Layer 7 is "App2 dialect renders" — more like a dialect variant of layer 6. Layer 8 is "ephemeral per-test deploy + assertion" — a different topology entirely.
+**Decision (LOCKED 2026-05-07):**
 
-**Opinion:**
-- Layer 7 → variant of layer 6 (App2 dialect).
-- Layer 8 → its own layer 9, runs after layer 6, but optional (gated `--harness=true`). Nightly opt-in; not in the default chain.
+- **Layers 6 + 7 are flavors of the same layer** — both run "the e2e browser tests"; merging them gives a natural comparison point (App2 vs QS for the same scenario, side-by-side). Variant axis on the merged layer: `target = qs | app2`. Compounds with §7.10 — both run in parallel under §7.12's "parallel with fast-fail" framing.
+- **Layer 8 (harness) sits in parallel** to the merged 6/7 layer. It's a different shape — answers "did our (uncontrolled) dependencies break us?" — not "does our wiring render correctly?". **Stays first-class, not optional** ("optional is where stuff goes to die"). Continue investing in the test-failure troubleshooting tools (M.4.1.f manifests, etc.) the harness depends on.
 
-**Chris**: 6 and 7 are flavors of the same thing.. run the e2e browser tests. By bringing them to the same layer there is a natural comparison point. 8 feels like an entirely different shape, did our dependencies that we don't control break us? it feels like it sits in parallel to the other flavors but I don't know if it needs to exist independently. I want to say optional but optional is where stuff goes to die. We may just have to continue to focus on our test failure troubleshooting tools that we've built up.
+**Why:** Adjacent flavors get adjacent layer numbers so the runner can express "test all browser flavors" cheaply. Independent shapes get independent layers so a harness regression doesn't masquerade as an app-wiring failure. The "no optional" framing prevents drift — we maintain layer 8, not let it bit-rot.
 
-### 7.8 — Wall-clock targets need measurement
+### 7.8 — Wall-clock targets (LOCKED — emerge from §7.9)
 
-The audit table marked some layers as "unknown" wall-clock. Before Y.2.gate.b finalizes the budget targets, we should measure each layer once and lock numbers in.
-
-**Chris**: We may not need to go crazy, as part of building this test orchestrator we'll get timings.
+**Decision (LOCKED 2026-05-07):** Don't pre-measure. The runner's per-(layer, variant, test) timing capture (§7.9) generates the numbers automatically once the runner runs. First-pass budgets get baselined from the first few runs; thresholds get tightened over time as Phase Y / X.2 sweeps land. No upfront measurement work needed.
 
 ### 7.10 — App2 against local Docker as the early e2e gate (LOCKED)
 
@@ -276,13 +266,12 @@ The persistent-Aurora pattern is the bug. Aurora Serverless v2 minimum capacity 
 
 **The split:**
 
-#### CI side — ephemeral lifecycle
+#### CI side — ephemeral lifecycle (LOCKED — start/stop)
+
+**Decision (LOCKED 2026-05-07):** start/stop the existing cluster (not create-per-job). Storage continues; compute drops to zero between runs; preserves seed state across CI invocations.
 
 Each AWS-touching CI job:
-1. **Pre-test step**: `aws rds start-db-cluster` (Aurora) / `aws rds start-db-instance` (Oracle) — if cluster exists in stopped state.
-   - Or alternative: provision a fresh cluster with `aws rds create-db-cluster` per job. More expensive (creation has fixed cost) but isolates concurrent CI runs.
-   - Choice depends on test volume: low-volume → start/stop the same cluster; high-volume parallel → create-per-job.
-   - **Chris**: start with start/stop;
+1. **Pre-test step**: `aws rds start-db-cluster` (Aurora) / `aws rds start-db-instance` (Oracle).
 2. Run schema + seed + e2e against the freshly-started DB.
 3. **Always-run cleanup step**: `aws rds stop-db-cluster` / `delete-db-cluster`. Use GHA `if: always()` so the cleanup fires even on test failure.
   - Should also delete the tables so the storage cost is nothing
@@ -304,27 +293,29 @@ The runner exposes infra-lifecycle commands. **No-arg defaults to ALL** (matches
 ```
 
 `status` is the "did I forget to turn it off?" check — list every running resource with its hourly cost so the cost surface is visible, not buried.
-  - I don't care about the running cost, I have a sense of the pain
 
 **Why default-to-all matches the project pattern:** `quicksight-gen json apply` with no args deploys all 4 dashboards. `quicksight-gen schema apply` applies the full schema. The common path is "I'm starting work; bring up everything I might need." Subsetting is for the rare case ("I only want Docker today; AWS stays sleeping").
 
-The runner's layer dispatch (Y.2.gate.b) checks `up` state before invoking AWS-touching layers. If the operator did `up local` (explicitly skipping AWS) and then asks for layer 4, the runner fails fast: `"layer 4 needs AWS DB; run './run_tests.sh up aws' first or invoke './run_tests.sh up_to=app2-e2e' to skip"`. The default `up` covers this case without friction.
+The runner's layer dispatch (Y.2.gate.b) checks **the actual dependency** (probe DB connection, container daemon, etc.) before invoking AWS/Docker-touching layers — **not a state file or lock file**. Stale state files are a known footgun; the runtime check is authoritative. Same logical pattern as "no silent skip": if the dependency isn't reachable, fail fast with a clear error.
 
-**Chris**: I'd like the check to be against the dependency so we don't up with stale lock files
+**Implementation slots into Y.2.gate.l.** Specific deliverables (LOCKED 2026-05-07):
 
-**Implementation slots into Y.2.gate.l (new sub-task).** Specific deliverables:
-
-- `aws rds start/stop` wrapper (boto3 or shell-out to AWS CLI) with idempotency + readiness wait.
+- `aws rds start/stop` wrapper (boto3) with idempotency + readiness wait.
 - `docker compose up/down` wrapper for local containers.
-- State file under `runs/.up-state.json` (gitignored) tracks what's running across `up`/`down`/`status` invocations.
-  - **Chris**: I'd like to avoid more hidden state unless the check is too expensive.
+- **No state file.** Runner probes the actual dependency (DB connection, container daemon) — stale lock files are a footgun the user explicitly wants avoided. Probe is cheap; runtime check is authoritative.
 - CI workflow updates: `e2e.yml` + `release.yml::e2e-against-testpypi` gain `start-before` + `stop-after-always` steps.
-- Cost-visibility command: `status --cost` queries AWS pricing API (or hardcoded estimates) for what's currently running.
-- Auto-stop on idle: optional cron/timer that runs `down` after N hours of inactivity (defaults off; opt-in via config).
-  - **Chris**: not needed
+- Cost-visibility command: `status --cost` queries AWS pricing API (or hardcoded estimates) for what's currently running. Motivation here is **pain visibility, not dollar accounting** — the user's framing: "I don't care about the running cost, I have a sense of the pain." Surface what's running so the operator knows; don't optimize for cost.
+- **No auto-stop timer.** User explicitly rejected — adds hidden behavior; relies on the operator's `down` discipline + the cost-visibility surface to keep things tidy.
 
-**Compounds with §7.10:** The App2-as-fast-gate decision means most iterations don't need AWS at all. `up aws` becomes the explicit "I'm doing parity work" signal, used a handful of times per week, not constantly.
-  - **Chris**: The main end deliverable is still AWS quicksight I think these should be tested in parallel with a fast fail if one fails.
+#### App2 + QS run in parallel — not sequential (LOCKED — important refinement to §7.10)
+
+**User direction:** "The main end deliverable is still AWS QuickSight — App2 and QS should be tested in parallel with fast-fail if one fails."
+
+This is a clarification of the §7.10 promotion. App2 is the fast feedback path because it can run against local Docker without any AWS contact, but **the merged 6/7 layer (browser e2e) runs both `target=qs` AND `target=app2` in parallel** at the same step. Either failure fails the run. App2's speed advantage is in the local-Docker layers (3 + 7-without-AWS); at the browser-e2e layer, App2-local-Docker and QS-AWS run concurrently, fast-fail.
+
+**Why the refinement matters:** "App2 first, QS later" framing suggested QS could get stale between runs. The user's stance: QS is the deliverable, not the parity check; running both in parallel keeps both honest, with no temporal separation that lets one rot.
+
+**Compounds with §7.12 ephemeral start/stop:** the AWS DB starts at run-start (CI) or by `./run_tests.sh up` (local), runs alongside Docker for the parallel test phase, stops at run-end. Both targets exercised every full run.
 
 **Decisions for user:**
 
@@ -380,23 +371,29 @@ The numbers above are rough but illustrate the shape: **iteration speed drops fr
 
 **Compounds with §7.10's App2 promotion** — App2 against local Docker × 100 fuzz seeds is the same wall-clock as one App2 run, and exercises 100× more topology coverage. Each Phase Y / X.2 sweep that lands deepens what the property-test catches.
 
-**Decision needed:**
+**Decision (LOCKED 2026-05-07):** Fuzz seed is a first-class variant axis with **default = ONE random seed per run** (different on each invocation). The operator (or CI nightly) opts in to larger samples via `--fuzz-seeds=N` or similar. Rationale:
 
-- Sample sizes per layer (above are guesses; user calibration needed).
-- ⚠ threshold for "this seed is a real bug, not a generator edge case".
-- Whether the seed pool is fixed (range(N)) or hash-derived from the commit SHA.
+- Default cost stays low (1 extra seed per layer per run is cheap).
+- **Cumulative coverage** emerges naturally: each run hits a different seed, so over a week of CI runs + local iterations, hundreds of distinct topologies get exercised. Property-testing without the per-run cost.
+- The user explicitly opts in to a larger sample (`--fuzz-seeds=100`) when they want the heavier coverage in one shot — typical for nightly cron + pre-release runs.
+- A previously-green seed that suddenly fails on a new run = signal (regression in either generator or consumer); same drift-detection shape as the timings + hash-lock pattern.
 
-**Tracked under:** Y.2.gate.b (variants design — fuzz seed promoted from "Future" to first-class), Y.2.gate.c (implement seed-pool sampling), Y.2.gate.j (parallelism — fuzz-seed parallelism is the biggest single perf win).
+**Open calibration (no lock yet):** ⚠ threshold for "real bug vs generator edge case." Probably empirical — start with no threshold, tighten once we have data.
 
-**Chris**: I think the fuzz should be a fully baked variant that by default runs a DIFFERENT random seed. the user (especially for ci) can pass larger variant requests but the default is a single random.
+**Tracked under:** Y.2.gate.b (variants design — fuzz seed first-class with single-random default), Y.2.gate.c (implement opt-in larger sampling), Y.2.gate.j (parallelism applies when sample > 1).
 
 ---
 
-### 7.9 — Per-run output isolation + timing capture (new)
+### 7.9 — Per-run output isolation + timing capture (LOCKED + extended)
 
 **User direction:** Every run gets its own isolated output dir, and the runner captures per-(layer, variant, test) timings. On the next run, the runner reads the prior run's timings and reports `step took 24s (was 19s, +26%)`. This becomes a smell detector — same shape as hash-locked seed data: a sudden timing delta flags a regression before it crashes the test.
 
-**Chris**: I feel like this output directory is the real home for the hash lock, next run checks for drift when it grabs the timings.
+**LOCKED extension 2026-05-07:** the per-run output dir is **also the real home for the hash lock**. Next run checks for drift on both timings AND seed-hash when it pulls the prior run's data. Combines two drift-detection mechanisms into one capture/diff loop:
+
+- Old pattern: hash-lock lives in `tests/data/_locked/` (or wherever) as a tracked file; failures = hash mismatch.
+- New pattern: hash gets captured into `runs/<run-id>/timings.json` (or sibling `hashes.json`) alongside timings. Next run diffs both against the prior — drift on either is flagged the same way.
+
+**Single-source-of-drift principle:** Any stable artifact (timing, seed hash, output bytes, dataset row counts) lands in `runs/<run-id>/` and is diffed against the prior run. The hash lock as a separate mechanism collapses into the runner's drift detection.
 
 **Output isolation (what gets isolated):**
 
@@ -404,12 +401,11 @@ Every artifact a test layer produces must land under a per-run dir, never overwr
 - **Generated JSON:** `run/out/` (today shared); should become `runs/<run-id>/out/<dialect>/`.
 - **Failure screenshots:** `tests/e2e/screenshots/` (today shared, gitignored); should become `runs/<run-id>/screenshots/<dialect>/<test-id>/`.
 - **Failure manifests:** `tests/e2e/failures/*.txt` (today shared); should become `runs/<run-id>/failures/`.
-- **Coverage data:** `.coverage.py3.{12,13}` (today named per-Python-version, accumulates); should become `runs/<run-id>/coverage/`.
+- **Coverage data:** `.coverage.py3.13` (currently in repo root); should become `runs/<run-id>/coverage/`.
 - **Top-queries dumps:** `dump_top_queries.py` output (today shared); per-run.
 - **Container logs:** PG / Oracle container stdout/stderr from layer 3 — never captured today; per-run.
 - **Per-test fixture data:** if the runner spins per-test ephemeral DBs, each gets its own container ID logged under `runs/<run-id>/containers.jsonl`.
-
-**Chris**: the e2e javascript/network traces should land here too
+- **e2e Playwright traces (LOCKED 2026-05-07):** browser test JS console + network traces / HAR / video / screenshots all land under `runs/<run-id>/traces/<test-id>/`. Existing screenshot dir collapses into this. Failure-only by default; opt-in `--trace-all` for the noisy debugging case.
 
 **Run-id scheme:** `<utc-iso-timestamp>-<git-short-sha>-<dirty-flag>`, e.g. `20260507T184215Z-30a5ac0`. Dirty-flag suffix when working tree has uncommitted changes (so timing deltas across dirty runs don't claim "+50%" because of unrelated edits).
 
@@ -459,7 +455,7 @@ Threshold for warning highlight (the ⚠): **>50% change** (configurable). Below
 **Storage policy:**
 - `runs/` is gitignored (large, frequently-written).
 - Keep last N=20 runs; auto-prune older. Configurable.
-- Optionally upload `timings.json` as a CI artifact so cross-CI-run drift is also visible.
+- **CI uploads `timings.json` as a workflow artifact** (LOCKED 2026-05-07). Each CI run's timings are downloadable + comparable to the prior run's, so cross-CI-run drift is as visible as local-run drift. Same shape as the existing `coverage-data-py3.13` / `e2e-pg-api-top-queries-${run_id}` artifact pattern in `ci.yml` / `e2e.yml`.
 
 **Tracked under:** Y.2.gate.b (design) + Y.2.gate.c (implement) — adds requirements but doesn't need its own letter unless we decide it's enough scope to split out.
 
