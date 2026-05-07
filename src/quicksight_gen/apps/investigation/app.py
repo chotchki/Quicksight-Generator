@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
-    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
     CF_INV_ANETWORK_IS_INBOUND_EDGE,
     CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
@@ -28,8 +27,6 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
-    FG_INV_ANETWORK_AMOUNT,
-    FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_WINDOW,
@@ -832,28 +829,39 @@ def _build_account_network_sheet(
         arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-anetwork-accounts-dataset")),
     ))
 
+    # Y.2.b — bridge each analysis-level parameter to its dataset-level
+    # twin. QS resolves <<$pInvANetworkAnchor>> / <<$pInvANetworkMinAmount>>
+    # in ds_anet's SQL by walking MappedDataSetParameters → finding the
+    # analysis param of the same name → substituting its current value
+    # at query time. The K.4.8k narrow accounts dataset
+    # (DS_INV_ANETWORK_ACCOUNTS) feeding the dropdown has no parameters;
+    # nothing bridges into it.
     anchor_param = analysis.add_parameter(StringParam(
         name=P_INV_ANETWORK_ANCHOR,
-        # No default — SelectAll=HIDDEN forces dropdown to land on
-        # first available anchor on first paint.
+        # No analysis-level default — SelectAll=HIDDEN forces dropdown
+        # to land on the first available anchor on first paint. The
+        # dataset-level default is a sentinel that matches no row in
+        # the matview, so the Sankeys + table render empty until the
+        # dropdown commits a real anchor and the bridge fires.
         default=[],
+        mapped_dataset_params=[
+            (ds_anet, str(P_INV_ANETWORK_ANCHOR)),
+        ],
     ))
     min_amount_param = analysis.add_parameter(IntegerParam(
         name=P_INV_ANETWORK_MIN_AMOUNT,
         default=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+        mapped_dataset_params=[
+            (ds_anet, str(P_INV_ANETWORK_MIN_AMOUNT)),
+        ],
     ))
 
-    # Calc field names kept explicit because they're referenced by
-    # the constants module + analysts read them as column headers.
-    is_anchor_edge = analysis.add_calc_field(CalcField(
-        name=CF_INV_ANETWORK_IS_ANCHOR_EDGE,
-        dataset=ds_anet,
-        expression=(
-            "ifelse({source_display} = ${pInvANetworkAnchor} "
-            "OR {target_display} = ${pInvANetworkAnchor}, "
-            "'yes', 'no')"
-        ),
-    ))
+    # Y.2.b — is_anchor_edge calc field removed (only consumer was the
+    # now-dropped FG_INV_ANETWORK_ANCHOR; ds_anet's SQL now pre-narrows
+    # to anchor-touching edges so every row is_anchor_edge='yes' by
+    # construction). Direction-specific calc fields below stay — they
+    # partition the pre-narrowed set into per-Sankey directions; Y.3.b
+    # will push them into SQL CASE expressions too.
     is_inbound_edge = analysis.add_calc_field(CalcField(
         name=CF_INV_ANETWORK_IS_INBOUND_EDGE,
         dataset=ds_anet,
@@ -980,21 +988,11 @@ def _build_account_network_sheet(
         )],
     )
 
-    # Anchor filter — table only (broader scope than the directional
-    # Sankeys, which use direction-specific calc fields).
-    sheet.scope(
-        analysis.add_filter_group(FilterGroup(
-            filter_group_id=FG_INV_ANETWORK_ANCHOR,
-            filters=[CategoryFilter.with_values(
-                filter_id="filter-inv-anetwork-anchor",
-                dataset=ds_anet,
-                column=is_anchor_edge,
-                values=["yes"],
-                match_operator="CONTAINS",
-            )],
-        )),
-        [table],
-    )
+    # Y.2.b — FG_INV_ANETWORK_ANCHOR removed; the broad anchor narrow
+    # (source_display = anchor OR target_display = anchor) now lives in
+    # ds_anet's SQL via <<$pInvANetworkAnchor>>. Every row in the
+    # dataset is anchor-touching by construction; the table doesn't
+    # need a calc-field-based anchor filter.
 
     # Inbound direction filter — inbound Sankey only.
     sheet.scope(
@@ -1026,18 +1024,10 @@ def _build_account_network_sheet(
         [outbound_sankey],
     )
 
-    # Min-amount filter — all visuals on the sheet.
-    analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_ANETWORK_AMOUNT,
-        filters=[NumericRangeFilter(
-            filter_id="filter-inv-anetwork-amount",
-            dataset=ds_anet,
-            column=ds_anet["hop_amount"],
-            minimum=ParameterBound(min_amount_param),
-            null_option="NON_NULLS_ONLY",
-            include_minimum=True,
-        )],
-    )).scope_sheet(sheet)
+    # Y.2.b — FG_INV_ANETWORK_AMOUNT removed; the min-amount cutoff
+    # now lives in ds_anet's SQL via
+    # ``hop_amount >= <<$pInvANetworkMinAmount>>``. Slider widget still
+    # drives the value via the mapped_dataset_params bridge above.
 
     # Anchor dropdown reads the K.4.8k narrow accounts dataset (not the
     # main matview) to keep the dropdown's distinct-source-display query

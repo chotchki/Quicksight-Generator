@@ -83,10 +83,17 @@ FG_INV_ANOMALIES_WINDOW = FilterGroupId("fg-inv-anomalies-window")  # K.4.4
 # Bridges: ``apps/investigation/app.py``::``mapped_dataset_params`` on
 # each parameter declaration.
 FG_INV_MONEY_TRAIL_WINDOW = FilterGroupId("fg-inv-money-trail-window")  # Q.1.b
-FG_INV_ANETWORK_ANCHOR = FilterGroupId("fg-inv-anetwork-anchor")        # K.4.8 — table only
+# Y.2.b — FG_INV_ANETWORK_ANCHOR + FG_INV_ANETWORK_AMOUNT removed; the
+# broad anchor narrow (source = anchor OR target = anchor) and the
+# min-amount cutoff are now dataset-level pushdowns substituted into
+# ``build_account_network_dataset``'s SQL via
+# ``<<$pInvANetworkAnchor>>`` / ``<<$pInvANetworkMinAmount>>``.
+# Bridges: ``apps/investigation/app.py``::``mapped_dataset_params``.
+# The directional FGs below stay — they partition the pre-narrowed
+# anchor-touching set into per-Sankey directions; Y.3.b will push
+# those into SQL CASE expressions too.
 FG_INV_ANETWORK_INBOUND = FilterGroupId("fg-inv-anetwork-inbound")      # K.4.8 — inbound Sankey only
 FG_INV_ANETWORK_OUTBOUND = FilterGroupId("fg-inv-anetwork-outbound")    # K.4.8 — outbound Sankey only
-FG_INV_ANETWORK_AMOUNT = FilterGroupId("fg-inv-anetwork-amount")        # K.4.8
 
 # ---------------------------------------------------------------------------
 # Calculated fields
@@ -98,13 +105,15 @@ FG_INV_ANETWORK_AMOUNT = FilterGroupId("fg-inv-anetwork-amount")        # K.4.8
 # whose count crosses pInvFanoutThreshold.
 CF_INV_FANOUT_DISTINCT_SENDERS = "recipient_distinct_sender_count"
 
-# Analysis-level calc field on the account-network dataset. True when
-# the edge's source OR target equals pInvANetworkAnchor — the way we
-# express "any edge touching the anchor" in a single CategoryFilter.
-# Scoped to the touching-edges table only; the two directional Sankeys
-# each use their own direction-specific calc field below.
-CF_INV_ANETWORK_IS_ANCHOR_EDGE = "is_anchor_edge"
-
+# Y.2.b — CF_INV_ANETWORK_IS_ANCHOR_EDGE removed. Pre-Y.2 it was the
+# only consumer of FG_INV_ANETWORK_ANCHOR (CategoryFilter narrowing the
+# table to anchor-touching edges); Y.2.b pushed the broad anchor narrow
+# (source = anchor OR target = anchor) into the dataset SQL itself, so
+# every row in ds_anet IS an anchor-touching edge by construction.
+# The calc field had no remaining consumers and was orphaned.
+# Y.3.b will push the directional calc fields (is_inbound_edge /
+# is_outbound_edge) and counterparty_display into SQL too.
+#
 # Direction-specific edge-touching calc fields. Each scoped to its own
 # Sankey so the inbound/outbound layout does the direction-encoding
 # visually rather than asking the analyst to read it off a node's

@@ -31,7 +31,6 @@ from quicksight_gen.apps.investigation.app import (
 )
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
-    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
     CF_INV_ANETWORK_IS_INBOUND_EDGE,
     CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
@@ -42,8 +41,6 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
-    FG_INV_ANETWORK_AMOUNT,
-    FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_WINDOW,
@@ -311,8 +308,11 @@ def test_filter_groups_in_expected_order():
     the dataset SQL via ``<<$pInvAnomaliesSigma>>``), then the K.4.5
     money-trail window date-range filter (Y.2.a dropped the three
     parameter-bound K.4.5 FGs — root / hops / amount now live in the
-    money-trail dataset SQL), then four K.4.8 account-network filter
-    groups (anchor / inbound / outbound / amount). Order is stable so
+    money-trail dataset SQL), then two K.4.8 account-network
+    directional filter groups (Y.2.b dropped the broad-anchor +
+    min-amount FGs — those now live in the account-network dataset
+    SQL; the inbound/outbound FGs remain to partition the
+    pre-narrowed anchor-touching set per Sankey). Order is stable so
     the deployed Definition diff is readable."""
     groups = _filter_groups()
     ids = [g.FilterGroupId for g in groups]
@@ -321,10 +321,12 @@ def test_filter_groups_in_expected_order():
         FG_INV_FANOUT_THRESHOLD,
         FG_INV_ANOMALIES_WINDOW,
         FG_INV_MONEY_TRAIL_WINDOW,  # Q.1.b
-        FG_INV_ANETWORK_ANCHOR,
+        # Y.2.b dropped FG_INV_ANETWORK_ANCHOR (broad anchor narrow now
+        # in dataset SQL) + FG_INV_ANETWORK_AMOUNT (min-amount cutoff
+        # too); the directional FGs remain to partition the
+        # pre-narrowed anchor-touching set per Sankey.
         FG_INV_ANETWORK_INBOUND,
         FG_INV_ANETWORK_OUTBOUND,
-        FG_INV_ANETWORK_AMOUNT,
     ]
 
 
@@ -480,18 +482,19 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 8 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
+    # Top-level: 6 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
     # — σ now lives in dataset SQL; Y.2.a dropped the 3 parameter-bound
-    # FGs for money-trail root/hops/amount — those now live in the
-    # money-trail dataset SQL too — leaving 2 fanout + 1 anomalies
-    # window + 1 money-trail window + 4 account network:
-    # anchor/inbound/outbound/amount), 5 calc fields (fanout distinct
-    # count + account-network is_anchor_edge + is_inbound_edge +
-    # is_outbound_edge + counterparty_display), 7 parameters (fanout
-    # threshold + sigma + money-trail root/hops/amount + account-network
-    # anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 8
-    assert len(j["Definition"]["CalculatedFields"]) == 5
+    # FGs for money-trail root/hops/amount; Y.2.b dropped the broad
+    # anchor + min-amount account-network FGs — all those now live in
+    # their dataset SQL — leaving 2 fanout + 1 anomalies window + 1
+    # money-trail window + 2 account network directional
+    # (inbound/outbound)), 4 calc fields (fanout distinct count +
+    # account-network is_inbound_edge + is_outbound_edge +
+    # counterparty_display — Y.2.b dropped is_anchor_edge as orphaned),
+    # 7 parameters (fanout threshold + sigma + money-trail
+    # root/hops/amount + account-network anchor/min-amount).
+    assert len(j["Definition"]["FilterGroups"]) == 6
+    assert len(j["Definition"]["CalculatedFields"]) == 4
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
 
@@ -1085,102 +1088,110 @@ def test_money_trail_sheet_serializes_to_aws_json():
 # K.4.8 — Account Network sheet
 # ---------------------------------------------------------------------------
 
-def test_account_network_dataset_reuses_money_trail_matview():
+def test_account_network_dataset_reuses_money_trail_matview_with_pushdown_where():
     """K.4.8 wraps the same matview as K.4.5 — second dataset
     registration so account-centric filters live independently. SQL
-    adds the source_display / target_display walking labels."""
-    ds = build_all_datasets(_TEST_CFG, _TEST_L2)[3]
+    adds the source_display / target_display walking labels.
+
+    Y.2.b — also pushes the broad anchor narrow + min-amount cutoff
+    into the WHERE: ``WHERE (source_display = <<$pInvANetworkAnchor>>
+    OR target_display = <<$pInvANetworkAnchor>>) AND hop_amount >=
+    <<$pInvANetworkMinAmount>>``. Pre-narrows to anchor-touching edges
+    above the slider's threshold so the wire transfer is a fraction
+    of the matview, even before the directional FGs partition into
+    per-Sankey direction.
+    """
+    # Index 5 post-Y.2.a (Y.1.b.companion + Y.2.a.companion shifted +2).
+    ds = build_all_datasets(_TEST_CFG, _TEST_L2)[5]
+    assert ds.DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
     # N.3.d: matview name is per-instance prefixed.
     assert "FROM spec_example_inv_money_trail_edges" in sql
     assert "AS source_display" in sql
     assert "AS target_display" in sql
+    # Y.2.b — pushdown predicates substitute literals at query time.
+    assert "source_display = <<$pInvANetworkAnchor>>" in sql
+    assert "target_display = <<$pInvANetworkAnchor>>" in sql
+    assert "hop_amount >= <<$pInvANetworkMinAmount>>" in sql
 
 
-def test_anchor_calc_field_is_ifelse_on_anchor_param():
-    """``is_anchor_edge`` returns 'yes' when source OR target equals
-    pInvANetworkAnchor — single-column expression so the K.4.8 filter
-    stays a single CategoryFilter rather than two."""
+def test_account_network_dataset_declares_two_pushdown_parameters():
+    """Y.2.b — dataset carries StringDatasetParameter for the anchor
+    + IntegerDatasetParameter for min-amount; QS bridges each from
+    its analysis-level twin via MappedDataSetParameters declared in
+    ``apps/investigation/app.py``."""
+    ds = build_all_datasets(_TEST_CFG, _TEST_L2)[5]
+    params = ds.DatasetParameters or []
+    by_name = {}
+    for dp in params:
+        if dp.StringDatasetParameter is not None:
+            by_name[dp.StringDatasetParameter.Name] = dp.StringDatasetParameter
+        if dp.IntegerDatasetParameter is not None:
+            by_name[dp.IntegerDatasetParameter.Name] = (
+                dp.IntegerDatasetParameter
+            )
+    assert set(by_name.keys()) == {
+        str(P_INV_ANETWORK_ANCHOR),
+        str(P_INV_ANETWORK_MIN_AMOUNT),
+    }
+    # SINGLE_VALUED on both — anchor dropdown + min-amount slider both
+    # commit single values.
+    for p in by_name.values():
+        assert p.ValueType == "SINGLE_VALUED"
+    # Min-amount default mirrors the Money Trail amount slider (0).
+    assert by_name[str(P_INV_ANETWORK_MIN_AMOUNT)].DefaultValues == (
+        IntegerDatasetParameterDefaultValues(
+            StaticValues=[DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+        )
+    )
+    # Anchor dataset parameter has a sentinel default that matches no
+    # source_display / target_display in the matview — initial paint
+    # of the Sankeys + table is empty until the dropdown commits a
+    # real anchor.
+    anchor_default = by_name[str(P_INV_ANETWORK_ANCHOR)].DefaultValues
+    assert anchor_default is not None
+    assert anchor_default.StaticValues is not None
+    assert len(anchor_default.StaticValues) == 1
+    assert "no_anchor_selected" in anchor_default.StaticValues[0]
+
+
+def test_account_network_analysis_params_bridge_to_dataset_params():
+    """Y.2.b — both analysis-level parameters declare a
+    MappedDataSetParameter pointing at the account-network dataset's
+    same-named parameter. QS resolves <<$pInvANetwork*>> in the
+    dataset SQL by walking the bridge."""
+    decls = _parameter_declarations()
+    by_name = {}
+    for d in decls:
+        if d.IntegerParameterDeclaration:
+            by_name[d.IntegerParameterDeclaration.Name] = (
+                d.IntegerParameterDeclaration
+            )
+        if d.StringParameterDeclaration:
+            by_name[d.StringParameterDeclaration.Name] = (
+                d.StringParameterDeclaration
+            )
+    for pname in (P_INV_ANETWORK_ANCHOR, P_INV_ANETWORK_MIN_AMOUNT):
+        decl = by_name[pname]
+        bridges = decl.MappedDataSetParameters or []
+        assert len(bridges) == 1, (
+            f"{pname} should bridge to one dataset parameter; "
+            f"got {bridges}"
+        )
+        assert bridges[0].DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
+        assert bridges[0].DataSetParameterName == str(pname)
+
+
+def test_anchor_calc_field_dropped_after_y2b():
+    """Y.2.b — ``is_anchor_edge`` calc field removed: the broad
+    anchor narrow now lives in ds_anet's SQL (every row is_anchor_edge
+    by construction), so the calc field had no remaining consumers.
+    Y.3.b will push the directional calc fields into SQL too."""
     analysis = build_analysis(_TEST_CFG)
     calc_fields = {
         cf["Name"]: cf for cf in analysis.Definition.CalculatedFields
     }
-    is_anchor = calc_fields[CF_INV_ANETWORK_IS_ANCHOR_EDGE]
-    assert is_anchor["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
-    expr = is_anchor["Expression"]
-    assert "ifelse" in expr
-    # Walks compare display strings so a Sankey click delivers the
-    # exact value the dropdown stores.
-    assert "{source_display} = ${pInvANetworkAnchor}" in expr
-    assert "{target_display} = ${pInvANetworkAnchor}" in expr
-    assert "OR" in expr
-    assert "'yes'" in expr
-    assert "'no'" in expr
-
-
-def test_anchor_filter_matches_calc_field_on_yes():
-    """Anchor filter is a CategoryFilter on the calc field equal to
-    'yes' — narrows visuals to edges touching the anchor account."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    anchor = groups[FG_INV_ANETWORK_ANCHOR]
-    cf = anchor.Filters[0].CategoryFilter
-    assert cf is not None
-    assert cf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
-    assert cf.Column.ColumnName == CF_INV_ANETWORK_IS_ANCHOR_EDGE
-    config = cf.Configuration.FilterListConfiguration
-    assert config["MatchOperator"] == "CONTAINS"
-    assert config["CategoryValues"] == ["yes"]
-
-
-def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
-    """Min-amount filter on hop_amount bound to pInvANetworkMinAmount;
-    same NumericRangeFilter shape as the money-trail amount slider."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    amount = groups[FG_INV_ANETWORK_AMOUNT]
-    nrf = amount.Filters[0].NumericRangeFilter
-    assert nrf is not None
-    assert nrf.Column.ColumnName == "hop_amount"
-    assert nrf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
-    assert nrf.RangeMinimum is not None
-    assert nrf.RangeMinimum.Parameter == P_INV_ANETWORK_MIN_AMOUNT
-    assert nrf.RangeMaximum is None
-    assert nrf.IncludeMinimum is True
-
-
-def test_anetwork_amount_filter_is_all_visuals_scope():
-    """The amount filter applies to all three visuals on the sheet
-    (both Sankeys + table)."""
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    sc = groups[FG_INV_ANETWORK_AMOUNT].ScopeConfiguration
-    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
-    assert len(configs) == 1
-    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
-    assert configs[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
-
-
-def test_anetwork_anchor_filter_is_table_only():
-    """K.4.8i: anchor filter (is_anchor_edge='yes') is scoped to the
-    touching-edges table only. The two Sankeys each carry their own
-    direction-specific filter (is_inbound_edge / is_outbound_edge) so
-    the layout itself encodes direction.
-
-    Walks the tree-emitted analysis. The L.1.21 auto-derived visual_ids
-    are the only IDs in play after L.2.13 retired the imperative
-    builder."""
-    analysis = build_analysis(_TEST_CFG)
-    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
-    sc = groups[FG_INV_ANETWORK_ANCHOR].ScopeConfiguration
-    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
-    assert len(configs) == 1
-    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
-    assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    sheet = next(
-        s for s in analysis.Definition.Sheets
-        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
-    )
-    assert configs[0].VisualIds == [
-        _visual_id_by_title(sheet, "Account Network — Touching Edges"),
-    ]
+    assert "is_anchor_edge" not in calc_fields
 
 
 def test_anetwork_inbound_filter_is_inbound_sankey_only():

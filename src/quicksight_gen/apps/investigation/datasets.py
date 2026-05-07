@@ -26,6 +26,8 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
+    P_INV_ANETWORK_ANCHOR,
+    P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_MONEY_TRAIL_MAX_HOPS,
     P_INV_MONEY_TRAIL_MIN_AMOUNT,
@@ -511,16 +513,63 @@ def build_money_trail_roots_dataset(cfg: Config) -> DataSet:
     )
 
 
-def build_account_network_dataset(cfg: Config) -> DataSet:
-    """Per-edge account-network rows — same matview as money trail.
+_DSP_ID_INV_ANETWORK_ANCHOR = "dsp-inv-anetwork-anchor"
+_DSP_ID_INV_ANETWORK_MIN_AMOUNT = "dsp-inv-anetwork-min-amount"
 
-    Reuses ``inv_money_trail_edges``; a second dataset registration so
-    the account-centric calc field (``is_anchor_edge``) and filters
-    (anchor account, min amount) live independently of the K.4.5
-    chain-root filters. Contract is identical because the underlying
-    rows are.
+# Sentinel default for the anchor dataset parameter. The analysis-level
+# ``pInvANetworkAnchor`` carries an empty default by design (the dropdown
+# auto-populates from the K.4.8k narrow accounts dataset on first paint);
+# QS dataset parameters need a literal default for initial substitution
+# when the bridge has no value, so we pick a sentinel that matches no
+# source_display / target_display in the matview. Initial paint of the
+# Sankeys + table is empty until the dropdown commits a real anchor and
+# the bridge fires.
+_ANETWORK_ANCHOR_SENTINEL = "__no_anchor_selected__"
+
+
+def build_account_network_dataset(cfg: Config) -> DataSet:
+    """Per-edge account-network rows — Y.2.b SQL pushdown.
+
+    Same matview as money trail (``inv_money_trail_edges``) but with
+    two analysis-level parameters bridging into dataset-level
+    parameters substituted by QS into the dataset SQL at query time:
+
+    - ``pInvANetworkAnchor`` → broad anchor narrow:
+      ``WHERE (source_display = <<$pInvANetworkAnchor>> OR
+      target_display = <<$pInvANetworkAnchor>>)``. Pre-narrows the
+      wire to only edges that touch the anchor account in either
+      direction. Initial paint substitutes a sentinel that matches
+      no row; the dropdown's first commit fires the bridge.
+    - ``pInvANetworkMinAmount`` → ``AND hop_amount >= <<$...>>``.
+      Default 0 = keep all on first paint.
+
+    Per-Sankey direction partitioning continues to happen via the
+    ``is_inbound_edge`` / ``is_outbound_edge`` calc fields + their
+    SELECTED_VISUALS-scoped FilterGroups (those operate on the
+    pre-narrowed anchor-touching set; no DB pushdown needed because
+    the work is already small post-anchor-narrow). Y.3.b will push
+    those calc fields into the dataset SQL as real columns.
+
+    The K.4.5 chain-root filters that pre-Y.2 lived on a separate
+    dataset registration (Money Trail's chain-root context) are now
+    irrelevant here — Account Network's narrow is anchor-driven,
+    Money Trail's narrow is chain-root-driven; the two datasets
+    keep their own pushdowns.
+
+    The anchor dropdown reads from ``DS_INV_ANETWORK_ACCOUNTS``
+    (K.4.8k) — already an unfiltered companion shape. No new
+    companion dataset needed for Y.2.b.
     """
-    sql = _money_trail_base_sql(_require_prefix(cfg))
+    p = _require_prefix(cfg)
+    base = _money_trail_base_sql(p)
+    sql = (
+        f"{base}WHERE 1=1\n"
+        f"  AND (\n"
+        f"    source_display = <<${P_INV_ANETWORK_ANCHOR}>>\n"
+        f"    OR target_display = <<${P_INV_ANETWORK_ANCHOR}>>\n"
+        f"  )\n"
+        f"  AND hop_amount >= <<${P_INV_ANETWORK_MIN_AMOUNT}>>"
+    )
     return build_dataset(
         cfg,
         cfg.prefixed("inv-account-network-dataset"),
@@ -529,6 +578,24 @@ def build_account_network_dataset(cfg: Config) -> DataSet:
         sql,
         MONEY_TRAIL_CONTRACT,
         visual_identifier=DS_INV_ACCOUNT_NETWORK,
+        dataset_parameters=[
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_INV_ANETWORK_ANCHOR,
+                Name=str(P_INV_ANETWORK_ANCHOR),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=[_ANETWORK_ANCHOR_SENTINEL],
+                ),
+            )),
+            DatasetParameter(IntegerDatasetParameter=IntegerDatasetParameter(
+                Id=_DSP_ID_INV_ANETWORK_MIN_AMOUNT,
+                Name=str(P_INV_ANETWORK_MIN_AMOUNT),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=IntegerDatasetParameterDefaultValues(
+                    StaticValues=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+                ),
+            )),
+        ],
     )
 
 
