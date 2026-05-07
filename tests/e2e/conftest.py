@@ -403,3 +403,145 @@ def warm_aurora(cfg):
                     pass
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Y.2.gate.c.10 — Top-queries auto-capture
+#
+# Replaces ``scripts/dump_top_queries.py`` (W.8a) for the in-process
+# path: instead of a CI-step shellout, every e2e session that hits a
+# DB writes its own perf snapshot to
+# ``$QS_GEN_RUN_DIR/db/<dialect>/top-queries.md`` at session
+# teardown. ``Y.2.gate.f.4`` deletes the standalone script + the
+# CI workflow steps that called it.
+#
+# Sidecar contract (matches c.2 / c.12): no-op when env unset, errors
+# swallowed so the perf snapshot never breaks a passing test session.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def capture_top_queries(cfg, request):
+    """Session-end perf-snapshot hook.
+
+    Yields immediately; on teardown, if ``QS_GEN_RUN_DIR`` is set AND
+    the cfg has a demo_database_url, connects, runs the dialect's
+    stats-view query, and writes a markdown table. SQLite is silently
+    skipped (no equivalent stats view).
+
+    The like-pattern defaults to the L2 instance prefix the test
+    session targeted (``QS_GEN_TEST_L2_INSTANCE`` env override → its
+    instance prefix; else ``cfg.l2_instance_prefix`` if set; else the
+    string ``spec_example`` for the demo). That keeps multi-tenant
+    shared-DB output narrowed to OUR queries.
+    """
+    yield
+
+    run_dir = os.environ.get("QS_GEN_RUN_DIR")
+    if not run_dir:
+        return
+    if not cfg.demo_database_url:
+        return
+
+    from quicksight_gen._dev.perf import (
+        dialect_name,
+        fetch_top_queries,
+        format_skipped,
+        format_top_queries_markdown,
+    )
+    from quicksight_gen.common.db import connect_demo_db
+    from quicksight_gen.common.sql import Dialect
+
+    dialect_str = dialect_name(cfg.dialect)
+    target_dir = Path(run_dir) / "db" / dialect_str
+    target = target_dir / "top-queries.md"
+    title = f"Top expensive queries ({dialect_str})"
+
+    # SQLite has no stats view — write a clean skipped marker and stop.
+    if cfg.dialect is Dialect.SQLITE:
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                format_skipped(
+                    title=title,
+                    dialect=dialect_str,
+                    reason="SQLite has no equivalent of pg_stat_statements / v$sqlstats.",
+                ),
+            )
+        except OSError:
+            pass
+        return
+
+    # Pick the substring filter — prefer the explicit L2 instance the
+    # test session targeted, else the cfg's stamp, else the demo prefix.
+    like_pattern = "spec_example"
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        try:
+            from pathlib import Path as _Path
+            from quicksight_gen.common.l2 import load_instance
+            like_pattern = str(load_instance(_Path(override)).instance)
+        except Exception:
+            pass
+    elif cfg.l2_instance_prefix:
+        like_pattern = str(cfg.l2_instance_prefix)
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    try:
+        conn = connect_demo_db(cfg)
+    except Exception as exc:
+        try:
+            target.write_text(
+                format_skipped(
+                    title=title,
+                    dialect=dialect_str,
+                    reason=f"could not connect: {exc!r}",
+                ),
+            )
+        except OSError:
+            pass
+        return
+
+    try:
+        try:
+            rows = fetch_top_queries(
+                conn, cfg.dialect, like_pattern=like_pattern, top=50,
+            )
+        except Exception as exc:
+            try:
+                target.write_text(
+                    format_skipped(
+                        title=title,
+                        dialect=dialect_str,
+                        reason=(
+                            f"stats view unavailable: {type(exc).__name__}: "
+                            f"{exc}. Pre-req for postgres: ``CREATE "
+                            f"EXTENSION pg_stat_statements;``. For "
+                            f"oracle: SELECT on ``v$sqlstats``."
+                        ),
+                    ),
+                )
+            except OSError:
+                pass
+            return
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    try:
+        target.write_text(
+            format_top_queries_markdown(
+                title=title,
+                dialect=dialect_str,
+                like_pattern=like_pattern,
+                rows=rows,
+            ),
+        )
+    except OSError:
+        pass
