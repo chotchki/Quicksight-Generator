@@ -476,11 +476,13 @@ Spike-proven pattern applied across every sheet that has SQL-pushdownable filter
 
 **Per Y.1 finding, audit each FilterGroup's scope first.** `scope_sheet(...)` filters get clean pushdown; `SELECTED_VISUALS` filters need the Y.1.b.companion pattern (companion dataset without the parameter for the unfiltered visuals); cross-sheet filters TBD.
 
+**Hard blocker: Y.1.n must land before Y.2 starts.** Y.2 converts FilterGroups → dataset parameters across every sheet. If URL → param substitution turns out to be broken (or only works under specific shape constraints), we'd rebuild the same broken cascade pattern at scale — the inverse of the L2FT win. Y.1.n proves that cross-sheet AND cross-dashboard URL stamping actually drives the underlying parameter (not just the widget display) BEFORE we commit to the sweep. Worst case: Y.1.n surfaces a constraint (e.g., "must be single-valued" or "must be string", as Y.1.m already established) that re-shapes Y.2's per-dataset conversion templates. Better to learn that on one sheet than refactor 40 datasets twice.
+
 - [ ] **Y.2.a — Money Trail dataset: `pInvMoneyTrailRoot` + `pInvMoneyTrailMaxHops` + `pInvMoneyTrailMinAmount`.** Three params on one dataset; the X.2.g.3.c `app2_sql=` block disappears.
 - [ ] **Y.2.b — Account Network dataset: `pInvANetworkAnchor` + `pInvANetworkMinAmount`.** Two params; the X.2.g.3.d `app2_sql=` block disappears.
-- [ ] **Y.2.c — L2FT Rails dataset: rail name + status + bundle status cascade.** **BLOCKED on Y.1.k** — cascade behavior under SQL pushdown is unverified per the spike-time correction (L2FT metadata cascade isn't actually working in production). Don't sweep L2FT until cascade live-verified.
-- [ ] **Y.2.d — L2FT Chains dataset: parent chain + completion status cascade.** **BLOCKED on Y.1.k.**
-- [ ] **Y.2.e — L2FT Transfer Templates dataset: template + completion status cascade.** **BLOCKED on Y.1.k.**
+- [ ] **Y.2.c — L2FT Rails dataset: rail name + status + bundle status cascade.** **BLOCKED on Y.1.n** — Y.1.m landed the cascade fix (multi_valued=False + tree validator), but Y.1.n still needs to live-verify URL-stamped param substitution actually drives data, not just widgets. Cascade behavior under SQL pushdown is unproven without that.
+- [ ] **Y.2.d — L2FT Chains dataset: parent chain + completion status cascade.** **BLOCKED on Y.1.n.**
+- [ ] **Y.2.e — L2FT Transfer Templates dataset: template + completion status cascade.** **BLOCKED on Y.1.n.**
 - [ ] **Y.2.f — L1 universal date range across every L1 dataset.** `date_from` / `date_to` move from analysis-level TimeRangeFilter into dataset SQL `WHERE posted_at BETWEEN <<$pDateFrom>> AND <<$pDateTo>>` pattern. Highest-impact change for L1 perf.
 - [ ] **Y.2.g — L1 per-sheet filter controls** (Drift / Overdraft / Limit Breach / Today's Exceptions / Daily Statement / Transactions / Pending Aging / Unbundled Aging / Supersession Audit). Per-sheet sub-bullet as we hit them.
 - [ ] **Y.2.h — Executives datasets review.** Verify whether any Exec sheet has filters that benefit; sweep what does. Likely a thin pass.
