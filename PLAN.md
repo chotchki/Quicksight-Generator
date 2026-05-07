@@ -520,12 +520,36 @@ The contract: invoking layer N implies layers 1..N-1 must be green. Today's scri
     - **Skip-if-already-green**: do we cache layer results within a session, or always re-run? Lean re-run (cheap layers stay cheap) — but offer a `--skip-cheap` for tight iteration loops.
     - **Parallelism**: layers within a tier (e.g. multiple e2e tests) parallelize via xdist; cross-layer is sequential.
     - **Dirty-state detection**: should `up_to=deploy` refuse to deploy if there are uncommitted changes? Decide.
-    - **Per-dialect axis**: PG vs Oracle is orthogonal to the layer; runner needs to multiplex.
+    - **Variants axis (per layer)**: Each layer can be parameterized — same layer × N variants. The runner multiplexes variants and rolls failure status per (layer, variant) cell. Variants we know about today:
+        - **Dialect**: PG / Oracle / SQLite. Layer 3a runs SQLite + PG + Oracle; layer 3b runs PG + Oracle; layers 4-6 run PG-AWS + Oracle-AWS. Layers 1-2 have no dialect axis.
+        - **L2 instance**: `spec_example` (default) / `sasquatch_pr` (CI) / others as added. Most layers care; layer 1 doesn't.
+        - **Future**: per-app subset (`--apps=l1,inv`), per-fuzz-seed for property tests, per-region.
+    - The audit (Y.2.gate.a) needs to enumerate which variants apply to which layers. Variants live in the runner config so the user picks them by name, not by remembering env-var combinations.
 - [ ] **Y.2.gate.c — Implement the runner.** Probably a shell script + minimal Python wrapper. Reuse `./run_e2e.sh` infra where it fits.
 - [ ] **Y.2.gate.d — Wire into CLAUDE.md + memory.** New "Test sequencing" section in CLAUDE.md that says: "Always invoke `./run_tests.sh up_to=<layer>` for the layer you care about; never invoke `pytest tests/e2e/` directly because it skips earlier gates." Memory entry mirrors so I don't drift.
 - [ ] **Y.2.gate.e — Synthetic regression.** Re-introduce the Y.2.b SELECT-alias-in-WHERE bug on a test branch; run `./run_tests.sh up_to=browser`; confirm it stops at layer 3a with the alias error pinpointed, and that the deploy never fires. Same for: a pyright violation (layer 1 stops), a unit test breakage (layer 2 stops).
 - [ ] **Y.2.gate.f — Convert remaining CLI verifiers to pytest tests.** `verify_demo_apply.py` is the obvious one. Anything else surfaced by the audit. Y.2.b's "smoke verifier as CLI" pattern was the bug class; root-cause is "we have CLI scripts that should be pytest tests" → convert all of them.
-- [ ] **Y.2.gate.g — `Y.2.c+ unblocked` gate.** Once a-f are done, resume the Y.2 sweep. Note in PLAN that the gate fires here.
+- [ ] **Y.2.gate.h — Credential auto-discovery.** Operators / Claude should never have to look up or pass credentials by hand. Any credential the runner needs gets resolved automatically with a clear error pointing at the missing source if discovery fails. Concrete cases today:
+    - **`QS_E2E_USER_ARN`** — derive from current AWS identity. `aws sts get-caller-identity` → IAM principal → `aws quicksight list-users` filter by `PrincipalId` → pick the matching ARN. Today I had to discover this manually + saved a memory; the runner makes the memory irrelevant.
+    - **DB connection strings (PG `demo_database_url`, Oracle `QS_GEN_ORACLE_URL`)** — already live in `run/config.{postgres,oracle}.yaml`. Runner reads from cfg; no env-var passthrough needed for local. For CI, fall back to AWS Secrets Manager / SSM Parameter Store. Document the precedence order.
+    - **AWS account / region** — already in cfg; same.
+    - **Other** (`QS_GEN_FUZZ_SEED`, `QS_E2E_PAGE_TIMEOUT`) — leave as tunables, but pre-fill defaults in the runner so the human never has to set them for a normal run.
+    Acceptance: with a fresh shell + AWS SSO logged in + cfg in place, every layer's invocation works without any env-var exports.
+- [ ] **Y.2.gate.i — AWS auth refresh.** Constant `aws sso login` friction is automated away. Runner pre-flight: `aws sts get-caller-identity` — if it fails with `ExpiredTokenException` / `UnrecognizedClientException`, the runner invokes the operator's configured login command (configured once in `run/auth.yaml` or similar; default to `aws sso login` with auto-detected profile), then retries. Pluggable so operators on `aws-vault` / role-assumption / static keys can wire their flow. Acceptance: starting a layer that needs AWS, with expired creds, results in (1) a single login prompt, (2) the layer running, with no manual rerun needed. Claude should not have to ask the user to "re-login" mid-flow — the runner handles it.
+- [ ] **Y.2.gate.j — Parallelism (so the longer chain doesn't kill iteration speed).** Total wall-clock matters or developers will skip the chain to iterate. Strategy:
+    - **Cross-layer = sequential** (chain semantics require this). No pipelining; complicates failure attribution.
+    - **Variants of one layer = parallel.** PG smoke and Oracle smoke run simultaneously (separate connections); PG-deploy and Oracle-deploy run simultaneously (separate `L2Instance` tag = separate AWS resource set, no collision). Enabled by `pytest-xdist` for in-process variants; by background processes / `xargs -P` for cross-process (e.g. two `quicksight-gen json apply` runs).
+    - **Within-layer-within-variant = pytest-xdist** with the existing `--parallel` knob `./run_e2e.sh` already exposes. Layer 3a's 37 datasets, layer 5/6's per-app suites, all benefit.
+    - **Targeted-iteration mode**: `./run_tests.sh up_to=<layer> --only=<test-id>` runs the chain but narrows the within-layer-within-variant set to one test id. For the case "I'm tweaking one Investigation drill, run the chain through layer 6 but only `test_inv_drilldown.py::test_X`". Skips broad re-runs while still validating the chain.
+    - **Skip-cheap mode**: `./run_tests.sh up_to=<layer> --skip-cheap` skips layers 1-2 if they were green on the same git SHA earlier in the session. Off by default; opt-in for tight loops. Cache lives in `.run_tests_cache/<sha>.json` so a `git commit` invalidates.
+    - **Wall-clock budget targets**: layer 1+2+3a should land < 60s. Through layer 4 (deploy) < 5min. Through layer 6 (full e2e) < 15min single-dialect, < 25min full matrix. If we drift past these we revisit.
+- [ ] **Y.2.gate.k — CI parity (no `works-on-my-box` surprises).** The same runner runs locally and in CI. Decisions:
+    - **CI invokes `./run_tests.sh up_to=browser variants=full`** on every push:main + every PR. Mirrors the heaviest local invocation; full dialect × L2-instance matrix.
+    - **PR-quick mode**: `up_to=smoke variants=pg` for fast PR feedback (< 5 min) — gates merge but doesn't block iteration. Nightly cron runs `up_to=browser variants=full` to catch the matrix-only failures.
+    - **Pre-push git hook** (optional, default-on for new clones): `./run_tests.sh up_to=smoke variants=pg` — catches the "I forgot to run the chain" cases before push. Skippable with `--no-verify` per CLAUDE.md (but discouraged).
+    - **Existing CI alignment**: `.github/workflows/ci.yml` (unit + coverage) + `e2e.yml` (the dialect-cell e2e jobs) + `release.yml` already cover most of the matrix. Audit (Y.2.gate.a) maps the existing CI cells onto the new runner's variant model so we don't duplicate. The runner becomes the canonical entry point; the GH workflow YAMLs become thin wrappers calling the runner with the right variant set.
+    - **Failure surface parity**: when CI fails, the message + artifact set is the same shape the runner shows locally. No "decode the GH log" step.
+- [ ] **Y.2.gate.g — `Y.2.c+ unblocked` gate.** Once a-k are done, resume the Y.2 sweep. Note in PLAN that the gate fires here.
 
 ### Y.3 — Push calc fields down to dataset SQL as real columns
 
