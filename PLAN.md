@@ -564,7 +564,14 @@ The contract: invoking layer N implies layers 1..N-1 must be green. Today's scri
     - **Pre-push git hook** (optional, default-on for new clones): `./run_tests.sh up_to=smoke variants=pg` — catches the "I forgot to run the chain" cases before push. Skippable with `--no-verify` per CLAUDE.md (but discouraged).
     - **Existing CI alignment**: `.github/workflows/ci.yml` (unit + coverage) + `e2e.yml` (the dialect-cell e2e jobs) + `release.yml` already cover most of the matrix. Audit (Y.2.gate.a) maps the existing CI cells onto the new runner's variant model so we don't duplicate. The runner becomes the canonical entry point; the GH workflow YAMLs become thin wrappers calling the runner with the right variant set.
     - **Failure surface parity**: when CI fails, the message + artifact set is the same shape the runner shows locally. No "decode the GH log" step.
-- [ ] **Y.2.gate.g — `Y.2.c+ unblocked` gate.** Once a-k are done, resume the Y.2 sweep. Note in PLAN that the gate fires here.
+- [ ] **Y.2.gate.l — Ephemeral AWS infra (start/stop both ways).** Per audit §7.12. Today's persistent-Aurora pattern burns ~$45/mo Aurora idle + similar for RDS Oracle, even when no one is testing. Split:
+    - **CI side**: each AWS-touching CI job (`e2e.yml::e2e-pg-{api,browser}`, `e2e.yml::e2e-oracle-api`, `release.yml::e2e-against-testpypi`) gains pre-test `aws rds start-db-cluster` + `if: always()` post-test `aws rds stop-db-cluster`. Storage cost continues; compute drops to zero between runs.
+    - **Local side**: `./run_tests.sh up local|aws|aws,local` and `./run_tests.sh down` and `./run_tests.sh status` as the explicit lifecycle commands. `up local` spins Docker containers (testcontainers-python). `up aws` starts the sleeping Aurora/Oracle. `down` is idempotent across both. `status [--cost]` shows what's running with hourly cost estimate so the cost surface is visible.
+    - **Layer dispatch interlock**: when the runner is asked for a layer requiring AWS but `up aws` wasn't run, it fails fast with `"layer 4 needs AWS DB; run './run_tests.sh up aws' first or invoke './run_tests.sh up_to=app2-e2e' to skip"`. No silent "use the persistent Aurora" fallback.
+    - **State file**: `runs/.up-state.json` tracks current state across invocations.
+    - **Optional auto-stop timer**: opt-in cron/timer that runs `down` after N hours of inactivity. Defaults off.
+    - **Decisions for user** (called out in §7.12): start-stop existing cluster vs. create-per-job in CI; granularity of `up aws` (combined or `up aws-pg` / `up aws-oracle`); auto-stop default; cost-visibility output format.
+- [ ] **Y.2.gate.g — `Y.2.c+ unblocked` gate.** Once a-l are done, resume the Y.2 sweep. Note in PLAN that the gate fires here.
 
 ### Y.3 — Push calc fields down to dataset SQL as real columns
 

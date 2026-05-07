@@ -246,6 +246,74 @@ App2 (layer 7 in the audit, X.2.f/g/h) runs the **same dataset SQL** as QS, agai
 
 ---
 
+### 7.12 — Split CI-AWS from Local-AWS; ephemeral start/stop both ways (user-flagged)
+
+**User direction:** Split the AWS-touching DB infra so:
+1. **CI** boots its own AWS DBs at run start, tears down at run end. No perpetual running cost between CI runs.
+2. **Local** has explicit "ready" / "done" commands that turn everything on / off when the developer wants AWS-side work — Docker default for fast feedback, AWS opt-in for parity check.
+
+**The cost surface today:**
+
+| Cell | Current shape | Idle cost |
+|---|---|---|
+| `ci.yml::integration` | GHA service containers (PG + Oracle Free), already ephemeral | $0 |
+| `ci.yml::test` (unit + JSON matrix) | No DB | $0 |
+| `e2e.yml::e2e-pg-{api,browser}` | Targets the operator's persistent Aurora | Aurora idle 24/7 |
+| `e2e.yml::e2e-oracle-api` | Targets the operator's persistent Oracle | Same |
+| `release.yml::e2e-against-testpypi` | Same persistent Aurora | Same |
+| **Local dev** | Same persistent Aurora | Aurora idle whenever not testing |
+
+The persistent-Aurora pattern is the bug. Aurora Serverless v2 minimum capacity (0.5 ACU) is ~$45/month idle, more for provisioned; RDS Oracle is similar. Multiplied across two engines × always-on, this is real money for an account that runs tests in bursts.
+
+**The split:**
+
+#### CI side — ephemeral lifecycle
+
+Each AWS-touching CI job:
+1. **Pre-test step**: `aws rds start-db-cluster` (Aurora) / `aws rds start-db-instance` (Oracle) — if cluster exists in stopped state.
+   - Or alternative: provision a fresh cluster with `aws rds create-db-cluster` per job. More expensive (creation has fixed cost) but isolates concurrent CI runs.
+   - Choice depends on test volume: low-volume → start/stop the same cluster; high-volume parallel → create-per-job.
+2. Run schema + seed + e2e against the freshly-started DB.
+3. **Always-run cleanup step**: `aws rds stop-db-cluster` / `delete-db-cluster`. Use GHA `if: always()` so the cleanup fires even on test failure.
+
+Storage cost continues during stop (so the seeded matview state survives between runs), but compute drops to zero. Aurora has a 7-day max-stop window before auto-resume, which is fine for an active project's CI cadence.
+
+#### Local side — explicit `runner up` / `runner down`
+
+The runner exposes infra-lifecycle commands that the developer invokes when they want AWS-side work:
+
+```bash
+./run_tests.sh up local           # Docker containers (PG, Oracle) — default; fast loop
+./run_tests.sh up aws             # Start your sleeping Aurora + Oracle; wait for available
+./run_tests.sh up aws,local       # Both — for cross-tool parity testing in one session
+./run_tests.sh down               # Stop everything that's running (idempotent)
+./run_tests.sh status             # What's currently running (Docker + AWS); show idle cost estimate
+```
+
+`status` is the "did I forget to turn it off?" check — list every running resource with its hourly cost so the cost surface is visible, not buried.
+
+The runner's layer dispatch (Y.2.gate.b) checks `up` state before invoking AWS-touching layers. If `up aws` wasn't run, the AWS layer skips with a clear message: `"layer 4 needs AWS DB; run './run_tests.sh up aws' first or invoke './run_tests.sh up_to=app2-e2e' to skip"`.
+
+**Implementation slots into Y.2.gate.l (new sub-task).** Specific deliverables:
+
+- `aws rds start/stop` wrapper (boto3 or shell-out to AWS CLI) with idempotency + readiness wait.
+- `docker compose up/down` wrapper for local containers.
+- State file under `runs/.up-state.json` (gitignored) tracks what's running across `up`/`down`/`status` invocations.
+- CI workflow updates: `e2e.yml` + `release.yml::e2e-against-testpypi` gain `start-before` + `stop-after-always` steps.
+- Cost-visibility command: `status --cost` queries AWS pricing API (or hardcoded estimates) for what's currently running.
+- Auto-stop on idle: optional cron/timer that runs `down` after N hours of inactivity (defaults off; opt-in via config).
+
+**Compounds with §7.10:** The App2-as-fast-gate decision means most iterations don't need AWS at all. `up aws` becomes the explicit "I'm doing parity work" signal, used a handful of times per week, not constantly.
+
+**Decisions for user:**
+
+- **Start-stop existing cluster vs. create-per-job in CI**: lean start-stop (cheaper, preserves seed state). Need confirmation.
+- **`up aws` granularity**: single command for both PG + Oracle, or `up aws-pg` / `up aws-oracle`?
+- **Auto-stop timer default**: off (current path) or on with a 4-hour idle threshold? Opt-in seems safer.
+- **Cost visibility surface**: `status --cost` output format — terminal table or write to `runs/<run-id>/cost.json` for tracking?
+
+---
+
 ### 7.11 — Fuzz-seed property-testing as the highest-value parallelism target (user-flagged)
 
 **User observation:** the fuzz-seed variant axis is dramatically under-exploited; this is where parallelism unlocks the most coverage per minute.
