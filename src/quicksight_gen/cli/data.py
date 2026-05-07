@@ -59,15 +59,29 @@ def data() -> None:
 @config_option(required_for_dialect_only=True)
 @output_option()
 @execute_option()
+@click.option(
+    "--seed-density",
+    type=float,
+    default=1.0,
+    show_default=True,
+    metavar="<float>",
+    help=(
+        "Y.2.gate.c.13.1 — scalar multiplier on plant density "
+        "(densify factor / broken-rail count / fanout multiplier). "
+        "1.0 = byte-identical to pre-c.13 behavior; 2.0 = double the "
+        "plants; 0.5 = halve. Operator opt-in for heavier nightly "
+        "scenarios; default keeps locked SQL files valid."
+    ),
+)
 def data_apply(
     l2_instance_path: str | None, config: str,
-    output: str | None, execute: bool,
+    output: str | None, execute: bool, seed_density: float,
 ) -> None:
     """Emit the demo seed SQL (or ``--execute`` to insert against the demo DB).
 
     The composition: 90-day baseline → densify per-kind plants ×5 →
     add 15 broken-rail stuck_pending plants → boost inv_fanout amounts
-    ×5 → emit_full_seed.
+    ×5 → emit_full_seed. ``--seed-density=N`` scales the three knobs.
 
     Default: print every INSERT to stdout (or to ``-o FILE``). Pass
     ``--execute`` to connect + insert.
@@ -77,7 +91,7 @@ def data_apply(
     want ``data refresh --execute`` so the matviews see the new rows.
     """
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
-    sql = build_full_seed_sql(cfg, instance)
+    sql = build_full_seed_sql(cfg, instance, density=seed_density)
 
     if execute:
         connect_and_apply(cfg, sql, label="seed data")

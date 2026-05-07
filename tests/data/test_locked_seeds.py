@@ -131,3 +131,80 @@ def test_lock_dir_only_holds_known_dialects() -> None:
             f"Lock filename {p.name!r} cites unknown dialect "
             f"{dialect_name!r}; valid: {sorted(valid)}"
         )
+
+
+# Y.2.gate.c.13.1 — `--seed-density=N` tunable parameter tests.
+
+
+def _emit_at(density: float, *, dialect_name: str = "postgres") -> str:
+    """Helper: emit the spec_example seed at a given density."""
+    instance = load_instance(_L2_DIR / "spec_example.yaml")
+    cfg = make_test_config(
+        dialect=Dialect(dialect_name),
+    ).with_l2_instance_prefix("spec_example")
+    return build_full_seed_sql(
+        cfg, instance, anchor=_CANONICAL_ANCHOR, density=density,
+    )
+
+
+def test_density_default_is_one_byte_identical_to_no_arg() -> None:
+    """Y.2.gate.c.13.1 contract: density=1.0 (default) == no-density-arg call.
+    Without this, the locked SQL files would shift on every density
+    integration. The 4 locked-seeds tests above ALSO enforce this implicitly,
+    but a direct assertion documents the contract."""
+    instance = load_instance(_L2_DIR / "spec_example.yaml")
+    cfg = make_test_config(
+        dialect=Dialect.POSTGRES,
+    ).with_l2_instance_prefix("spec_example")
+
+    no_arg = build_full_seed_sql(cfg, instance, anchor=_CANONICAL_ANCHOR)
+    explicit_one = build_full_seed_sql(
+        cfg, instance, anchor=_CANONICAL_ANCHOR, density=1.0,
+    )
+    assert no_arg == explicit_one, (
+        "density=1.0 (the documented default) must produce the same bytes "
+        "as omitting the argument entirely. If this drifts, the locked SQL "
+        "files would also drift on every density integration."
+    )
+
+
+def test_density_two_x_produces_more_rows_than_one_x() -> None:
+    """density>1.0 produces more rows (more INSERT lines). Smoke proof
+    that the parameter actually scales output, not just plumbed."""
+    one_x = _emit_at(1.0)
+    two_x = _emit_at(2.0)
+    one_x_inserts = one_x.count("INSERT INTO")
+    two_x_inserts = two_x.count("INSERT INTO")
+    assert two_x_inserts > one_x_inserts, (
+        f"density=2.0 should produce more INSERTs than density=1.0; "
+        f"got {two_x_inserts} vs {one_x_inserts}."
+    )
+
+
+def test_density_half_x_produces_fewer_rows_than_one_x() -> None:
+    """density<1.0 produces fewer rows. Useful for fast-iteration runs
+    where the operator wants a thinner seed."""
+    one_x = _emit_at(1.0)
+    half_x = _emit_at(0.5)
+    one_x_inserts = one_x.count("INSERT INTO")
+    half_x_inserts = half_x.count("INSERT INTO")
+    assert half_x_inserts < one_x_inserts, (
+        f"density=0.5 should produce fewer INSERTs than density=1.0; "
+        f"got {half_x_inserts} vs {one_x_inserts}."
+    )
+
+
+def test_density_emits_different_sha256_header_at_different_densities() -> None:
+    """Different densities produce different content → different SHA256
+    in the `-- SHA256: <hex>` header. Verifies the hash-stamp reflects
+    density (so per-run drift detection in c.3 will surface density changes
+    cleanly)."""
+    one_x = _emit_at(1.0)
+    two_x = _emit_at(2.0)
+    one_x_hash = one_x.split("\n", 1)[0]  # first line: -- SHA256: <hex>
+    two_x_hash = two_x.split("\n", 1)[0]
+    assert one_x_hash.startswith("-- SHA256:")
+    assert two_x_hash.startswith("-- SHA256:")
+    assert one_x_hash != two_x_hash, (
+        "different densities must hash to different values"
+    )

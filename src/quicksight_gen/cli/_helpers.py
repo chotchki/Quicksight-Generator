@@ -88,7 +88,12 @@ def resolve_l2_for_demo(
     return cfg, instance
 
 
-def build_full_seed_sql(cfg, instance, *, anchor=None) -> str:  # type: ignore[no-untyped-def]
+_DEFAULT_DENSIFY_FACTOR = 5
+_DEFAULT_BROKEN_COUNT = 15
+_DEFAULT_FANOUT_MULTIPLIER = 5
+
+
+def build_full_seed_sql(cfg, instance, *, anchor=None, density: float = 1.0) -> str:  # type: ignore[no-untyped-def]
     """Compose the demo seed pipeline.
 
     Picks the ``l1_plus_broad`` scenario mode so the demo gets BOTH
@@ -96,10 +101,10 @@ def build_full_seed_sql(cfg, instance, *, anchor=None) -> str:  # type: ignore[n
     L2-shape plants (per-rail RailFiringPlant + per-template
     TransferTemplatePlant) — the L2 Flow Tracing dashboard's Rails /
     Chains / Transfer Templates sheets need the broad layer to render
-    non-empty in the demo. Then densifies per-kind plants (×5), adds
-    15 broken-rail stuck_pending plants on one rail, boosts inv_fanout
-    amounts (×5). Returns the concatenated SQL of the 90-day baseline
-    + plant overlays.
+    non-empty in the demo. Then densifies per-kind plants (×5 default),
+    adds 15 broken-rail stuck_pending plants on one rail (default),
+    boosts inv_fanout amounts (×5 default). Returns the concatenated
+    SQL of the 90-day baseline + plant overlays.
 
     ``anchor`` pins the calendar date used by both ``default_scenario_for``
     (plants' ``today``) and ``emit_full_seed`` (baseline window end).
@@ -107,6 +112,15 @@ def build_full_seed_sql(cfg, instance, *, anchor=None) -> str:  # type: ignore[n
     pick today from the wall clock. ``data lock`` passes a canonical
     ``date(2030, 1, 1)`` so the locked SQL is deterministic across
     machines and run dates.
+
+    Y.2.gate.c.13.1 — ``density`` is a scalar multiplier on the three
+    plant-density knobs (densify factor, broken-rail count, fanout
+    amount multiplier). ``density=1.0`` (default) is byte-identical to
+    the pre-c.13 behavior — locked SQL files (`_locked_seeds/*.sql`)
+    stay valid. ``density=2.0`` doubles plant counts; ``density=0.5``
+    halves them. Multiplications use ``int(...)`` so values stay
+    deterministic; densities below ~0.07 collapse to factor=0 which
+    `densify_scenario` should reject upstream.
     """
     from quicksight_gen.common.l2.auto_scenario import (
         add_broken_rail_plants,
@@ -119,9 +133,13 @@ def build_full_seed_sql(cfg, instance, *, anchor=None) -> str:  # type: ignore[n
     base = default_scenario_for(
         instance, mode="l1_plus_broad", today=anchor,
     ).scenario
-    dense = densify_scenario(base, factor=5)
-    broken = add_broken_rail_plants(dense, instance, broken_count=15)
-    final = boost_inv_fanout_plants(broken, amount_multiplier=5)
+    dense = densify_scenario(base, factor=int(_DEFAULT_DENSIFY_FACTOR * density))
+    broken = add_broken_rail_plants(
+        dense, instance, broken_count=int(_DEFAULT_BROKEN_COUNT * density),
+    )
+    final = boost_inv_fanout_plants(
+        broken, amount_multiplier=int(_DEFAULT_FANOUT_MULTIPLIER * density),
+    )
     return emit_full_seed(
         instance, final, dialect=cfg.dialect, anchor=anchor,
     )
