@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -51,6 +53,17 @@ LAYERS: Final[tuple[str, ...]] = (
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 RUNS_DIR: Final = REPO_ROOT / "runs"
+
+# Y.2.gate.c.4 — keep last N runs; older auto-pruned at session end.
+# 20 ≈ a couple weeks of inner-loop iteration; tunable by editing here if
+# someone needs more triage history. `runs/` is gitignored so retention
+# costs disk only.
+RUNS_RETAIN_N: Final = 20
+
+# Matches `<utc-ts>-<short-sha>[-dirty]` from create_run_id(); used by
+# prune_old_runs to only touch directories we created, never unrelated
+# files an operator might park under runs/.
+_RUN_ID_PATTERN: Final = re.compile(r"^\d{8}T\d{6}Z-\w+(?:-dirty)?$")
 
 # Y.2.gate.c.8 — per-layer dependency requirements. Authoritative mirror of
 # audit doc §3 (variant axes table). Cross-checked by
@@ -239,6 +252,27 @@ def create_run_id() -> str:
     return f"{ts}-{sha}{suffix}"
 
 
+def prune_old_runs(retain: int = RUNS_RETAIN_N, runs_dir: Path | None = None) -> list[Path]:
+    """Y.2.gate.c.4 — keep the most-recent ``retain`` runs; delete the rest.
+
+    "Most recent" = mtime (robust to dirs an operator touches). Only directories
+    matching `_RUN_ID_PATTERN` are candidates — defensive: don't accidentally
+    nuke unrelated files an operator parked under `runs/`.
+
+    Returns the list of deleted paths (for tests / future telemetry).
+    Idempotent: missing runs_dir → no-op; <retain runs → no-op.
+    """
+    target = runs_dir if runs_dir is not None else RUNS_DIR
+    if not target.exists():
+        return []
+    candidates = [p for p in target.iterdir() if p.is_dir() and _RUN_ID_PATTERN.match(p.name)]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    to_delete = candidates[retain:]
+    for old in to_delete:
+        shutil.rmtree(old)
+    return to_delete
+
+
 def _normalize_argv(argv: Sequence[str]) -> list[str]:
     """Pre-process argv so ``up_to=<layer>`` and ``up_to <layer>`` both work.
 
@@ -271,6 +305,9 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     print(f"runner: run_dir={run_dir.relative_to(REPO_ROOT)}")
     print(f"runner: up_to={args.layer}")
     print("runner: skeleton — dispatch not implemented yet (Y.2.gate.c.5+)")
+    pruned = prune_old_runs()
+    if pruned:
+        print(f"runner: pruned {len(pruned)} old run(s) (retained last {RUNS_RETAIN_N})")
     return EXIT_SUCCESS
 
 

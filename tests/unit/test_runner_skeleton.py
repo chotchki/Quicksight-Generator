@@ -212,3 +212,98 @@ def test_run_probe_subprocess_handles_missing_binary() -> None:
     with patch.object(subprocess, "run", side_effect=FileNotFoundError("not found")):
         result = runner._run_probe_subprocess(["bogus-cmd"])
     assert result.returncode == 127
+
+
+# Y.2.gate.c.4 — auto-prune tests.
+
+import os as _os
+import time
+from pathlib import Path
+
+
+def _mk_run_dir(parent: Path, run_id: str, *, mtime: float | None = None) -> Path:
+    d = parent / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    if mtime is not None:
+        _os.utime(d, (mtime, mtime))
+    return d
+
+
+def test_prune_old_runs_no_op_on_missing_dir(tmp_path: Path) -> None:
+    """No runs/ dir → empty result, no error."""
+    nonexistent = tmp_path / "does-not-exist"
+    assert runner.prune_old_runs(retain=20, runs_dir=nonexistent) == []
+
+
+def test_prune_old_runs_no_op_under_threshold(tmp_path: Path) -> None:
+    """Fewer than `retain` runs → nothing deleted."""
+    for i in range(5):
+        _mk_run_dir(tmp_path, f"2026010{i}T120000Z-abc{i}")
+    deleted = runner.prune_old_runs(retain=20, runs_dir=tmp_path)
+    assert deleted == []
+    assert len(list(tmp_path.iterdir())) == 5
+
+
+def test_prune_old_runs_deletes_oldest(tmp_path: Path) -> None:
+    """>retain runs → oldest by mtime go away; newest `retain` survive."""
+    base = time.time()
+    # Create 5 runs with explicit mtimes (oldest = 0, newest = 4)
+    for i in range(5):
+        _mk_run_dir(tmp_path, f"2026010{i}T120000Z-abc{i}", mtime=base + i)
+    deleted = runner.prune_old_runs(retain=3, runs_dir=tmp_path)
+    assert len(deleted) == 2
+    surviving = sorted(p.name for p in tmp_path.iterdir())
+    # Newest three survive (i=2, i=3, i=4)
+    assert surviving == [
+        "20260102T120000Z-abc2",
+        "20260103T120000Z-abc3",
+        "20260104T120000Z-abc4",
+    ]
+
+
+def test_prune_old_runs_only_touches_run_id_pattern(tmp_path: Path) -> None:
+    """Defensive — files / non-matching dirs the operator parked under runs/
+    are NEVER deleted, even when over the retention threshold."""
+    base = time.time()
+    # Make 25 real run dirs (well over default N=20).
+    for i in range(25):
+        _mk_run_dir(tmp_path, f"2026010{i % 9}T1200{i:02d}Z-abc{i:02d}", mtime=base + i)
+    # Park unrelated stuff alongside.
+    (tmp_path / "operator-notes.txt").write_text("don't delete me")
+    (tmp_path / "scratch-dir").mkdir()
+    (tmp_path / "scratch-dir" / "file.txt").write_text("...")
+
+    runner.prune_old_runs(retain=20, runs_dir=tmp_path)
+
+    # Operator's stuff still there.
+    assert (tmp_path / "operator-notes.txt").exists()
+    assert (tmp_path / "scratch-dir").exists()
+    assert (tmp_path / "scratch-dir" / "file.txt").exists()
+    # Real run dirs pruned to exactly 20.
+    run_dirs = [p for p in tmp_path.iterdir() if p.is_dir() and runner._RUN_ID_PATTERN.match(p.name)]
+    assert len(run_dirs) == 20
+
+
+def test_prune_old_runs_uses_mtime_not_name(tmp_path: Path) -> None:
+    """If an operator touches an old run, it should survive over a never-touched
+    newer one. mtime is the correct sort key."""
+    base = time.time()
+    # 'old' by name but recently touched
+    old_by_name = _mk_run_dir(tmp_path, "20200101T120000Z-old", mtime=base + 100)
+    # 'new' by name but not touched recently
+    _mk_run_dir(tmp_path, "20991231T120000Z-new", mtime=base - 100)
+    runner.prune_old_runs(retain=1, runs_dir=tmp_path)
+    survivors = list(tmp_path.iterdir())
+    assert len(survivors) == 1
+    assert survivors[0] == old_by_name
+
+
+def test_prune_runs_pattern_accepts_dirty_suffix() -> None:
+    """The pattern must accept the optional `-dirty` suffix from create_run_id."""
+    assert runner._RUN_ID_PATTERN.match("20260507T120000Z-abc1234")
+    assert runner._RUN_ID_PATTERN.match("20260507T120000Z-abc1234-dirty")
+    assert runner._RUN_ID_PATTERN.match("20260507T120000Z-nogit")
+    # Negatives — operator-parked stuff should NOT match.
+    assert not runner._RUN_ID_PATTERN.match("operator-notes.txt")
+    assert not runner._RUN_ID_PATTERN.match("scratch-dir")
+    assert not runner._RUN_ID_PATTERN.match("20260507")
