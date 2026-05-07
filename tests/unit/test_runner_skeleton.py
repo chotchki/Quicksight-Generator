@@ -77,7 +77,7 @@ def test_up_to_creates_run_dir() -> None:
     Mocks `dispatch_layer` so the test doesn't recursively run pytest /
     pyright; that's smoke-tested separately."""
 
-    def fake_pass(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_pass(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
     with patch.object(runner, "dispatch_layer", side_effect=fake_pass):
@@ -403,7 +403,7 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
     """When layer N fails, layers >N are NOT dispatched; chain returns FAILURE."""
     dispatched: list[str] = []
 
-    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         dispatched.append(layer)
         if layer == "unit":
             return runner.LayerResult(layer=layer, exit_code=1, duration_seconds=0.01)
@@ -422,7 +422,7 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
 def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
     dispatched: list[str] = []
 
-    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         dispatched.append(layer)
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
@@ -750,7 +750,7 @@ def test_cmd_up_to_dirty_ok_below_deploy(monkeypatch: Any) -> None:
     """Layers 1-3 (pyright/unit/db) are local + idempotent; dirty state OK."""
     monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
 
-    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
     with (
@@ -766,7 +766,7 @@ def test_cmd_up_to_allow_dirty_deploy_bypasses(monkeypatch: Any) -> None:
     """`--allow-dirty-deploy` bypasses the b.10 refusal."""
     monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
 
-    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
     with (
@@ -783,7 +783,7 @@ def test_cmd_up_to_qs_gen_runner_yes_env_bypasses_dirty(monkeypatch: Any) -> Non
     convention so the env var works for both flag families)."""
     monkeypatch.setenv("QS_GEN_RUNNER_YES", "1")
 
-    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
     with (
@@ -1256,12 +1256,15 @@ def test_write_cache_marker_creates_per_sha_per_layer_file(
 
     runner.write_cache_marker("unit", duration_seconds=1.5)
 
-    marker = tmp_path / ".cache" / "abc1234.unit.json"
+    # Default variant gets included in the filename for variant-aware
+    # cache (Y.2.gate.b.2.impl).
+    marker = tmp_path / ".cache" / "abc1234.unit.default.json"
     assert marker.exists()
     import json as _json
     data = _json.loads(marker.read_text())
     assert data["sha"] == "abc1234"
     assert data["layer"] == "unit"
+    assert data["variant"] == "default"
     assert data["duration_seconds"] == 1.5
     assert data["passed_at"]  # iso timestamp
 
@@ -1365,3 +1368,118 @@ def test_skippable_layers_are_unit_and_db_only() -> None:
     """Lock the contract: only the cheap layers participate in the
     cache. Catches a future drift where someone adds 'deploy' here."""
     assert runner.SKIPPABLE_LAYERS == ("unit", "db")
+
+
+# Y.2.gate.b.2.impl — variant axis (testcontainers per-dialect).
+
+
+def test_known_variants_includes_default_and_local_pg() -> None:
+    """Lock the variant set. New variant names land here first; their
+    setup_variant impl follows."""
+    assert "default" in runner.KNOWN_VARIANTS
+    assert "local-pg" in runner.KNOWN_VARIANTS
+
+
+def test_resolve_variants_default_returns_singleton() -> None:
+    assert runner.resolve_variants("default") == ["default"]
+
+
+def test_resolve_variants_empty_string_returns_default() -> None:
+    """Empty string (operator passed `--variants=`) → behave as
+    default. No silent failure into "no variants run"."""
+    assert runner.resolve_variants("") == ["default"]
+
+
+def test_resolve_variants_csv_returns_list() -> None:
+    assert runner.resolve_variants("local-pg") == ["local-pg"]
+    assert runner.resolve_variants("default,local-pg") == ["default", "local-pg"]
+
+
+def test_resolve_variants_unknown_raises() -> None:
+    """Typo'd variant names fail-loud with the known set surfaced."""
+    with pytest.raises(ValueError, match="unknown variant"):
+        runner.resolve_variants("local-postgress")
+
+
+def test_setup_variant_default_is_no_op() -> None:
+    env, handle = runner.setup_variant("default")
+    assert env == {}
+    assert handle is None
+
+
+def test_teardown_variant_no_op_for_none() -> None:
+    """Teardown is no-op when handle is None (default variant)."""
+    runner.teardown_variant(None)  # must not raise
+
+
+def test_teardown_variant_swallows_exceptions() -> None:
+    """Sidecar contract — never break the chain on container teardown
+    failure (network glitch, container already stopped, etc.)."""
+    class _Throws:
+        def stop(self) -> None:
+            raise RuntimeError("docker exploded")
+
+    runner.teardown_variant(_Throws())  # must not raise
+
+
+def test_dispatch_layer_threads_variant_env_to_db_layer(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Y.2.gate.b.2.impl — variant_env merges into the subprocess env
+    for DB-touching layers so QS_GEN_DEMO_DATABASE_URL etc. is visible
+    to fixtures inside the pytest subprocess."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: dict[str, str] = {}
+
+    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
+        captured.update(env or {})
+        return fake
+
+    with patch.object(subprocess, "run", side_effect=capture_env):
+        runner.dispatch_layer(
+            "db", tmp_path, runner.RunOptions(),
+            variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
+        )
+    assert captured["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
+
+
+def test_dispatch_layer_does_not_thread_variant_env_to_unit(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Unit layer doesn't need variant_env — passes through clean.
+    Tests that assert no QS_GEN_DEMO_DATABASE_URL would otherwise
+    break when the operator runs --variants=local-pg."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: dict[str, str] = {}
+
+    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
+        captured.update(env or {})
+        return fake
+
+    monkeypatch.delenv("QS_GEN_DEMO_DATABASE_URL", raising=False)
+    with patch.object(subprocess, "run", side_effect=capture_env):
+        runner.dispatch_layer(
+            "unit", tmp_path, runner.RunOptions(),
+            variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
+        )
+    # Variant env did NOT leak into the unit subprocess.
+    assert "QS_GEN_DEMO_DATABASE_URL" not in captured
+
+
+def test_cache_marker_variant_aware(monkeypatch: Any, tmp_path: Any) -> None:
+    """Same SHA + same layer with different variants → different marker
+    files; cache lookup for one variant doesn't hit the other."""
+    _stub_short_sha(monkeypatch, "abc1234")
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    runner.write_cache_marker("unit", duration_seconds=1.5, variant="default")
+    runner.write_cache_marker("db", duration_seconds=10.0, variant="local-pg")
+
+    # Each variant has its own marker.
+    assert (tmp_path / ".cache" / "abc1234.unit.default.json").exists()
+    assert (tmp_path / ".cache" / "abc1234.db.local-pg.json").exists()
+    # Cross-variant lookups don't hit.
+    assert runner.is_layer_cached_green("unit", variant="default") is True
+    assert runner.is_layer_cached_green("unit", variant="local-pg") is False
+    assert runner.is_layer_cached_green("db", variant="local-pg") is True
+    assert runner.is_layer_cached_green("db", variant="default") is False

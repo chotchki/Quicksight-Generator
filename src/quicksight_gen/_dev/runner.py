@@ -349,12 +349,24 @@ def _layer_command(
     return None
 
 
-def dispatch_layer(layer: str, run_dir: Path, options: RunOptions | None = None) -> LayerResult:
+def dispatch_layer(
+    layer: str,
+    run_dir: Path,
+    options: RunOptions | None = None,
+    *,
+    variant_env: dict[str, str] | None = None,
+) -> LayerResult:
     """Y.2.gate.c.5 — run one layer; return its result.
 
     Stub layers return a `skipped=True` LayerResult with exit_code=0 so the
     chain doesn't break — the deferred work is c.5+ follow-up, not a runner
     bug. Stubs print a clear `dispatch-skip` line so the operator knows.
+
+    Y.2.gate.b.2.impl — ``variant_env`` (e.g.,
+    ``{"QS_GEN_DEMO_DATABASE_URL": "<container-url>"}``) gets merged into
+    the subprocess env so the variant's resources (Docker container
+    URL etc.) are visible to pytest fixtures + cfg loaders inside the
+    subprocess.
     """
     cmd_env = _layer_command(layer, run_dir, options)
     if cmd_env is None:
@@ -362,7 +374,14 @@ def dispatch_layer(layer: str, run_dir: Path, options: RunOptions | None = None)
         return LayerResult(layer=layer, exit_code=0, duration_seconds=0.0, skipped=True)
 
     cmd, env_addl = cmd_env
-    env = {**os.environ, **env_addl}
+    # Y.2.gate.b.2.impl — variant_env only applies to layers that
+    # actually need a DB. Unit doesn't (in-process tests / pyright);
+    # leaking QS_GEN_DEMO_DATABASE_URL into the unit subprocess
+    # contaminates tests that assert "no demo_database_url is set".
+    effective_variant_env = (
+        variant_env if variant_env and layer in DB_TOUCHING_LAYERS else {}
+    )
+    env = {**os.environ, **env_addl, **effective_variant_env}
     print(f"runner: dispatch-run [{layer}] {' '.join(cmd)}")
     start = time.monotonic()
     result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=False)
@@ -582,24 +601,25 @@ def _short_sha() -> str:
         return "nogit"
 
 
-def _cache_marker_path(layer: str, sha: str) -> Path:
-    """Y.2.gate.b.8.impl — path to the per-(layer, sha) cache marker.
+def _cache_marker_path(layer: str, sha: str, variant: str = "default") -> Path:
+    """Y.2.gate.b.8.impl — path to the per-(layer, sha, variant)
+    cache marker. Variant-aware (Y.2.gate.b.2.impl): a green marker
+    for variant=default doesn't signal green for variant=local-pg.
 
     File schema (JSON):
-      {"sha": "<short-sha>", "layer": "<name>",
+      {"sha": "<short-sha>", "layer": "<name>", "variant": "<name>",
        "passed_at": "<utc-iso>", "duration_seconds": <float>}
-
-    The presence of the file (with passed_at) IS the green signal.
-    Absence = never run for this SHA, or last run was red. Bypassed
-    on dirty SHA (`-dirty` suffix never matches a clean cache key).
     """
-    return RUN_TESTS_CACHE_DIR / f"{sha}.{layer}.json"
+    return RUN_TESTS_CACHE_DIR / f"{sha}.{layer}.{variant}.json"
 
 
-def write_cache_marker(layer: str, *, duration_seconds: float) -> None:
+def write_cache_marker(
+    layer: str, *, duration_seconds: float, variant: str = "default",
+) -> None:
     """Y.2.gate.b.8.impl — record that ``layer`` passed for the
-    current SHA. No-op if not in a git repo (`_short_sha` returns
-    'nogit') so direct ``pytest`` invocations don't pollute the cache.
+    current SHA + variant. No-op if not in a git repo (`_short_sha`
+    returns 'nogit') so direct ``pytest`` invocations don't pollute
+    the cache.
     """
     sha = _short_sha()
     if sha in ("nogit", ""):
@@ -608,10 +628,11 @@ def write_cache_marker(layer: str, *, duration_seconds: float) -> None:
         return  # dirty SHA = don't cache; the marker would be unsound.
     try:
         RUN_TESTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        marker = _cache_marker_path(layer, sha)
+        marker = _cache_marker_path(layer, sha, variant)
         marker.write_text(json.dumps({
             "sha": sha,
             "layer": layer,
+            "variant": variant,
             "passed_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": float(duration_seconds),
         }) + "\n")
@@ -619,9 +640,9 @@ def write_cache_marker(layer: str, *, duration_seconds: float) -> None:
         pass  # sidecar contract — never break the run.
 
 
-def is_layer_cached_green(layer: str) -> bool:
+def is_layer_cached_green(layer: str, *, variant: str = "default") -> bool:
     """Y.2.gate.b.8.impl — True iff ``layer`` has a green cache
-    marker for the current SHA. Used by `cmd_up_to` when
+    marker for the current SHA + variant. Used by `cmd_up_to` when
     ``--skip-cheap`` is set to short-circuit re-runs.
     """
     if layer not in SKIPPABLE_LAYERS:
@@ -631,7 +652,7 @@ def is_layer_cached_green(layer: str) -> bool:
         return False
     if _is_dirty():
         return False  # dirty SHA = always re-run; cached state is stale.
-    marker = _cache_marker_path(layer, sha)
+    marker = _cache_marker_path(layer, sha, variant)
     if not marker.exists():
         return False
     try:
@@ -646,8 +667,93 @@ def is_layer_cached_green(layer: str) -> bool:
     return bool(
         data.get("sha") == sha
         and data.get("layer") == layer
+        and data.get("variant", "default") == variant
         and data.get("passed_at")
     )
+
+
+# Y.2.gate.b.2.impl — variant axis (lock per b.1).
+#
+# Today's runner is single-variant by default ("default" = use whatever
+# DB the cfg resolves to, typically the operator's external Aurora /
+# Oracle SE2). Y.2.gate.b.2 locks the design for per-variant Docker
+# containers; this is the impl. ``--variants=local-pg`` spins up a
+# Postgres testcontainer, threads its connection URL via
+# ``QS_GEN_DEMO_DATABASE_URL`` env to the pytest subprocess, and tears
+# the container down at the end of the chain.
+#
+# Multi-variant fan-out (running both default + local-pg in one
+# invocation) is `c.6.async`'s job — needs `asyncio.gather` for
+# parallel per-variant subprocesses. b.2.impl scopes to the
+# single-non-default-variant case to deliver the keystone value:
+# operator can run db tests against a local container instead of
+# burning Aurora minutes.
+KNOWN_VARIANTS: Final = ("default", "local-pg")
+
+# Y.2.gate.b.2.impl — layers whose subprocess needs the variant's
+# DB connection threaded through (QS_GEN_DEMO_DATABASE_URL etc.).
+# Unit doesn't need it; deploy/api/browser would (when wired).
+DB_TOUCHING_LAYERS: Final = ("db", "deploy", "api", "browser")
+
+
+def resolve_variants(variants_arg: str) -> list[str]:
+    """Parse ``--variants=<set>`` CSV into a list. ``default`` always
+    resolves to a single ``["default"]`` (today's behavior preserved).
+    Unknown variant names raise — fail-loud so a typo doesn't silently
+    fall through to "default behavior" the operator didn't ask for.
+    """
+    raw = [v.strip() for v in variants_arg.split(",") if v.strip()]
+    if not raw or raw == ["default"]:
+        return ["default"]
+    unknown = [v for v in raw if v not in KNOWN_VARIANTS]
+    if unknown:
+        raise ValueError(
+            f"unknown variant(s) {unknown!r}; known: {list(KNOWN_VARIANTS)}"
+        )
+    return raw
+
+
+def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
+    """Bring up the resources a variant needs. Returns
+    ``(env_overrides, handle_for_teardown)``. Caller threads
+    env_overrides into the pytest subprocess and passes handle to
+    `teardown_variant` after.
+
+    For ``default``: no-op. For ``local-pg``: spins up a Postgres
+    container via testcontainers-python and returns its connection
+    URL as a ``QS_GEN_DEMO_DATABASE_URL`` override.
+
+    Postgres container takes ~10-15s to start. Lifetime is the chain
+    (one container reused across all layers in a single ``up_to``
+    invocation), not per-layer.
+    """
+    if name == "default":
+        return {}, None
+    if name == "local-pg":
+        # Lazy-import: testcontainers requires Docker, which not every
+        # operator has. Importing only on demand keeps non-Docker
+        # invocations clean.
+        from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
+
+        # Pin to the exact PG version we run in production (Aurora 17).
+        container = PostgresContainer("postgres:17-alpine")
+        container.start()
+        url: str = container.get_connection_url()  # type: ignore[no-untyped-call]
+        return {"QS_GEN_DEMO_DATABASE_URL": url}, container
+    raise ValueError(f"setup_variant: unknown variant {name!r}")
+
+
+def teardown_variant(handle: object | None) -> None:
+    """Stop + remove the container if one was started. No-op for
+    ``default`` (handle is None)."""
+    if handle is None:
+        return
+    try:
+        # All testcontainers expose ``.stop()`` for shutdown + cleanup.
+        handle.stop()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        # Sidecar contract — never break the chain on teardown.
+        pass
 
 
 def _is_dirty() -> bool:
@@ -775,35 +881,66 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     if options.fuzz_seed_value is not None:
         print(f"runner: fuzz_seed={options.fuzz_seed_value} (pin via QS_GEN_FUZZ_SEED env to repro)")
 
+    # Y.2.gate.b.2.impl — resolve variants up front; spin up
+    # containers ONCE for the whole chain (not per layer). Multi-
+    # variant fan-out lands with c.6.async; today b.2.impl scopes to
+    # a single non-default variant per invocation.
+    try:
+        variants = resolve_variants(options.variants)
+    except ValueError as exc:
+        print(f"runner: {exc}", file=sys.stderr)
+        return EXIT_NEEDS_OPERATOR
+    if len(variants) > 1:
+        print(
+            f"runner: multi-variant fan-out not yet wired (Y.2.gate.c.6.async); "
+            f"got --variants={options.variants}",
+            file=sys.stderr,
+        )
+        return EXIT_NEEDS_OPERATOR
+    variant = variants[0]
+    if variant != "default":
+        print(f"runner: variant={variant} (spinning up container...)")
+    variant_env, variant_handle = setup_variant(variant)
+    if variant_env:
+        for key, val in variant_env.items():
+            print(f"runner: variant-env [{key}]={val[:60]}..." if len(val) > 60 else f"runner: variant-env [{key}]={val}")
+
     chain = chain_through(args.layer)
     print(f"runner: chain={chain}")
     final_code = EXIT_SUCCESS
     layer_results: list[LayerResult] = []
-    for layer in chain:
-        # Y.2.gate.b.8.impl — `--skip-cheap` short-circuits cheap
-        # layers (unit, db) when the current SHA already has a green
-        # cache marker. Defensive: dirty-SHA / non-skippable / no-cache
-        # all degrade to "run normally".
-        if options.skip_cheap and is_layer_cached_green(layer):
-            print(f"runner: layer-cached [{layer}] skipped (--skip-cheap, current SHA already green)")
-            cached_result = LayerResult(
-                layer=layer, exit_code=0, duration_seconds=0.0, skipped=True,
-            )
-            layer_results.append(cached_result)
-            continue
+    try:
+        for layer in chain:
+            # Y.2.gate.b.8.impl — `--skip-cheap` short-circuits cheap
+            # layers (unit, db) when the current SHA already has a
+            # green cache marker. Defensive: dirty-SHA / non-skippable
+            # / no-cache all degrade to "run normally". Cache lookup
+            # is variant-aware: a green marker for variant X doesn't
+            # signal green for variant Y.
+            if options.skip_cheap and is_layer_cached_green(layer, variant=variant):
+                print(f"runner: layer-cached [{layer}] skipped (--skip-cheap, current SHA already green for variant={variant})")
+                cached_result = LayerResult(
+                    layer=layer, exit_code=0, duration_seconds=0.0, skipped=True,
+                )
+                layer_results.append(cached_result)
+                continue
 
-        result = dispatch_layer(layer, run_dir, options)
-        layer_results.append(result)
-        marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
-        print(f"runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
-        if not result.passed:
-            print(f"runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
-            final_code = EXIT_FAILURE
-            break
-        # Y.2.gate.b.8.impl — record the green pass so a future
-        # --skip-cheap on the same SHA can short-circuit.
-        if not result.skipped and result.passed:
-            write_cache_marker(layer, duration_seconds=result.duration_seconds)
+            result = dispatch_layer(layer, run_dir, options, variant_env=variant_env)
+            layer_results.append(result)
+            marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
+            print(f"runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
+            if not result.passed:
+                print(f"runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
+                final_code = EXIT_FAILURE
+                break
+            # Y.2.gate.b.8.impl — record the green pass so a future
+            # --skip-cheap on the same SHA + variant can short-circuit.
+            if not result.skipped and result.passed:
+                write_cache_marker(layer, duration_seconds=result.duration_seconds, variant=variant)
+    finally:
+        teardown_variant(variant_handle)
+        if variant_handle is not None:
+            print(f"runner: variant={variant} container torn down")
 
     collect_run_outputs(run_dir, layer_results)
     print(f"runner: wrote {(run_dir / 'timings.json').relative_to(REPO_ROOT)}")
