@@ -228,3 +228,16 @@ exec .venv/bin/python -m quicksight_gen._dev.runner "$@"
 - **Why `cd "$SCRIPT_DIR"`**: lets the operator run `./run_tests.sh ...` from any working directory; the orchestrator can rely on cwd being the repo root.
 - **`uv run` vs `.venv/bin/python` direct**: per memory `feedback_venv_invocation.md`, prefer `.venv/bin/...` direct invocation. `uv run` adds startup overhead (~200ms) per invocation; for an orchestrator that calls itself recursively or fires many subprocesses, that compounds.
 - **Top-level docstring of `runner.py`**: mirrors this usage block + lists the orchestrator's flags. The bash shim's comment block stays minimal.
+
+#### b.14 broader scope: design for Claude-agent loops (added 2026-05-07)
+
+The bash shim's *shape* is the easy half. The *real* design constraint surfaced by the user: **the runner has to be loop-able by Claude without thrashing the operator's `proceed?` permission prompt.** Claude Code matches Bash-tool calls against the operator's allow-list; the runner becomes a single permission boundary so an always-allow rule on `./run_tests.sh*` covers every inner-loop iteration.
+
+Implications for the orchestrator design (PLAN.md sub-tasks `Y.2.gate.b.14.2` – `b.14.5`):
+
+- **Stable invocation pattern**: every Claude-issued call starts with `./run_tests.sh <verb> [...]`. No `python -m ...` direct, no `pytest ...` direct, no `aws ...` direct, no `docker ...` direct. The orchestrator absorbs all sub-tools as subprocesses, so the operator's allow-list rule covers everything inside.
+- **Destructive-op opt-in within the orchestrator** (independent of Claude-Code permissions): `down`, `sweep`, any DROP-shaped op require an orchestrator-side `--yes` flag (or `QS_GEN_RUNNER_YES=1` env). Without it: print what it would do, exit non-zero. Mirrors the project's `quicksight-gen json clean --execute` precedent. This means an always-allow on `./run_tests.sh*` doesn't yield surprise destruction — the orchestrator gates destructive paths even with full Bash-tool approval.
+- **Interactive-cmd refusal pattern**: `aws sso login` opens a browser — Claude can't drive that and would hang if invoked. Orchestrator detects the interactive-required state (expired SSO creds, missing `$DISPLAY`, etc.); prints `"creds expired — type '! aws sso login' yourself, then re-invoke"`; exits with stable code 2 = needs-operator. Claude pattern: see exit 2 → surface the message → wait for the operator's `!` invocation. **Never** auto-invoke `aws sso login`.
+- **Loud failure modes that surface to the operator** instead of silently retrying. Same shape as the §7.2 "loud failure on missing config" lock.
+
+Aligns with existing memory `feedback_aws_deploys_freely.md` (AWS deploys pre-approved) — same shape, broader scope. CLAUDE.md gets a new "Test sequencing" section documenting the suggested allow-list + which verbs are loop-safe vs operator-in-the-loop.
