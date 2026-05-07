@@ -26,11 +26,11 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
     FG_INV_ANETWORK_AMOUNT,
     FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
-    FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
@@ -438,10 +438,30 @@ def _build_volume_anomalies_sheet(
         identifier=DS_INV_VOLUME_ANOMALIES,
         arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-volume-anomalies-dataset")),
     ))
+    # Y.1.b.companion — same matview, no σ pushdown. Distribution
+    # chart binds to this so it stays unfiltered while KPI + Table
+    # see the dataset-SQL ``WHERE z_score >= <<$pInvAnomaliesSigma>>``
+    # filter.
+    ds_anomalies_distribution = app.add_dataset(Dataset(
+        identifier=DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
+        arn=app.cfg.dataset_arn(
+            app.cfg.prefixed("inv-volume-anomalies-distribution-dataset"),
+        ),
+    ))
 
+    # Y.1.c — bridge the analysis-level parameter into the
+    # parameter-bearing dataset's dataset-level parameter (same name).
+    # QS resolves <<$pInvAnomaliesSigma>> in the dataset SQL by
+    # walking MappedDataSetParameters → finding the analysis param of
+    # the same name → substituting its current value at query time.
+    # The companion distribution dataset has no parameter; nothing
+    # bridges into it.
     sigma_param = analysis.add_parameter(IntegerParam(
         name=P_INV_ANOMALIES_SIGMA,
         default=[_DEFAULT_ANOMALIES_SIGMA],
+        mapped_dataset_params=[
+            (ds_anomalies, str(P_INV_ANOMALIES_SIGMA)),
+        ],
     ))
 
     sheet = analysis.add_sheet(Sheet(
@@ -454,8 +474,15 @@ def _build_volume_anomalies_sheet(
     # Row 1: KPI ⅓ + σ distribution ⅔. Distribution is taller (bucket
     # bars need the extra vertical space); the row band is sized to fit
     # the chart, KPI cell expands to match the row height.
+    #
+    # Y.1.b.companion — KPI binds to ``ds_anomalies`` (parameter-bearing,
+    # filtered by σ at the DB); distribution chart binds to
+    # ``ds_anomalies_distribution`` (no parameter, full population
+    # shape). Pre-Y both bound to ``ds_anomalies`` and the analysis-
+    # level FilterGroup with SELECTED_VISUALS scope picked which one
+    # got filtered; under SQL pushdown the pick is per-dataset.
     row1 = sheet.layout.row(height=_KPI_ROW_SPAN * 2)
-    kpi_flagged = row1.add_kpi(
+    row1.add_kpi(
         width=_THIRD,
         title="Flagged Pair-Windows",
         subtitle=(
@@ -463,7 +490,7 @@ def _build_volume_anomalies_sheet(
         ),
         values=[ds_anomalies["recipient_account_id"].count()],
     )
-    dist_bucket_dim = ds_anomalies["z_bucket"].dim()
+    dist_bucket_dim = ds_anomalies_distribution["z_bucket"].dim()
     row1.add_bar_chart(
         width=_THIRD * 2,
         title="Pair-Window σ Distribution",
@@ -472,7 +499,7 @@ def _build_volume_anomalies_sheet(
             "mean. Chart is intentionally NOT filtered by the σ slider."
         ),
         category=[dist_bucket_dim],
-        values=[ds_anomalies["recipient_account_id"].count()],
+        values=[ds_anomalies_distribution["recipient_account_id"].count()],
         category_label="Sigma Bucket",
         value_label="Pair-Windows",
         orientation="VERTICAL",
@@ -482,7 +509,7 @@ def _build_volume_anomalies_sheet(
 
     # Row 2: ranked table full-width.
     z_score_max = ds_anomalies["z_score"].max()
-    table = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Flagged Pair-Windows — Ranked",
         subtitle=(
@@ -519,21 +546,18 @@ def _build_volume_anomalies_sheet(
     ))
     window_fg.scope_sheet(sheet)
 
-    # σ threshold: SELECTED_VISUALS — KPI + table only. The distribution
-    # chart stays unfiltered so it can show the full population shape.
-    # This is the load-bearing scope-by-visuals case for L.2.3.
-    sigma_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_ANOMALIES_SIGMA,
-        filters=[NumericRangeFilter(
-            filter_id="filter-inv-anomalies-sigma",
-            dataset=ds_anomalies,
-            column=ds_anomalies["z_score"],
-            minimum=ParameterBound(sigma_param),
-            null_option="NON_NULLS_ONLY",
-            include_minimum=True,
-        )],
-    ))
-    sheet.scope(sigma_fg, [kpi_flagged, table])
+    # σ threshold: Y.1.b moved this to the dataset SQL via
+    # ``WHERE z_score >= <<$pInvAnomaliesSigma>>`` in
+    # ``build_volume_anomalies_dataset``. The bridge from this analysis
+    # parameter into the dataset's parameter happens via
+    # ``mapped_dataset_params`` on ``sigma_param`` above. KPI + Table
+    # see the filter (they read ds_anomalies); the distribution chart
+    # reads ds_anomalies_distribution which has no parameter and no
+    # WHERE — preserving its UX role of showing the full population
+    # shape regardless of slider position. The pre-Y SELECTED_VISUALS-
+    # scoped FilterGroup (sigma_fg) is removed; the per-visual scoping
+    # is now expressed through dataset binding instead of FilterGroup
+    # scope.
 
     sheet.add_filter_datetime_picker(
         filter=window_fg.filters[0],

@@ -63,6 +63,49 @@ if TYPE_CHECKING:
 _NAMED_PLACEHOLDER_RE = re.compile(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)")
 
 
+# Y.1.e — QuickSight dataset-parameter placeholders.
+#
+# QS dataset Custom SQL uses ``<<$paramName>>`` for parameter
+# substitution (literal value spliced in by QS at query time).
+# App2 reads the same SQL but binds via ``:param_paramName`` —
+# these patterns translate the QS shape to the bind shape so one
+# SQL string serves both dialects.
+#
+# Two patterns, applied in order:
+# 1. Quoted form ``'<<$pName>>'`` (QS string-param convention —
+#    author wraps in single quotes so substitution produces a
+#    valid SQL string literal). Bind variables don't need quoting,
+#    so we strip the surrounding quotes when translating.
+# 2. Unquoted form ``<<$pName>>`` (QS numeric-param convention —
+#    author leaves bare so substitution produces a valid SQL
+#    number literal). Bind variables work directly without quoting.
+#
+# Translated form: ``:param_paramName`` — App2's URL bridge maps
+# this to the URL-supplied value. The ``param_`` prefix matches the
+# X.2.b URL-as-state contract (``?param_pName=value`` → bind under
+# the ``param_pName`` name in the bind dict).
+_QS_QUOTED_DSP_RE = re.compile(r"'<<\$([A-Za-z_][A-Za-z0-9_]*)>>'")
+_QS_UNQUOTED_DSP_RE = re.compile(r"<<\$([A-Za-z_][A-Za-z0-9_]*)>>")
+
+
+def translate_qs_dataset_params(sql: str) -> str:
+    """Translate QS-style ``<<$paramName>>`` placeholders to the
+    App2 bind-variable form ``:param_paramName``.
+
+    Quoted form first (``'<<$pName>>'`` strips the outer quotes —
+    binds quote for us), then unquoted (``<<$pName>>`` becomes
+    ``:param_pName`` directly). Idempotent for SQL that contains
+    no QS placeholders — passes through unchanged.
+
+    The translation is purely syntactic and dialect-agnostic; the
+    later ``rewrite_placeholders_for_dialect`` step converts
+    ``:param_pName`` to PG's ``%(param_pName)s`` if needed.
+    """
+    sql = _QS_QUOTED_DSP_RE.sub(r":param_\1", sql)
+    sql = _QS_UNQUOTED_DSP_RE.sub(r":param_\1", sql)
+    return sql
+
+
 def rewrite_placeholders_for_dialect(sql: str, dialect: Dialect) -> str:
     """Convert ``:name`` placeholders to dialect-native form.
 
@@ -128,6 +171,7 @@ def execute_visual_sql(
         per-renderer shape adapter in ``_data_shape.py`` consumes
         this tuple.
     """
+    sql = translate_qs_dataset_params(sql)
     rewritten = rewrite_placeholders_for_dialect(sql, dialect)
     binds = collect_bind_params(sql, url_params)
     conn = connection_factory()
@@ -182,6 +226,7 @@ async def execute_visual_sql_async(
         exhaustion / connection failure. The App2 server's themed
         500 handler (X.2.m) catches it.
     """
+    sql = translate_qs_dataset_params(sql)
     rewritten = rewrite_placeholders_for_dialect(sql, dialect)
     binds = collect_bind_params(sql, url_params)
     async with pool.acquire() as conn:

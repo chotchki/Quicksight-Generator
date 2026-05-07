@@ -28,9 +28,69 @@ from quicksight_gen.common.html._sql_executor import (
     execute_visual_sql,
     execute_visual_sql_async,
     rewrite_placeholders_for_dialect,
+    translate_qs_dataset_params,
 )
 from quicksight_gen.common.sql.dialect import Dialect
 from tests._test_helpers import make_test_config
+
+
+# ---------------------------------------------------------------------------
+# Y.1.e — QS dataset-parameter placeholder translation
+# ---------------------------------------------------------------------------
+
+
+def test_translate_unquoted_qs_placeholder_to_bind() -> None:
+    """Numeric param convention: ``<<$pName>>`` (unquoted in QS SQL)
+    becomes ``:param_pName`` (bind variable, App2 driver-quoted)."""
+    sql = "SELECT * FROM t WHERE z_score >= <<$pInvAnomaliesSigma>>"
+    out = translate_qs_dataset_params(sql)
+    assert out == "SELECT * FROM t WHERE z_score >= :param_pInvAnomaliesSigma"
+
+
+def test_translate_quoted_qs_placeholder_strips_outer_quotes() -> None:
+    """String param convention: ``'<<$pName>>'`` (QS author wraps in
+    quotes so substitution produces a valid SQL string literal). The
+    bind variable doesn't need quoting — the driver quotes for us —
+    so the translator strips the surrounding quotes."""
+    sql = "SELECT * FROM t WHERE source_display = '<<$pAnchor>>'"
+    out = translate_qs_dataset_params(sql)
+    assert out == "SELECT * FROM t WHERE source_display = :param_pAnchor"
+    assert "'<<$" not in out
+    assert "'>" not in out
+
+
+def test_translate_handles_multiple_placeholders() -> None:
+    sql = (
+        "SELECT * FROM t WHERE z_score >= <<$pSigma>> "
+        "AND root_transfer_id = '<<$pRoot>>' "
+        "AND depth <= <<$pMaxHops>>"
+    )
+    out = translate_qs_dataset_params(sql)
+    assert out.count(":param_pSigma") == 1
+    assert out.count(":param_pRoot") == 1
+    assert out.count(":param_pMaxHops") == 1
+    assert "<<$" not in out
+
+
+def test_translate_passthrough_when_no_qs_placeholders() -> None:
+    """Idempotent for SQL with no ``<<$>>`` markers — vanilla
+    ``:name`` binds + plain SQL pass through unchanged."""
+    sql = "SELECT * FROM t WHERE x = :date_from"
+    out = translate_qs_dataset_params(sql)
+    assert out == sql
+
+
+def test_translate_then_rewrite_pg_yields_pyformat_binds() -> None:
+    """Composition with rewrite_placeholders_for_dialect: the QS
+    translator runs first (``<<$pName>>`` → ``:param_pName``),
+    then PG rewrite turns the bind into ``%(param_pName)s``."""
+    sql = "SELECT * FROM t WHERE z_score >= <<$pSigma>>"
+    out = rewrite_placeholders_for_dialect(
+        translate_qs_dataset_params(sql), Dialect.POSTGRES,
+    )
+    assert "%(param_pSigma)s" in out
+    assert "<<$" not in out
+    assert ":param_" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -356,3 +416,53 @@ def test_execute_visual_sql_async_empty_result_set(
     ))
     assert rows == []
     assert cols == ["id", "name"]
+
+
+# ---------------------------------------------------------------------------
+# Y.1.e — End-to-end QS placeholder round-trip via real SQLite driver
+# ---------------------------------------------------------------------------
+
+
+def test_async_qs_placeholder_translates_and_filters_at_db(
+    aiosqlite_pool: AsyncConnectionPool,
+) -> None:
+    """The full Y.1 contract: dataset SQL with ``<<$pName>>``
+    placeholder + URL param ``param_pName=<value>`` produces the
+    correct filtered rows because the executor translates QS →
+    bind, the driver substitutes the bind value, and SQLite filters
+    in the database.
+
+    This test is the spike's load-bearing assertion: prove that the
+    end-to-end pipeline (QS-shaped SQL → App2 executor → real DB
+    driver) works without the dataset author writing two SQLs.
+    """
+    import asyncio
+
+    rows, cols = asyncio.run(execute_visual_sql_async(
+        aiosqlite_pool,
+        "SELECT id, name, amount FROM t WHERE amount >= <<$pMinAmount>>",
+        {"param_pMinAmount": "20"},
+        dialect=Dialect.SQLITE,
+    ))
+    # Threshold 20 → only beta (20.0) and gamma (30.0) match.
+    assert {r[0] for r in rows} == {2, 3}
+    assert cols == ["id", "name", "amount"]
+
+
+def test_async_qs_quoted_placeholder_string_round_trip(
+    aiosqlite_pool: AsyncConnectionPool,
+) -> None:
+    """QS string-param convention: ``'<<$pName>>'`` (author-quoted
+    in the SQL because QS substitutes the literal value as a SQL
+    string literal). Translator strips the surrounding quotes; the
+    bind variable's driver-quoting picks up where QS's literal
+    quoting left off."""
+    import asyncio
+
+    rows, _cols = asyncio.run(execute_visual_sql_async(
+        aiosqlite_pool,
+        "SELECT id FROM t WHERE name = '<<$pName>>'",
+        {"param_pName": "beta"},
+        dialect=Dialect.SQLITE,
+    ))
+    assert rows == [(2,)]

@@ -40,11 +40,11 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
     FG_INV_ANETWORK_AMOUNT,
     FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
-    FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
@@ -230,24 +230,28 @@ def test_analysis_serializes_to_aws_json():
 # ---------------------------------------------------------------------------
 
 def test_investigation_datasets_in_expected_order():
-    """K.4.3 dataset first, K.4.4 matview-backed dataset second, K.4.5
-    money-trail matview dataset third, K.4.8 account-network wrapper
-    fourth, K.4.8k narrow accounts dataset fifth. M.4.4.5 appended the
-    2 App Info datasets last. Order matters — analysis.py's
+    """K.4.3 dataset first, K.4.4 matview-backed dataset second,
+    Y.1.b.companion distribution dataset third (no σ pushdown — for
+    the unfiltered distribution chart), K.4.5 money-trail matview
+    dataset fourth, K.4.8 account-network wrapper fifth, K.4.8k
+    narrow accounts dataset sixth. M.4.4.5 appended the 2 App Info
+    datasets last. Order matters — analysis.py's
     DataSetIdentifierDeclarations zip relies on it."""
     datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
-    assert len(datasets) == 7
+    assert len(datasets) == 8
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
-    assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
-    assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
-    assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
-    assert datasets[5].DataSetId == _TEST_CFG.prefixed("inv-app-info-liveness-dataset")
-    assert datasets[6].DataSetId == _TEST_CFG.prefixed("inv-app-info-matviews-dataset")
+    assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-distribution-dataset")
+    assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
+    assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
+    assert datasets[5].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
+    assert datasets[6].DataSetId == _TEST_CFG.prefixed("inv-app-info-liveness-dataset")
+    assert datasets[7].DataSetId == _TEST_CFG.prefixed("inv-app-info-matviews-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():
-    """5 content datasets + the 2 M.4.4.5 App Info datasets."""
+    """6 content datasets + the 2 M.4.4.5 App Info datasets.
+    Y.1.b.companion added DS_INV_VOLUME_ANOMALIES_DISTRIBUTION."""
     from quicksight_gen.common.sheets.app_info import (
         DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     )
@@ -257,6 +261,7 @@ def test_investigation_datasets_declared_in_analysis():
     assert [d.Identifier for d in decls] == [
         DS_INV_RECIPIENT_FANOUT,
         DS_INV_VOLUME_ANOMALIES,
+        DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
         DS_INV_MONEY_TRAIL,
         DS_INV_ACCOUNT_NETWORK,
         DS_INV_ANETWORK_ACCOUNTS,
@@ -294,18 +299,19 @@ def test_recipient_fanout_sql_filters_recipient_to_leaf_internal_accounts():
 # ---------------------------------------------------------------------------
 
 def test_filter_groups_in_expected_order():
-    """Two K.4.3 fanout filter groups, then two K.4.4 anomalies filter
-    groups, then three K.4.5 money-trail filter groups (root / hops /
-    amount), then four K.4.8 account-network filter groups (anchor /
-    inbound / outbound / amount). Order is stable so the deployed
-    Definition diff is readable."""
+    """Two K.4.3 fanout filter groups, then K.4.4 anomalies window
+    filter (Y.1.d dropped FG_INV_ANOMALIES_SIGMA — σ now lives in
+    the dataset SQL via ``<<$pInvAnomaliesSigma>>``), then three
+    K.4.5 money-trail filter groups (root / hops / amount), then four
+    K.4.8 account-network filter groups (anchor / inbound / outbound /
+    amount). Order is stable so the deployed Definition diff is
+    readable."""
     groups = _filter_groups()
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
         FG_INV_FANOUT_WINDOW,
         FG_INV_FANOUT_THRESHOLD,
         FG_INV_ANOMALIES_WINDOW,
-        FG_INV_ANOMALIES_SIGMA,
         FG_INV_MONEY_TRAIL_ROOT,
         FG_INV_MONEY_TRAIL_HOPS,
         FG_INV_MONEY_TRAIL_AMOUNT,
@@ -469,13 +475,15 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 12 filter groups (2 fanout + 2 anomalies + 4 money trail
-    # — root/hops/amount/window — + 4 account network: anchor/inbound/
-    # outbound/amount), 5 calc fields (fanout distinct count + account-
-    # network is_anchor_edge + is_inbound_edge + is_outbound_edge +
-    # counterparty_display), 7 parameters (fanout threshold + sigma +
-    # money-trail root/hops/amount + account-network anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 12
+    # Top-level: 11 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
+    # — σ now lives in dataset SQL — leaving 2 fanout + 1 anomalies
+    # window + 4 money trail — root/hops/amount/window — + 4 account
+    # network: anchor/inbound/outbound/amount), 5 calc fields (fanout
+    # distinct count + account-network is_anchor_edge + is_inbound_edge
+    # + is_outbound_edge + counterparty_display), 7 parameters (fanout
+    # threshold + sigma + money-trail root/hops/amount + account-network
+    # anchor/min-amount).
+    assert len(j["Definition"]["FilterGroups"]) == 11
     assert len(j["Definition"]["CalculatedFields"]) == 5
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
@@ -534,41 +542,103 @@ def test_anomalies_window_filter_is_a_time_range_on_window_end():
     assert trf.Column.DataSetIdentifier == DS_INV_VOLUME_ANOMALIES
 
 
-def test_sigma_filter_is_parameter_bound_on_z_score():
+def test_sigma_pushdown_lives_in_dataset_sql_not_filter_group():
+    """Y.1.b — σ filter is in the dataset SQL via ``<<$pInvAnomaliesSigma>>``;
+    the analysis-level FG_INV_ANOMALIES_SIGMA FilterGroup is removed.
+    Both QS (literal substitution) and App2 (bind translation) read
+    the same SQL. Drop in the FilterGroups dict confirms the analysis
+    no longer carries the filter at the group level."""
     groups = {g.FilterGroupId: g for g in _filter_groups()}
-    sigma = groups[FG_INV_ANOMALIES_SIGMA]
-    nrf = sigma.Filters[0].NumericRangeFilter
-    assert nrf is not None
-    assert nrf.Column.ColumnName == "z_score"
-    assert nrf.RangeMinimum is not None
-    assert nrf.RangeMinimum.Parameter == P_INV_ANOMALIES_SIGMA
-    assert nrf.RangeMaximum is None
-    assert nrf.IncludeMinimum is True
-
-
-def test_sigma_filter_is_scoped_to_kpi_and_table_only():
-    """Distribution chart MUST see the full population — its scope
-    deliberately excludes the chart visual id. Otherwise the analyst
-    loses the reference frame for where the slider cutoff lies."""
-    analysis = build_analysis(_TEST_CFG)
-    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
-    sigma = groups[FG_INV_ANOMALIES_SIGMA]
-    sheet_scopes = (
-        sigma.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+    assert "fg-inv-anomalies-sigma" not in groups, (
+        "σ filter should live in dataset SQL post-Y.1, not as a "
+        "FilterGroup on the analysis."
     )
-    assert len(sheet_scopes) == 1
-    scope = sheet_scopes[0]
-    assert scope.SheetId == SHEET_INV_ANOMALIES
-    assert scope.Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
+
+
+def test_sigma_pushdown_dataset_carries_integer_dataset_parameter():
+    """The Volume Anomalies dataset declares ``pInvAnomaliesSigma`` as
+    an IntegerDatasetParameter so QS knows where to substitute the
+    ``<<$pInvAnomaliesSigma>>`` placeholder in the dataset SQL."""
+    from quicksight_gen.apps.investigation.datasets import (
+        build_volume_anomalies_dataset,
+    )
+    ds = build_volume_anomalies_dataset(_TEST_CFG)
+    assert ds.DatasetParameters is not None
+    assert len(ds.DatasetParameters) == 1
+    integer_param = ds.DatasetParameters[0].IntegerDatasetParameter
+    assert integer_param is not None
+    assert integer_param.Name == "pInvAnomaliesSigma"
+    assert integer_param.ValueType == "SINGLE_VALUED"
+    assert integer_param.DefaultValues is not None
+    assert integer_param.DefaultValues.StaticValues == [2]
+
+
+def test_sigma_pushdown_sql_contains_qs_placeholder():
+    """The SQL itself carries the QS-style ``<<$pInvAnomaliesSigma>>``
+    placeholder. App2's executor preprocesses this to
+    ``:param_pInvAnomaliesSigma`` at query time; QS substitutes the
+    literal value at query time. Both sides one SQL truth."""
+    from quicksight_gen.apps.investigation.datasets import (
+        build_volume_anomalies_dataset,
+    )
+    ds = build_volume_anomalies_dataset(_TEST_CFG)
+    sql = ds.PhysicalTableMap["inv-volume-anomalies"].CustomSql.SqlQuery
+    assert "<<$pInvAnomaliesSigma>>" in sql
+    assert "z_score >=" in sql
+
+
+def test_distribution_chart_binds_to_companion_dataset_unfiltered():
+    """Y.1.b.companion — the distribution bar chart MUST point at
+    DS_INV_VOLUME_ANOMALIES_DISTRIBUTION (no σ pushdown) so it shows
+    the full population shape regardless of where the σ slider sits.
+    KPI + Table point at DS_INV_VOLUME_ANOMALIES (with σ pushdown).
+    This test is the SELECTED_VISUALS workaround proof — it locks
+    the per-dataset binding that replaces the pre-Y per-FilterGroup
+    scope."""
+    analysis = build_analysis(_TEST_CFG)
     sheet = next(
         s for s in analysis.Definition.Sheets
         if s.SheetId == SHEET_INV_ANOMALIES
     )
-    kpi_id = _visual_id_by_title(sheet, "Flagged Pair-Windows")
-    table_id = _visual_id_by_title(sheet, "Flagged Pair-Windows — Ranked")
-    dist_id = _visual_id_by_title(sheet, "Pair-Window σ Distribution")
-    assert set(scope.VisualIds) == {kpi_id, table_id}
-    assert dist_id not in scope.VisualIds
+    # Walk every visual on the sheet; collect dataset bindings.
+    # Distribution chart is a BarChart titled "Pair-Window σ Distribution"
+    # — find it and assert its dataset.
+    bar_visuals = [
+        v.BarChartVisual for v in sheet.Visuals
+        if v.BarChartVisual is not None
+    ]
+    dist = next(
+        b for b in bar_visuals
+        if b.Title.FormatText["PlainText"] == "Pair-Window σ Distribution"
+    )
+    fw = dist.ChartConfiguration.FieldWells.BarChartAggregatedFieldWells
+    bar_ds_ids = {
+        cat.CategoricalDimensionField.Column.DataSetIdentifier
+        for cat in (fw.Category or [])
+    }
+    assert bar_ds_ids == {DS_INV_VOLUME_ANOMALIES_DISTRIBUTION}
+
+
+def test_sigma_param_bridges_to_dataset_param_via_mapping():
+    """Y.1.c — the analysis-level pInvAnomaliesSigma parameter
+    declaration carries a MappedDataSetParameters entry pointing at
+    DS_INV_VOLUME_ANOMALIES + dataset-param-name "pInvAnomaliesSigma".
+    QS uses this mapping to substitute the analysis param's value
+    into the dataset SQL's <<$pInvAnomaliesSigma>> placeholder."""
+    analysis = build_analysis(_TEST_CFG)
+    integer_decls = [
+        p.IntegerParameterDeclaration
+        for p in analysis.Definition.ParameterDeclarations
+        if p.IntegerParameterDeclaration is not None
+    ]
+    sigma_decl = next(
+        d for d in integer_decls if d.Name == P_INV_ANOMALIES_SIGMA
+    )
+    assert sigma_decl.MappedDataSetParameters is not None
+    assert len(sigma_decl.MappedDataSetParameters) == 1
+    mapping = sigma_decl.MappedDataSetParameters[0]
+    assert mapping.DataSetIdentifier == DS_INV_VOLUME_ANOMALIES
+    assert mapping.DataSetParameterName == "pInvAnomaliesSigma"
 
 
 def test_anomalies_window_filter_is_all_visuals_scope():
@@ -692,7 +762,7 @@ def test_money_trail_dataset_reads_from_matview():
     N.3.d: matview name is per-instance prefixed.
     """
     datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
-    money_trail = datasets[2]
+    money_trail = datasets[3]  # Y.1.b.companion shifted index by +1
     sql = next(iter(money_trail.PhysicalTableMap.values())).CustomSql.SqlQuery
     assert "FROM spec_example_inv_money_trail_edges" in sql
     # Don't reach back into the prefixed base table at dataset load.

@@ -24,6 +24,8 @@ from quicksight_gen.apps.investigation.constants import (
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
+    P_INV_ANOMALIES_SIGMA,
 )
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
@@ -33,7 +35,12 @@ from quicksight_gen.common.dataset_contract import (
     build_dataset,
     register_contract,
 )
-from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.models import (
+    DataSet,
+    DatasetParameter,
+    IntegerDatasetParameter,
+    IntegerDatasetParameterDefaultValues,
+)
 from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
@@ -271,15 +278,45 @@ JOIN outflows o ON o.transfer_id = i.transfer_id"""
     )
 
 
-def build_volume_anomalies_dataset(cfg: Config) -> DataSet:
-    """Pair-grain rolling-window anomalies sourced from the matview.
+_DEFAULT_VOLUME_ANOMALIES_SIGMA = 2
 
-    The dataset is a thin SELECT over ``inv_pair_rolling_anomalies`` —
-    every column is computed at refresh time. Visuals filter via a
-    NumericRangeFilter on ``z_score`` bound to the σ-threshold parameter.
+# Y.1.b — dataset parameter id for the σ-threshold pushdown. Distinct
+# from the parameter NAME (``pInvAnomaliesSigma``) — the name is what
+# QuickSight substitutes via ``<<$pInvAnomaliesSigma>>`` and what App2
+# binds via ``:param_pInvAnomaliesSigma`` after the preprocessor; the
+# id is the dataset-resource-internal handle that QS uses to find the
+# parameter when the analysis param's MappedDataSetParameters resolves
+# to it.
+_DSP_ID_INV_ANOMALIES_SIGMA = "dsp-inv-anomalies-sigma"
+
+
+def build_volume_anomalies_dataset(cfg: Config) -> DataSet:
+    """Pair-grain rolling-window anomalies — σ-filtered at the DB.
+
+    Y.1.b — the σ-threshold parameter is pushed into the dataset SQL
+    via ``<<$pInvAnomaliesSigma>>`` (QS substitutes the literal at
+    query time) so QS Direct Query hits the database with the WHERE
+    clause already applied — the matview's full row count never
+    crosses the wire. The companion dataset
+    ``build_volume_anomalies_distribution_dataset`` reads the same
+    matview WITHOUT the parameter so the distribution chart stays
+    unfiltered (its UX role is to show the full population shape
+    against which the analyst reads the threshold).
+
+    App2 reads the same SQL after a one-line preprocessor in
+    ``_sql_executor`` translates ``<<$pInvAnomaliesSigma>>`` →
+    ``:param_pInvAnomaliesSigma`` (bind variable from the URL).
+    Both dialects converge on one SQL truth.
+
+    Bridges to the analysis-level ``pInvAnomaliesSigma`` parameter
+    via ``MappedDataSetParameters`` declared on the parameter
+    declaration in ``apps/investigation/app.py``.
     """
     p = _require_prefix(cfg)
-    sql = f"SELECT * FROM {p}_inv_pair_rolling_anomalies"
+    sql = (
+        f"SELECT * FROM {p}_inv_pair_rolling_anomalies "
+        f"WHERE 1=1 AND z_score >= <<${P_INV_ANOMALIES_SIGMA}>>"
+    )
     return build_dataset(
         cfg,
         cfg.prefixed("inv-volume-anomalies-dataset"),
@@ -288,6 +325,51 @@ def build_volume_anomalies_dataset(cfg: Config) -> DataSet:
         sql,
         VOLUME_ANOMALIES_CONTRACT,
         visual_identifier=DS_INV_VOLUME_ANOMALIES,
+        dataset_parameters=[
+            DatasetParameter(IntegerDatasetParameter=IntegerDatasetParameter(
+                Id=_DSP_ID_INV_ANOMALIES_SIGMA,
+                Name=str(P_INV_ANOMALIES_SIGMA),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=IntegerDatasetParameterDefaultValues(
+                    StaticValues=[_DEFAULT_VOLUME_ANOMALIES_SIGMA],
+                ),
+            )),
+        ],
+    )
+
+
+def build_volume_anomalies_distribution_dataset(cfg: Config) -> DataSet:
+    """Same matview as ``build_volume_anomalies_dataset`` — no σ filter.
+
+    Y.1.b.companion — the SELECTED_VISUALS-scope workaround for SQL
+    pushdown. The σ filter under Y.1 lives in the dataset SQL of
+    ``build_volume_anomalies_dataset``; that filter applies to every
+    visual reading that dataset. The Volume Anomalies sheet's
+    distribution bar chart deliberately stays UNFILTERED (its UX
+    role is to show the full population shape against which the
+    analyst reads "where my σ threshold sits"). Filtering the
+    distribution by σ would defeat its purpose.
+
+    Solution: a second dataset over the same matview without the
+    parameter. The distribution chart binds to this dataset; KPI
+    + Table bind to the parameter-bearing one. Same matview, two
+    dataset SELECT wrappers — DB cost is one matview scan per
+    visual, identical to pre-Y. The duplication is the cost of
+    preserving SELECTED_VISUALS scope under SQL-level pushdown.
+
+    Y.2 will reuse this pattern wherever a FilterGroup with
+    SELECTED_VISUALS scope gets pushed to dataset SQL.
+    """
+    p = _require_prefix(cfg)
+    sql = f"SELECT * FROM {p}_inv_pair_rolling_anomalies"
+    return build_dataset(
+        cfg,
+        cfg.prefixed("inv-volume-anomalies-distribution-dataset"),
+        "Investigation Volume Anomalies — Distribution",
+        "inv-volume-anomalies-distribution",
+        sql,
+        VOLUME_ANOMALIES_CONTRACT,
+        visual_identifier=DS_INV_VOLUME_ANOMALIES_DISTRIBUTION,
     )
 
 
@@ -374,6 +456,7 @@ def build_all_datasets(
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
+        build_volume_anomalies_distribution_dataset(cfg),
         build_money_trail_dataset(cfg),
         build_account_network_dataset(cfg),
         build_account_network_accounts_dataset(cfg),
@@ -394,6 +477,7 @@ def build_all_datasets(
 _CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
     (DS_INV_RECIPIENT_FANOUT, RECIPIENT_FANOUT_CONTRACT),
     (DS_INV_VOLUME_ANOMALIES, VOLUME_ANOMALIES_CONTRACT),
+    (DS_INV_VOLUME_ANOMALIES_DISTRIBUTION, VOLUME_ANOMALIES_CONTRACT),
     (DS_INV_MONEY_TRAIL, MONEY_TRAIL_CONTRACT),
     (DS_INV_ACCOUNT_NETWORK, MONEY_TRAIL_CONTRACT),
     (DS_INV_ANETWORK_ACCOUNTS, ANETWORK_ACCOUNTS_CONTRACT),

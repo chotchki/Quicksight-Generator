@@ -37,6 +37,14 @@ SHEET_INV_APP_INFO = SheetId("inv-sheet-app-info")                # M.4.4.5
 
 DS_INV_RECIPIENT_FANOUT = "inv-recipient-fanout-ds"          # K.4.3
 DS_INV_VOLUME_ANOMALIES = "inv-volume-anomalies-ds"          # K.4.4
+# Y.1.b.companion — same matview as DS_INV_VOLUME_ANOMALIES but
+# without the σ-pushdown parameter. Bound to the distribution chart
+# only, which deliberately shows the FULL population shape regardless
+# of where the analyst sets the σ slider. Pattern: when an analysis-
+# level filter is SELECTED_VISUALS-scoped (KPI + Table only), the
+# unfiltered visuals point at this companion dataset so SQL pushdown
+# in the parameter-bearing dataset doesn't bleed across.
+DS_INV_VOLUME_ANOMALIES_DISTRIBUTION = "inv-volume-anomalies-distribution-ds"  # Y.1
 DS_INV_MONEY_TRAIL = "inv-money-trail-ds"                    # K.4.5
 DS_INV_ACCOUNT_NETWORK = "inv-account-network-ds"            # K.4.8
 # Narrow accounts dataset for the anchor dropdown only — K.4.8k. The
@@ -55,7 +63,10 @@ DS_INV_ANETWORK_ACCOUNTS = "inv-anetwork-accounts-ds"        # K.4.8k
 
 FG_INV_FANOUT_THRESHOLD = FilterGroupId("fg-inv-fanout-threshold")  # K.4.3
 FG_INV_FANOUT_WINDOW = FilterGroupId("fg-inv-fanout-window")        # K.4.3
-FG_INV_ANOMALIES_SIGMA = FilterGroupId("fg-inv-anomalies-sigma")    # K.4.4
+# Y.1.d — FG_INV_ANOMALIES_SIGMA removed; the σ threshold is now a
+# dataset-level parameter (``<<$pInvAnomaliesSigma>>``) substituted
+# into the dataset SQL by QS at query time. Bridge:
+# ``apps/investigation/app.py``::``sigma_param.mapped_dataset_params``.
 FG_INV_ANOMALIES_WINDOW = FilterGroupId("fg-inv-anomalies-window")  # K.4.4
 FG_INV_MONEY_TRAIL_ROOT = FilterGroupId("fg-inv-money-trail-root")  # K.4.5
 FG_INV_MONEY_TRAIL_HOPS = FilterGroupId("fg-inv-money-trail-hops")  # K.4.5
