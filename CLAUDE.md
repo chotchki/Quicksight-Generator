@@ -12,7 +12,7 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 
 ## Quick Reference
 
-- **Language**: Python 3.12+ (3.13 in use). 3.12 minimum is for PEP 695 generic syntax used in `common/tree/`.
+- **Language**: Python 3.13. (3.12 was supported until Y.2.gate; dropped to simplify the test matrix and to free up newer-syntax features as they land.)
 - **Package manager**: uv (lock at `uv.lock`); setuptools build backend; venv at `.venv/`. Run `uv sync --all-extras` after pulling to refresh deps; tests/CLI invoke via `.venv/bin/...` directly (no `source activate`).
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click

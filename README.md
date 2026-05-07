@@ -90,7 +90,7 @@ Reads from per-instance `<prefix>_*` views/matviews emitted by `common.l2.emit_s
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.13+
 - An AWS account with QuickSight Enterprise enabled
 - Either a pre-existing QuickSight datasource ARN **or** a PostgreSQL **17+** / Oracle **19c+** database URL for demo mode (the schema uses SQL/JSON path syntax — `JSON_VALUE` / `JSON_QUERY` / `JSON_EXISTS` — supported on both engines)
 

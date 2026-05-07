@@ -12,17 +12,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -49,26 +46,20 @@ jobs:
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
         # W.8b — drop ``--cov-report=xml --cov-report=term`` from this
-        # job: the coverage aggregator job below downloads each
-        # matrix's data file and produces the combined report.
-        # Per-matrix terminal report would be misleading anyway —
-        # 3.12 and 3.13 may exercise different branches.
-        #
-        # ``COVERAGE_FILE`` rename per matrix entry → ``coverage
-        # combine`` in the aggregator job globs ``.coverage.*`` and
-        # merges them. pytest-cov doesn't reliably honor
-        # ``parallel = true`` from pyproject (writes a single
-        # ``.coverage`` regardless), so we name uniquely at the
-        # process boundary instead.
+        # job: the coverage aggregator job below downloads the data
+        # file and produces the combined report. ``COVERAGE_FILE`` is
+        # named with a ``.py3.13`` suffix so the aggregator's
+        # ``.coverage.*`` glob (kept for forward compatibility if a
+        # second Python version is reintroduced) still matches.
         env:
-          COVERAGE_FILE: .coverage.py${{ matrix.python-version }}
+          COVERAGE_FILE: .coverage.py3.13
         run: .venv/bin/pytest --cov=quicksight_gen
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-data-${{ matrix.python-version }}
-          path: .coverage.py${{ matrix.python-version }}
+          name: coverage-data-py3.13
+          path: .coverage.py3.13
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7

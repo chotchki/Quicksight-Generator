@@ -23,7 +23,7 @@ Friction (looking up ARNs, env-var passthrough, `aws sso login`) is automation b
 | # | Layer | What | Where | Today's invocation | Auto-hooked? | Variants today | Preconditions | Wall-clock (single-variant) |
 |---|---|---|---|---|---|---|---|---|
 | 1 | **pyright strict** | Type check on the strict-include set in `pyproject.toml::tool.pyright.include` | `src/quicksight_gen/{common/tree,common/l2,common/sql,common/browser,common/db,common/config,common/html/_sql_executor,common/html/_tree_fetcher,common/html/server,common/dataset_contract,common/models}` | `conftest.py::pytest_sessionstart` runs `.venv/bin/pyright`; `pytest` invokes it before any test collects. Bypass: `QS_GEN_SKIP_PYRIGHT=1`. | ✅ via pytest sessionstart | Python 3.13 only (pyright pinned). | None — pure static check. | ~1s |
-| 2a | **Unit + JSON tests** | In-process tests for builders, models, tree, JSON-emit shapes | `tests/{unit,json,cli,docs,schema,l2}/test_*.py` (~120 files) | `pytest tests/{unit,json,cli,docs,schema,l2}` (also runs as part of bare `pytest tests/`) | ✅ via `pytest` | Python 3.12 + 3.13 (CI matrix); SQLite snapshot tests run in-process. | None — no DB, no AWS, no network. | ~10s |
+| 2a | **Unit + JSON tests** | In-process tests for builders, models, tree, JSON-emit shapes | `tests/{unit,json,cli,docs,schema,l2}/test_*.py` (~120 files) | `pytest tests/{unit,json,cli,docs,schema,l2}` (also runs as part of bare `pytest tests/`) | ✅ via `pytest` | Python 3.13 only (3.12 dropped Y.2.gate); SQLite snapshot tests run in-process. | None — no DB, no AWS, no network. | ~10s |
 | 2b | **Custom AST lints** | `tests/unit/test_typing_smells.py` walks pyright include set + flags `Any` / bare-str ID smells | Same as 2a (pytest-collected) | Same as 2a | ✅ via `pytest` | None (orthogonal to dialect/L2). | None. | ~1s |
 | 2c | **JS unit tests** | Playwright-driven tests for HTMX renderers + bootstrap.js, against static HTML fixtures (no server) | `tests/js/test_*.py` (8 files) | Same as 2a (pytest-collected) | ✅ via `pytest` (requires `playwright install webkit`) | None. | Playwright WebKit binary installed locally. | ~5s |
 | 3a | **DB SQL smoke (parse + plan)** | Each dataset's CustomSQL substituted with default values, wrapped in `SELECT * FROM (…) sub WHERE 1=0`, executed against live DB. Catches dialect-specific syntax bugs, missing-column refs (Y.2.b's bug class). | `tests/e2e/test_dataset_sql_smoke.py` (Y.2.b hotfix; pytest, behind `QS_GEN_E2E=1`) + `tests/integration/verify_dataset_sql.py` (older CLI script — same logic, used in CI) | Pytest: `QS_GEN_E2E=1 pytest tests/e2e/test_dataset_sql_smoke.py` (37 datasets parametrized). CLI: `python tests/integration/verify_dataset_sql.py --config <cfg> --l2-instance <yaml>`. | ✅ in pytest path; CLI variant remains parallel | **Dialect**: PG / Oracle (CLI runs both in CI; pytest infers from cfg). **L2 instance**: cfg-driven. | Live DB exists at `cfg.demo_database_url` AND schema applied AND seed loaded. | ~17s for 37 datasets on PG |
@@ -43,7 +43,7 @@ Friction (looking up ARNs, env-var passthrough, `aws sso login`) is automation b
 
 | Variant | Layer 1 | 2a | 2b | 2c | 3a | 3b | 3c | 3d | 3e | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Python 3.12 + 3.13** | — | ✅ CI matrix | ✅ | ✅ | — | — | — | — | — | — | — | — | — | — |
+| **Python 3.13** | — | ✅ | ✅ | ✅ | — | — | — | — | — | — | — | — | — | — |
 | **Dialect: PG** | — | — | — | — | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Dialect: Oracle** | — | — | — | — | ✅ | ✅ | ❌ (psycopg only) | ❌ | — | ✅ | ✅ | ❌ (cron only) | ❌ | ❌ |
 | **Dialect: SQLite** | — | ✅ snapshot tests | — | — | (handled by 3e) | — | — | — | ✅ | — | — | — | ✅ (App2 supports it) | — |
@@ -89,7 +89,7 @@ What scripts/commands the developer (and CI) actually types:
 
 | Workflow | Trigger | Layers covered | Variants exercised |
 |---|---|---|---|
-| `ci.yml::test` | push:any + PR | 1 + 2a + 2b + 2c + 3e + (parts of 3a/3b via `tests/e2e/test_dataset_sql_smoke.py`? no — `QS_GEN_E2E` unset, so it skips) | Python 3.12 + 3.13 matrix |
+| `ci.yml::test` | push:any + PR | 1 + 2a + 2b + 2c + 3e + (parts of 3a/3b via `tests/e2e/test_dataset_sql_smoke.py`? no — `QS_GEN_E2E` unset, so it skips) | Python 3.13 only (matrix dropped Y.2.gate) |
 | `ci.yml::integration` | push:any + PR | 4 (deploys to ephemeral PG + Oracle Free containers) + 3a (`verify_dataset_sql.py`) + 3b (`verify_demo_apply.py`) + audit PDF render-and-verify | PG + Oracle dialects, spec_example L2 instance |
 | `ci.yml::coverage` | after `test` matrix | (aggregator) | — |
 | `ci.yml::docs-portable-install` | push:any + PR | builds wheel, installs in fresh venv, runs `quicksight-gen docs apply --portable` | — |
@@ -97,7 +97,7 @@ What scripts/commands the developer (and CI) actually types:
 | `e2e.yml::e2e-pg-api` | push:main + dispatch | 5 (against ephemeral AWS deploy) | PG-AWS, spec_example |
 | `e2e.yml::e2e-pg-browser` | dispatch + nightly cron `0 6 * * *` | 6 (against ephemeral AWS deploy) | PG-AWS, spec_example |
 | `e2e.yml::e2e-oracle-api` | push:main + dispatch | 5 (against ephemeral AWS deploy) | Oracle-AWS, spec_example |
-| `release.yml::test` | tag:v* | 1 + 2 (matrix py3.12 + 3.13) | — |
+| `release.yml::test` | tag:v* | 1 + 2 (Python 3.13 only) | — |
 | `release.yml::e2e-against-testpypi` | tag:v* (gates `publish-pypi`) | 4 + 5 + 6 against the just-published TestPyPI wheel (NOT editable install) | PG-AWS, spec_example |
 | `pages.yml` | docs change | mkdocs strict build | — |
 
