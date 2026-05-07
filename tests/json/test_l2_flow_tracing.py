@@ -860,48 +860,52 @@ def test_postings_dataset_targets_prefixed_current_transactions() -> None:
     assert "FROM sasquatch_pr_current_transactions" in sql
 
 
-def test_postings_dataset_uses_cascade_substitution() -> None:
-    """Cascade WHERE clause has the sentinel short-circuit + per-key
-    branches with literal JSON paths (P.9f.b — Oracle JSON_VALUE
-    rejects runtime-concatenated paths so we emit one branch per
-    declared metadata key)."""
+def test_postings_dataset_projects_meta_match_value_column() -> None:
+    """Y.1.p — the cascade restructured per the AWS-documented pattern:
+    the dataset SELECT projects ``_meta_match_value`` via a CASE on
+    ``<<$pKey>>``, and the analysis-level CategoryFilter on that column
+    gates rows + wakes the MappedDataSetParameters bridge.
+
+    Replaces the prior OR-cascade WHERE clause (Y.1.k diagnosis: the
+    OR-cascade never woke the bridge on URL load).
+    """
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset, META_KEY_ALL_SENTINEL,
+        META_MATCH_PASSTHROUGH_SENTINEL,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
     sql = list(
         build_postings_dataset(_CFG, inst).PhysicalTableMap.values()
     )[0].CustomSql.SqlQuery
-    assert f"<<$pKey>> = '{META_KEY_ALL_SENTINEL}'" in sql
-    # Spot-check one declared key picks the literal-path branch shape.
+    # CASE projection swaps on <<$pKey>>; sentinel branch returns the
+    # passthrough literal so unfiltered state matches every row at the
+    # analysis-level CategoryFilter.
+    assert f"WHEN <<$pKey>> = '{META_KEY_ALL_SENTINEL}'" in sql
+    assert f"THEN '{META_MATCH_PASSTHROUGH_SENTINEL}'" in sql
+    # Per-key branches still emit literal JSON paths (Oracle constraint).
     assert (
-        "<<$pKey>> = 'customer_id' AND "
-        "JSON_VALUE(metadata, '$.customer_id') IN (<<$pValues>>)"
+        "WHEN <<$pKey>> = 'customer_id' "
+        "THEN JSON_VALUE(metadata, '$.customer_id')"
     ) in sql
+    # Column projected for the analysis-level filter to target.
+    assert "AS _meta_match_value" in sql
 
 
-def test_postings_dataset_declares_pkey_and_pvalues_parameters() -> None:
-    """Both dataset parameters declared with the right ValueType +
-    sentinel defaults — wire-shape lock per the M.3.10 spike."""
+def test_postings_dataset_declares_only_pkey_parameter() -> None:
+    """Y.1.p — pValues dataset parameter dropped (no longer referenced
+    in SQL after the OR-cascade WHERE was replaced with the CASE
+    projection). pKey remains for the CASE substitution."""
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset, META_KEY_ALL_SENTINEL,
-        META_VALUE_PLACEHOLDER_SENTINEL,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
     aws_ds = build_postings_dataset(_CFG, inst)
     params = aws_ds.DatasetParameters
-    assert params is not None and len(params) == 2
-    by_name = {p.StringDatasetParameter.Name: p.StringDatasetParameter for p in params}
-    assert "pKey" in by_name and "pValues" in by_name
-    assert by_name["pKey"].ValueType == "SINGLE_VALUED"
-    # Y.1.m: SINGLE_VALUED (was MULTI_VALUED until the cascade
-    # diagnosis revealed the text-field control couldn't commit
-    # non-empty values to multi-valued params).
-    assert by_name["pValues"].ValueType == "SINGLE_VALUED"
-    assert by_name["pKey"].DefaultValues.StaticValues == [META_KEY_ALL_SENTINEL]
-    assert by_name["pValues"].DefaultValues.StaticValues == [
-        META_VALUE_PLACEHOLDER_SENTINEL,
-    ]
+    assert params is not None and len(params) == 1
+    p = params[0].StringDatasetParameter
+    assert p.Name == "pKey"
+    assert p.ValueType == "SINGLE_VALUED"
+    assert p.DefaultValues.StaticValues == [META_KEY_ALL_SENTINEL]
 
 
 def test_meta_values_dataset_is_long_form_with_metadata_key_column() -> None:
@@ -943,25 +947,24 @@ def test_meta_key_param_maps_to_postings_only() -> None:
     }
 
 
-def test_meta_value_param_maps_to_postings_only() -> None:
-    """The Value analysis-param maps to `pValues` on the postings
-    dataset only — meta-values doesn't need the value back since it
-    drives the dropdown's selectable_values, not its own filter."""
+def test_meta_value_param_drives_analysis_filter_not_dataset_bridge() -> None:
+    """Y.1.p — pL2ftMetaValue is no longer bridged to a dataset param.
+    The analysis-level CategoryFilter on `_meta_match_value` (using
+    pL2ftMetaValue as its match value) gates rows directly. Default
+    is the passthrough sentinel so unfiltered state matches every row.
+    """
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        META_MATCH_PASSTHROUGH_SENTINEL,
+    )
     app = build_l2_flow_tracing_app(_CFG)
     p_val = next(
         p for p in app.analysis.parameters
         if str(p.name) == "pL2ftMetaValue"
     )
-    # Y.1.m: single-valued (was multi_valued=True until the cascade
-    # diagnosis revealed text-field controls can't commit non-empty
-    # values to multi-valued params — analyst now filters one value at
-    # a time on this sheet).
     assert p_val.multi_valued is False
-    assert p_val.mapped_dataset_params is not None
-    assert len(p_val.mapped_dataset_params) == 1
-    ds, name = p_val.mapped_dataset_params[0]
-    assert ds.identifier == "l2ft-postings-ds"
-    assert name == "pValues"
+    # No dataset-bridge — analysis-level filter is the trigger.
+    assert not p_val.mapped_dataset_params
+    assert p_val.default == [META_MATCH_PASSTHROUGH_SENTINEL]
 
 
 def test_meta_key_dropdown_includes_sentinel_plus_declared_keys() -> None:
