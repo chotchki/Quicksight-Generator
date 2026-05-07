@@ -492,6 +492,41 @@ Spike-proven pattern applied across every sheet that has SQL-pushdownable filter
 - [ ] **Y.2.g — L1 per-sheet filter controls** (Drift / Overdraft / Limit Breach / Today's Exceptions / Daily Statement / Transactions / Pending Aging / Unbundled Aging / Supersession Audit). Per-sheet sub-bullet as we hit them.
 - [ ] **Y.2.h — Executives datasets review.** Verify whether any Exec sheet has filters that benefit; sweep what does. Likely a thin pass.
 
+### Y.2.gate — Test layer chain audit + runner (HARD prereq for Y.2.c+)
+
+**Why.** Y.2.b shipped a SQL bug that the e2e suite let through: the smoke verifier was a CLI script (`tests/integration/verify_dataset_sql.py`), not pytest-collected, so a deployed `UndefinedColumn` exception got past API + browser e2e. We patched that one gap (`tests/e2e/test_dataset_sql_smoke.py`) but the broader meta-concern stands: **there's no script that chains the test layers cheap → expensive in sequence**, so each layer needs to be invoked manually and we WILL forget. Re-running cheap tests is always cheaper than discovered-after-deploy rework.
+
+**The chain (current understanding — confirm in the audit).**
+
+| Layer | What | Currently auto-hooked? |
+|---|---|---|
+| 1 | pyright | ✓ via pytest sessionstart (M.1.9c) |
+| 2 | unit + JSON tests (`tests/{unit,json}`) | ✓ via `pytest` |
+| 3a | DB SQL smoke — `tests/e2e/test_dataset_sql_smoke.py` (Y.2.b hotfix) | ✓ via `pytest` behind `QS_GEN_E2E=1` |
+| 3b | DB matview row-counts — `verify_demo_apply.py` | ✗ CLI only |
+| 4 | deploy — `quicksight-gen json apply --execute` | ✗ manual |
+| 5 | API e2e — `test_*_deployed_resources.py` etc. | ✓ via `pytest` behind `QS_GEN_E2E=1` |
+| 6 | Browser e2e — `test_*_renders.py` etc. | ✓ via `pytest` behind `QS_GEN_E2E=1` + `QS_E2E_USER_ARN` |
+| 7a | JS unit tests (`tests/js/`) — biome / playwright JS-side | ✗ separate runner |
+| 7b | App2 e2e (`test_html2_*.py`) | ✓ via `pytest` behind `QS_GEN_E2E=1` |
+
+The contract: invoking layer N implies layers 1..N-1 must be green. Today's scripts (`pytest`, `./run_e2e.sh`) only partially compose the chain.
+
+#### Steps
+
+- [ ] **Y.2.gate.a — Audit pass (user-led, Claude assists).** Walk every test file + script and place each one on the layer table above. Surface (1) what's pytest-collected vs. CLI-only, (2) what's gated behind which env vars, (3) what preconditions each layer assumes (e.g., DB smoke needs fresh `demo apply`; deploy needs DB schema), (4) any layers I've missed (e.g., docs-build smoke, mkdocs-strict, biome). End-state: the table above is correct + complete. Doc lives at `docs/reference/test-layer-chain.md` (or in CLAUDE.md, decide in the audit).
+- [ ] **Y.2.gate.b — Design the runner.** Single script (`./run_tests.sh up_to=<layer>`?  `tox`-style?  Make targets?) that composes the chain. Decisions:
+    - **Stop-on-first-failure semantics**: yes (no point running layer N+1 if layer N failed).
+    - **Skip-if-already-green**: do we cache layer results within a session, or always re-run? Lean re-run (cheap layers stay cheap) — but offer a `--skip-cheap` for tight iteration loops.
+    - **Parallelism**: layers within a tier (e.g. multiple e2e tests) parallelize via xdist; cross-layer is sequential.
+    - **Dirty-state detection**: should `up_to=deploy` refuse to deploy if there are uncommitted changes? Decide.
+    - **Per-dialect axis**: PG vs Oracle is orthogonal to the layer; runner needs to multiplex.
+- [ ] **Y.2.gate.c — Implement the runner.** Probably a shell script + minimal Python wrapper. Reuse `./run_e2e.sh` infra where it fits.
+- [ ] **Y.2.gate.d — Wire into CLAUDE.md + memory.** New "Test sequencing" section in CLAUDE.md that says: "Always invoke `./run_tests.sh up_to=<layer>` for the layer you care about; never invoke `pytest tests/e2e/` directly because it skips earlier gates." Memory entry mirrors so I don't drift.
+- [ ] **Y.2.gate.e — Synthetic regression.** Re-introduce the Y.2.b SELECT-alias-in-WHERE bug on a test branch; run `./run_tests.sh up_to=browser`; confirm it stops at layer 3a with the alias error pinpointed, and that the deploy never fires. Same for: a pyright violation (layer 1 stops), a unit test breakage (layer 2 stops).
+- [ ] **Y.2.gate.f — Convert remaining CLI verifiers to pytest tests.** `verify_demo_apply.py` is the obvious one. Anything else surfaced by the audit. Y.2.b's "smoke verifier as CLI" pattern was the bug class; root-cause is "we have CLI scripts that should be pytest tests" → convert all of them.
+- [ ] **Y.2.gate.g — `Y.2.c+ unblocked` gate.** Once a-f are done, resume the Y.2 sweep. Note in PLAN that the gate fires here.
+
 ### Y.3 — Push calc fields down to dataset SQL as real columns
 
 Calc fields exist in the QS analysis layer because QS could evaluate them in its engine. Pushing them into the dataset SQL as window functions in CTEs makes them real columns the database computes once at query time. Visuals reference real columns; the calc field declarations vanish from the analysis tree; both QS and App2 see one shape.
