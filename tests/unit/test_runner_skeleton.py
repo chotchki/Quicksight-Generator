@@ -834,3 +834,96 @@ def test_options_from_args_threads_correctly() -> None:
     assert opts.only == "test_foo"
     assert opts.trace_all is True
     assert opts.allow_dirty_deploy is False  # not passed
+
+
+# Y.2.gate.c.14 — dispatch-table cross-check (per b.11 lock):
+# runner.py is the runtime authority; audit doc §3 is the documented mirror.
+# Spot-check high-signal cells so a one-sided edit fails loudly without us
+# building a full markdown parser. Keep the sample small + intentional —
+# exhaustive coverage is not the goal.
+
+_AUDIT_DOC_PATH = (
+    Path(__file__).resolve().parents[2] / "docs" / "audits" / "y_2_gate_test_layer_chain_audit.md"
+)
+
+
+def _read_audit_text() -> str:
+    return _AUDIT_DOC_PATH.read_text(encoding="utf-8")
+
+
+def test_audit_doc_exists() -> None:
+    """Foundational: the audit doc is at the expected path. If this fails the
+    other c.14 tests are unhelpful — flag the path drift first."""
+    assert _AUDIT_DOC_PATH.exists(), f"audit doc not found at {_AUDIT_DOC_PATH}"
+
+
+def test_audit_layers_table_mentions_every_runner_layer() -> None:
+    """Every runner LAYERS entry needs documentation in the audit. Maps
+    runner names to audit-table descriptions; if the audit renames a row
+    or runner adds a layer, this catches the drift."""
+    audit = _read_audit_text()
+    # Map runner → audit-doc descriptive name (audit table §2).
+    runner_to_audit_name = {
+        "pyright": "pyright strict",
+        "unit": "Unit + JSON tests",
+        "db": "DB SQL smoke",
+        "deploy": "Deploy",
+        "api": "API e2e",
+        "browser": "Browser e2e",
+    }
+    assert set(runner_to_audit_name.keys()) == set(runner.LAYERS), (
+        "test mapping out of sync with runner.LAYERS — update the dict above"
+    )
+    for runner_name, audit_phrase in runner_to_audit_name.items():
+        assert audit_phrase in audit, (
+            f"audit doc missing layer description for runner '{runner_name}' "
+            f"(expected phrase: '{audit_phrase}')"
+        )
+
+
+def test_audit_calls_pyright_pure_static_check() -> None:
+    """High-signal cell: audit row 1 (pyright) lists 'None — pure static check.'
+    Runner reflects: empty deps for pyright. If audit drops this guarantee
+    OR runner adds a dep to pyright, one of these fails."""
+    assert runner._LAYER_DEPS["pyright"] == frozenset()
+    audit = _read_audit_text()
+    assert "pure static check" in audit
+
+
+def test_audit_calls_out_qs_e2e_user_arn_for_browser() -> None:
+    """High-signal cell: audit row 6 (Browser e2e) lists 'QS_E2E_USER_ARN ...
+    required'. Runner reflects: 'qs_arn' in browser deps. If audit drops the
+    requirement OR runner removes 'qs_arn' from browser, drift gets flagged."""
+    assert "qs_arn" in runner._LAYER_DEPS["browser"]
+    audit = _read_audit_text()
+    assert "QS_E2E_USER_ARN" in audit and "required" in audit
+
+
+def test_audit_calls_out_aws_creds_for_deploy() -> None:
+    """High-signal cell: audit row 4 (Deploy) preconditions = 'AWS creds valid'.
+    Runner reflects: 'aws' in deploy deps."""
+    assert "aws" in runner._LAYER_DEPS["deploy"]
+    audit = _read_audit_text()
+    assert "AWS creds valid" in audit
+
+
+def test_audit_distinguishes_pg_oracle_dialect_axis() -> None:
+    """High-signal cell: audit §3 has separate rows for Dialect: PG and
+    Dialect: Oracle (audit-side asymmetry: layer 3c is psycopg-only, layer 6
+    Oracle is cron-only). The runner's docker dep covers BOTH dialect cells
+    today; the future c.6 dialect-fan-out will split. This test pins the
+    audit's PG/Oracle row distinction so b.6 doesn't accidentally erase it."""
+    audit = _read_audit_text()
+    assert "**Dialect: PG**" in audit
+    assert "**Dialect: Oracle**" in audit
+    # And the explicit asymmetry note (§3 'Notes:' bullet about layer 3c).
+    assert "psycopg" in audit  # the reason layer 3c is PG-only
+
+
+def test_audit_first_layer_pyright_has_no_external_preconditions() -> None:
+    """Audit table row 1 'Preconditions' column should still say 'None'.
+    If someone adds a precondition there, the runner's empty-deps state for
+    pyright is now wrong — fix one or the other."""
+    audit = _read_audit_text()
+    assert "None — pure static check" in audit
+    assert runner._LAYER_DEPS["pyright"] == frozenset()
