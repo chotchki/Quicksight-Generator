@@ -977,6 +977,53 @@ def test_options_from_args_threads_parallel() -> None:
     assert opts.parallel == 4
 
 
+# Y.2.gate.b.14 — pyright verb (fast type-check; no pytest).
+
+
+def test_argparse_accepts_pyright_verb_no_args() -> None:
+    """`./run_tests.sh pyright` parses with no paths (defaults to strict-include set)."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(["pyright"])
+    assert parsed.verb == "pyright"
+    assert parsed.paths == []
+
+
+def test_argparse_accepts_pyright_verb_with_paths() -> None:
+    """`./run_tests.sh pyright src/foo.py src/bar.py` collects multiple paths."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(["pyright", "src/foo.py", "src/bar.py"])
+    assert parsed.paths == ["src/foo.py", "src/bar.py"]
+
+
+def test_cmd_pyright_no_paths_runs_default() -> None:
+    """No paths → pyright invoked with no args (strict-include set from pyproject.toml)."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+        code = runner.main(["pyright"])
+    assert code == runner.EXIT_SUCCESS
+    cmd = mock_run.call_args.args[0]
+    assert cmd[0].endswith("pyright")
+    assert len(cmd) == 1  # no paths appended
+
+
+def test_cmd_pyright_with_paths_passes_through() -> None:
+    """Paths thread to pyright argv."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+        code = runner.main(["pyright", "src/foo.py"])
+    assert code == runner.EXIT_SUCCESS
+    cmd = mock_run.call_args.args[0]
+    assert cmd[-1] == "src/foo.py"
+
+
+def test_cmd_pyright_failure_returns_failure_exit() -> None:
+    """Type errors → EXIT_FAILURE (rc=1) so the chain `&&`-and-continue pattern halts."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=1, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        code = runner.main(["pyright"])
+    assert code == runner.EXIT_FAILURE
+
+
 # Y.2.gate.c.6.xdist-safety — fuzz seed value resolution + env passthrough.
 
 

@@ -741,6 +741,33 @@ def cmd_status(args: argparse.Namespace) -> int:
     return EXIT_NEEDS_OPERATOR
 
 
+def cmd_pyright(args: argparse.Namespace) -> int:
+    """Y.2.gate.b.14 — run pyright directly for fast type-check iteration.
+
+    Pyright runs via the unit layer's conftest sessionstart hook on every
+    `up_to=unit` invocation, but that pulls in the full ~9s test suite.
+    For tight type-check loops during editing, this verb shells out to
+    `.venv/bin/pyright` directly.
+
+    Stays behind the runner (per `b.14.2` "every sub-tool absorbed by the
+    orchestrator") so an always-allow rule on `./run_tests.sh*` covers it
+    — no separate Claude-Code permission for `.venv/bin/pyright`.
+
+    Returns FAILURE on type errors so the chain-style `&&`-and-continue
+    pattern works (`./run_tests.sh pyright && ./run_tests.sh up_to=db`).
+    """
+    cmd = [str(_VENV_BIN / "pyright")]
+    if args.paths:
+        cmd += list(args.paths)
+    target = " ".join(args.paths) if args.paths else "(strict-include set from pyproject.toml)"
+    print(f"runner: pyright {target}")
+    start = time.monotonic()
+    result = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    duration = time.monotonic() - start
+    print(f"runner: pyright rc={result.returncode} duration={duration:.2f}s")
+    return EXIT_SUCCESS if result.returncode == 0 else EXIT_FAILURE
+
+
 def cmd_sweep(args: argparse.Namespace) -> int:
     """Clean orphan resources tagged ManagedBy:quicksight-gen.
 
@@ -826,6 +853,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sweep = subs.add_parser("sweep", help="Clean orphan resources tagged ManagedBy:quicksight-gen")
     p_sweep.add_argument("--yes", action="store_true", help="confirm destructive op")
     p_sweep.set_defaults(func=cmd_sweep)
+
+    p_pyright = subs.add_parser(
+        "pyright",
+        help="Run pyright directly (fast type-check; no pytest, no chain)",
+    )
+    p_pyright.add_argument(
+        "paths",
+        nargs="*",
+        help="optional file/dir paths; defaults to the strict-include set in pyproject.toml",
+    )
+    p_pyright.set_defaults(func=cmd_pyright)
 
     return parser
 
