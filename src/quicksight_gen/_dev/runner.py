@@ -195,6 +195,30 @@ _PROBE_FUNCTIONS: Final[dict[str, _ProbeFunc]] = {
 
 
 @dataclass(frozen=True)
+class RunOptions:
+    """Y.2.gate.c.7 — operator-supplied flags threaded through dispatch.
+
+    Most flags are scaffolding today (consumed by future c-stage tasks):
+
+    - ``only`` — pytest ``-k <expr>`` filter (active now in c.7).
+    - ``trace_all`` — Playwright capture every test (env var passthrough; consumed by c.11).
+    - ``allow_dirty_deploy`` — bypass tracked-changes refusal on layer 4+ (active now per b.10).
+    - ``variants`` / ``fuzz_seeds`` — variant fan-out (active in c.6).
+    - ``skip_cheap`` — skip-if-already-green-this-SHA (active when cache lands; b.8).
+    - ``keep_on_failure`` — don't tear down ephemeral state on failure (active when
+      Y.2.gate.l.2 lifecycle commands land; b.14.3 / f.5).
+    """
+
+    only: str | None = None
+    variants: str = "default"
+    fuzz_seeds: int = 1
+    skip_cheap: bool = False
+    keep_on_failure: bool = False
+    trace_all: bool = False
+    allow_dirty_deploy: bool = False
+
+
+@dataclass(frozen=True)
 class LayerResult:
     """Y.2.gate.c.5 — outcome of dispatching one layer.
 
@@ -219,7 +243,9 @@ class LayerResult:
 _VENV_BIN: Final = REPO_ROOT / ".venv" / "bin"
 
 
-def _layer_command(layer: str, run_dir: Path) -> tuple[list[str], dict[str, str]] | None:
+def _layer_command(
+    layer: str, run_dir: Path, options: RunOptions | None = None
+) -> tuple[list[str], dict[str, str]] | None:
     """Map layer → (subprocess argv, env additions). Returns None for layers
     not yet wired (cfg-loading-blocked: deploy / api / browser).
 
@@ -231,45 +257,52 @@ def _layer_command(layer: str, run_dir: Path) -> tuple[list[str], dict[str, str]
     pytest subprocess so ``tests/conftest.py``'s makereport hook (c.2)
     can write per-test timings into the right ``runs/<run-id>/timings/``
     file.
+
+    Y.2.gate.c.7 — `options.only` adds `-k <expr>` to pytest invocations;
+    `options.trace_all` exports `QS_GEN_TRACE_ALL=1` (consumed by c.11
+    browser fixtures).
     """
+    opts = options or RunOptions()
     env_addl = {"QS_GEN_RUN_DIR": str(run_dir), "QS_GEN_LAYER": layer}
+    if opts.trace_all:
+        env_addl["QS_GEN_TRACE_ALL"] = "1"
     if layer == "pyright":
         return [str(_VENV_BIN / "pyright")], env_addl
     if layer == "unit":
-        return (
-            [
-                str(_VENV_BIN / "pytest"),
-                "tests/unit",
-                "tests/json",
-                "tests/cli",
-                "tests/docs",
-                "tests/schema",
-                "tests/l2",
-                "-q",
-            ],
-            {**env_addl, "QS_GEN_SKIP_PYRIGHT": "1"},
-        )
+        cmd = [
+            str(_VENV_BIN / "pytest"),
+            "tests/unit",
+            "tests/json",
+            "tests/cli",
+            "tests/docs",
+            "tests/schema",
+            "tests/l2",
+            "-q",
+        ]
+        if opts.only:
+            cmd += ["-k", opts.only]
+        return (cmd, {**env_addl, "QS_GEN_SKIP_PYRIGHT": "1"})
     if layer == "db":
         # 3a — DB SQL smoke (parametrized over 37 datasets). Behind QS_GEN_E2E=1.
         # Real DB connection comes from cfg; until cfg loading lands the test
         # itself fails fast if cfg is missing. That's the expected shape.
-        return (
-            [str(_VENV_BIN / "pytest"), "tests/e2e/test_dataset_sql_smoke.py", "-q"],
-            {**env_addl, "QS_GEN_E2E": "1", "QS_GEN_SKIP_PYRIGHT": "1"},
-        )
+        cmd = [str(_VENV_BIN / "pytest"), "tests/e2e/test_dataset_sql_smoke.py", "-q"]
+        if opts.only:
+            cmd += ["-k", opts.only]
+        return (cmd, {**env_addl, "QS_GEN_E2E": "1", "QS_GEN_SKIP_PYRIGHT": "1"})
     # deploy / api / browser: not yet wired. Need cfg loading (Y.2.gate.h.2)
     # + variant fan-out (b.2 testcontainers + b.3 App2-as-early-gate).
     return None
 
 
-def dispatch_layer(layer: str, run_dir: Path) -> LayerResult:
+def dispatch_layer(layer: str, run_dir: Path, options: RunOptions | None = None) -> LayerResult:
     """Y.2.gate.c.5 — run one layer; return its result.
 
     Stub layers return a `skipped=True` LayerResult with exit_code=0 so the
     chain doesn't break — the deferred work is c.5+ follow-up, not a runner
     bug. Stubs print a clear `dispatch-skip` line so the operator knows.
     """
-    cmd_env = _layer_command(layer, run_dir)
+    cmd_env = _layer_command(layer, run_dir, options)
     if cmd_env is None:
         print(f"runner: dispatch-skip [{layer}] not-yet-wired (cfg loading + variants)")
         return LayerResult(layer=layer, exit_code=0, duration_seconds=0.0, skipped=True)
@@ -281,6 +314,12 @@ def dispatch_layer(layer: str, run_dir: Path) -> LayerResult:
     result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=False)
     duration = time.monotonic() - start
     return LayerResult(layer=layer, exit_code=result.returncode, duration_seconds=duration)
+
+
+def _is_deploy_or_later(layer: str) -> bool:
+    """Y.2.gate.b.10 — layers ≥ deploy touch AWS/external state. Dirty-state
+    refusal applies only to those (layers 1-3 are local + idempotent)."""
+    return LAYERS.index(layer) >= LAYERS.index("deploy")
 
 
 # Y.2.gate.c.3 — drift threshold. ±50% triggers a ⚠ marker. Spec'd in audit
@@ -552,6 +591,20 @@ def _normalize_argv(argv: Sequence[str]) -> list[str]:
     return args
 
 
+def _options_from_args(args: argparse.Namespace) -> RunOptions:
+    """Build a RunOptions from the argparse Namespace. Defaults are baked in
+    (most flags `default=False`/`default=None` from `_build_parser`)."""
+    return RunOptions(
+        only=getattr(args, "only", None),
+        variants=getattr(args, "variants", "default"),
+        fuzz_seeds=getattr(args, "fuzz_seeds", 1),
+        skip_cheap=getattr(args, "skip_cheap", False),
+        keep_on_failure=getattr(args, "keep_on_failure", False),
+        trace_all=getattr(args, "trace_all", False),
+        allow_dirty_deploy=getattr(args, "allow_dirty_deploy", False),
+    )
+
+
 def cmd_up_to(args: argparse.Namespace) -> int:
     """Run the test chain up to and including the named layer.
 
@@ -559,11 +612,25 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     prints the operator-actionable message and exits NEEDS_OPERATOR — does NOT
     auto-invoke any interactive flow (b.14.4).
 
+    Y.2.gate.b.10 — for layers >= deploy, refuses on tracked-changes dirty
+    state unless `--allow-dirty-deploy` (or `QS_GEN_RUNNER_YES=1`) is set.
+
     Then dispatches the chain (c.5): stop on first layer failure (b.9 LOCKED:
     cross-layer = sequential). Stubbed layers (deploy/api/browser pending cfg
     loading + variants) report skipped + pass-through so the chain doesn't
     falsely block.
     """
+    options = _options_from_args(args)
+
+    if _is_deploy_or_later(args.layer) and _is_dirty():
+        if not options.allow_dirty_deploy and not os.environ.get("QS_GEN_RUNNER_YES"):
+            print(
+                "runner: refusing to deploy: tracked changes present "
+                "(commit / stash, or pass --allow-dirty-deploy)",
+                file=sys.stderr,
+            )
+            return EXIT_NEEDS_OPERATOR
+
     failures = probe_dependencies(args.layer)
     if failures:
         for failure in failures:
@@ -582,7 +649,7 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     final_code = EXIT_SUCCESS
     layer_results: list[LayerResult] = []
     for layer in chain:
-        result = dispatch_layer(layer, run_dir)
+        result = dispatch_layer(layer, run_dir, options)
         layer_results.append(result)
         marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
         print(f"runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
@@ -644,6 +711,46 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_up_to = subs.add_parser("up_to", help="Run the chain up to and including <layer>")
     p_up_to.add_argument("layer", choices=LAYERS)
+    # Y.2.gate.c.7 — flag plumbing.
+    p_up_to.add_argument(
+        "--only",
+        metavar="<expr>",
+        default=None,
+        help="pytest -k <expr>: narrow within-layer tests. Active now.",
+    )
+    p_up_to.add_argument(
+        "--variants",
+        metavar="<set>",
+        default="default",
+        help="variant fan-out (dialect / l2-instance / fuzz-seed) — consumed by c.6.",
+    )
+    p_up_to.add_argument(
+        "--fuzz-seeds",
+        type=int,
+        default=1,
+        metavar="N",
+        help="property-testing fuzz seed sample size (default 1; opt-in heavier; b.1 lock).",
+    )
+    p_up_to.add_argument(
+        "--skip-cheap",
+        action="store_true",
+        help="skip layers 1-2 if green for current SHA earlier in session — consumed by future cache work (b.8).",
+    )
+    p_up_to.add_argument(
+        "--keep-on-failure",
+        action="store_true",
+        help="don't tear down ephemeral state on failure — consumed when lifecycle commands land (l.2 / b.14.3 / f.5).",
+    )
+    p_up_to.add_argument(
+        "--trace-all",
+        action="store_true",
+        help="Playwright capture every test (failure-only is the default). Threads QS_GEN_TRACE_ALL=1 to subprocesses (consumed by c.11).",
+    )
+    p_up_to.add_argument(
+        "--allow-dirty-deploy",
+        action="store_true",
+        help="bypass the tracked-changes refusal on layers >= deploy (b.10).",
+    )
     p_up_to.set_defaults(func=cmd_up_to)
 
     p_up = subs.add_parser("up", help="Boot dependencies (default scope = all)")

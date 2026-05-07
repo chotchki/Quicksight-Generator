@@ -74,9 +74,10 @@ def test_up_to_creates_run_dir() -> None:
 
     Mocks `dispatch_layer` so the test doesn't recursively run pytest /
     pyright; that's smoke-tested separately."""
-    fake_pass = lambda layer, run_dir: runner.LayerResult(  # noqa: E731
-        layer=layer, exit_code=0, duration_seconds=0.01
-    )
+
+    def fake_pass(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
     with patch.object(runner, "dispatch_layer", side_effect=fake_pass):
         code = runner.main(["up_to=unit"])
     assert code == runner.EXIT_SUCCESS
@@ -404,7 +405,7 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
     """When layer N fails, layers >N are NOT dispatched; chain returns FAILURE."""
     dispatched: list[str] = []
 
-    def fake_dispatch(layer: str, run_dir: Path) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
         dispatched.append(layer)
         if layer == "unit":
             return runner.LayerResult(layer=layer, exit_code=1, duration_seconds=0.01)
@@ -423,12 +424,13 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
 def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
     dispatched: list[str] = []
 
-    def fake_dispatch(layer: str, run_dir: Path) -> runner.LayerResult:
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
         dispatched.append(layer)
         return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
 
     with (
         patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "_is_dirty", return_value=False),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
     ):
         code = runner.main(["up_to=browser"])
@@ -676,3 +678,159 @@ def test_report_drift_marks_over_threshold(tmp_path: Path, capsys: Any) -> None:
     # db over threshold — warning
     db_line = [line for line in out.splitlines() if "drift: db" in line][0]
     assert "⚠" in db_line
+
+
+# Y.2.gate.c.7 — flag plumbing tests.
+
+
+def test_run_options_defaults() -> None:
+    """Default options match audit locks: variants=default, fuzz_seeds=1
+    (b.1 lock), all booleans False, only=None."""
+    opts = runner.RunOptions()
+    assert opts.only is None
+    assert opts.variants == "default"
+    assert opts.fuzz_seeds == 1
+    assert opts.skip_cheap is False
+    assert opts.keep_on_failure is False
+    assert opts.trace_all is False
+    assert opts.allow_dirty_deploy is False
+
+
+def test_layer_command_only_adds_pytest_k_flag() -> None:
+    """--only threads through to `pytest -k <expr>` for layers running pytest."""
+    opts = runner.RunOptions(only="test_drift")
+    cmd_env = runner._layer_command("unit", Path("/tmp/run"), opts)
+    assert cmd_env is not None
+    cmd, _ = cmd_env
+    assert "-k" in cmd
+    assert cmd[cmd.index("-k") + 1] == "test_drift"
+
+
+def test_layer_command_only_no_op_for_pyright() -> None:
+    """pyright doesn't run pytest, so --only has no effect on its command."""
+    opts = runner.RunOptions(only="test_drift")
+    cmd_env = runner._layer_command("pyright", Path("/tmp/run"), opts)
+    assert cmd_env is not None
+    cmd, _ = cmd_env
+    assert "-k" not in cmd
+
+
+def test_layer_command_trace_all_sets_env() -> None:
+    """--trace-all sets QS_GEN_TRACE_ALL=1 in subprocess env (consumed by c.11)."""
+    opts = runner.RunOptions(trace_all=True)
+    cmd_env = runner._layer_command("unit", Path("/tmp/run"), opts)
+    assert cmd_env is not None
+    _, env_addl = cmd_env
+    assert env_addl.get("QS_GEN_TRACE_ALL") == "1"
+
+
+def test_layer_command_no_trace_env_when_default() -> None:
+    """Default options don't set QS_GEN_TRACE_ALL — only opt-in adds it."""
+    cmd_env = runner._layer_command("unit", Path("/tmp/run"))
+    assert cmd_env is not None
+    _, env_addl = cmd_env
+    assert "QS_GEN_TRACE_ALL" not in env_addl
+
+
+def test_is_deploy_or_later() -> None:
+    """Layers 4+ touch external state; dirty-state refusal applies only there."""
+    assert runner._is_deploy_or_later("pyright") is False
+    assert runner._is_deploy_or_later("unit") is False
+    assert runner._is_deploy_or_later("db") is False
+    assert runner._is_deploy_or_later("deploy") is True
+    assert runner._is_deploy_or_later("api") is True
+    assert runner._is_deploy_or_later("browser") is True
+
+
+def test_cmd_up_to_dirty_refuses_at_deploy_layer(monkeypatch: Any) -> None:
+    """b.10 — `up_to=deploy` (or higher) refuses on tracked-changes dirty
+    state. NEEDS_OPERATOR exit, message tells operator what to do."""
+    monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
+    with patch.object(runner, "_is_dirty", return_value=True):
+        code = runner.main(["up_to=deploy"])
+    assert code == runner.EXIT_NEEDS_OPERATOR
+
+
+def test_cmd_up_to_dirty_ok_below_deploy(monkeypatch: Any) -> None:
+    """Layers 1-3 (pyright/unit/db) are local + idempotent; dirty state OK."""
+    monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "_is_dirty", return_value=True),
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+    ):
+        code = runner.main(["up_to=db"])
+    assert code == runner.EXIT_SUCCESS
+
+
+def test_cmd_up_to_allow_dirty_deploy_bypasses(monkeypatch: Any) -> None:
+    """`--allow-dirty-deploy` bypasses the b.10 refusal."""
+    monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "_is_dirty", return_value=True),
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+    ):
+        code = runner.main(["up_to=deploy", "--allow-dirty-deploy"])
+    assert code == runner.EXIT_SUCCESS
+
+
+def test_cmd_up_to_qs_gen_runner_yes_env_bypasses_dirty(monkeypatch: Any) -> None:
+    """QS_GEN_RUNNER_YES=1 also bypasses b.10 (mirrors b.14.3 destructive-op
+    convention so the env var works for both flag families)."""
+    monkeypatch.setenv("QS_GEN_RUNNER_YES", "1")
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None) -> runner.LayerResult:
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "_is_dirty", return_value=True),
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+    ):
+        code = runner.main(["up_to=deploy"])
+    assert code == runner.EXIT_SUCCESS
+
+
+def test_argparse_accepts_all_c7_flags() -> None:
+    """Smoke: every c.7 flag parses without error. Catches typos / dest collisions."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(
+        [
+            "up_to",
+            "unit",
+            "--only=test_foo",
+            "--variants=full",
+            "--fuzz-seeds=10",
+            "--skip-cheap",
+            "--keep-on-failure",
+            "--trace-all",
+            "--allow-dirty-deploy",
+        ]
+    )
+    assert parsed.layer == "unit"
+    assert parsed.only == "test_foo"
+    assert parsed.variants == "full"
+    assert parsed.fuzz_seeds == 10
+    assert parsed.skip_cheap is True
+    assert parsed.keep_on_failure is True
+    assert parsed.trace_all is True
+    assert parsed.allow_dirty_deploy is True
+
+
+def test_options_from_args_threads_correctly() -> None:
+    """_options_from_args produces a RunOptions matching the parsed args."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(["up_to", "unit", "--only=test_foo", "--trace-all"])
+    opts = runner._options_from_args(parsed)
+    assert opts.only == "test_foo"
+    assert opts.trace_all is True
+    assert opts.allow_dirty_deploy is False  # not passed
