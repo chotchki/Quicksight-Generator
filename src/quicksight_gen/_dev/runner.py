@@ -69,6 +69,19 @@ RUNS_DIR: Final = REPO_ROOT / "runs"
 # costs disk only.
 RUNS_RETAIN_N: Final = 20
 
+# Y.2.gate.b.8.impl — skip-if-already-green cache. Per-SHA per-layer
+# pass markers so `--skip-cheap` can short-circuit the cheap layers
+# (unit, db) when the current commit has already passed them in this
+# session (or any prior session that hasn't been pruned). gitignored.
+RUN_TESTS_CACHE_DIR: Final = REPO_ROOT / ".run_tests_cache"
+
+# Y.2.gate.b.8 — only cheap layers participate in the cache. Heavy
+# layers (deploy, api, browser) hit live AWS / spin up containers and
+# their per-run state is fundamentally different (per-test resource
+# names, AWS-side drift, etc.) — caching their pass-state would be
+# unsound.
+SKIPPABLE_LAYERS: Final = ("unit", "db")
+
 # Matches `<utc-ts>-<short-sha>[-dirty]` from create_run_id(); used by
 # prune_old_runs to only touch directories we created, never unrelated
 # files an operator might park under runs/.
@@ -569,6 +582,74 @@ def _short_sha() -> str:
         return "nogit"
 
 
+def _cache_marker_path(layer: str, sha: str) -> Path:
+    """Y.2.gate.b.8.impl — path to the per-(layer, sha) cache marker.
+
+    File schema (JSON):
+      {"sha": "<short-sha>", "layer": "<name>",
+       "passed_at": "<utc-iso>", "duration_seconds": <float>}
+
+    The presence of the file (with passed_at) IS the green signal.
+    Absence = never run for this SHA, or last run was red. Bypassed
+    on dirty SHA (`-dirty` suffix never matches a clean cache key).
+    """
+    return RUN_TESTS_CACHE_DIR / f"{sha}.{layer}.json"
+
+
+def write_cache_marker(layer: str, *, duration_seconds: float) -> None:
+    """Y.2.gate.b.8.impl — record that ``layer`` passed for the
+    current SHA. No-op if not in a git repo (`_short_sha` returns
+    'nogit') so direct ``pytest`` invocations don't pollute the cache.
+    """
+    sha = _short_sha()
+    if sha in ("nogit", ""):
+        return
+    if _is_dirty():
+        return  # dirty SHA = don't cache; the marker would be unsound.
+    try:
+        RUN_TESTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        marker = _cache_marker_path(layer, sha)
+        marker.write_text(json.dumps({
+            "sha": sha,
+            "layer": layer,
+            "passed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": float(duration_seconds),
+        }) + "\n")
+    except OSError:
+        pass  # sidecar contract — never break the run.
+
+
+def is_layer_cached_green(layer: str) -> bool:
+    """Y.2.gate.b.8.impl — True iff ``layer`` has a green cache
+    marker for the current SHA. Used by `cmd_up_to` when
+    ``--skip-cheap`` is set to short-circuit re-runs.
+    """
+    if layer not in SKIPPABLE_LAYERS:
+        return False
+    sha = _short_sha()
+    if sha in ("nogit", ""):
+        return False
+    if _is_dirty():
+        return False  # dirty SHA = always re-run; cached state is stale.
+    marker = _cache_marker_path(layer, sha)
+    if not marker.exists():
+        return False
+    try:
+        raw = json.loads(marker.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    # Sanity-check the marker matches what we expect — defensive
+    # against a hand-edited or stale-format file.
+    if not isinstance(raw, dict):
+        return False
+    data = cast("dict[str, Any]", raw)
+    return bool(
+        data.get("sha") == sha
+        and data.get("layer") == layer
+        and data.get("passed_at")
+    )
+
+
 def _is_dirty() -> bool:
     """True if the working tree has tracked modifications (b.10 lock — tracked-only).
 
@@ -699,6 +780,18 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     final_code = EXIT_SUCCESS
     layer_results: list[LayerResult] = []
     for layer in chain:
+        # Y.2.gate.b.8.impl — `--skip-cheap` short-circuits cheap
+        # layers (unit, db) when the current SHA already has a green
+        # cache marker. Defensive: dirty-SHA / non-skippable / no-cache
+        # all degrade to "run normally".
+        if options.skip_cheap and is_layer_cached_green(layer):
+            print(f"runner: layer-cached [{layer}] skipped (--skip-cheap, current SHA already green)")
+            cached_result = LayerResult(
+                layer=layer, exit_code=0, duration_seconds=0.0, skipped=True,
+            )
+            layer_results.append(cached_result)
+            continue
+
         result = dispatch_layer(layer, run_dir, options)
         layer_results.append(result)
         marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
@@ -707,6 +800,10 @@ def cmd_up_to(args: argparse.Namespace) -> int:
             print(f"runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
             final_code = EXIT_FAILURE
             break
+        # Y.2.gate.b.8.impl — record the green pass so a future
+        # --skip-cheap on the same SHA can short-circuit.
+        if not result.skipped and result.passed:
+            write_cache_marker(layer, duration_seconds=result.duration_seconds)
 
     collect_run_outputs(run_dir, layer_results)
     print(f"runner: wrote {(run_dir / 'timings.json').relative_to(REPO_ROOT)}")

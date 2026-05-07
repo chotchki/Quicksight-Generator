@@ -1236,3 +1236,132 @@ def test_cmd_sweep_no_config_file_returns_needs_operator(
     assert code == runner.EXIT_NEEDS_OPERATOR
     err = capsys.readouterr().err
     assert "no config.yaml" in err.lower()
+
+
+# Y.2.gate.b.8.impl — skip-if-already-green cache.
+
+
+def _stub_short_sha(monkeypatch: Any, value: str = "deadbeef") -> None:
+    monkeypatch.setattr(runner, "_short_sha", lambda: value)
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+
+
+def test_write_cache_marker_creates_per_sha_per_layer_file(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """write_cache_marker → file at <cache>/<sha>.<layer>.json with
+    matching shape."""
+    _stub_short_sha(monkeypatch, "abc1234")
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+
+    marker = tmp_path / ".cache" / "abc1234.unit.json"
+    assert marker.exists()
+    import json as _json
+    data = _json.loads(marker.read_text())
+    assert data["sha"] == "abc1234"
+    assert data["layer"] == "unit"
+    assert data["duration_seconds"] == 1.5
+    assert data["passed_at"]  # iso timestamp
+
+
+def test_write_cache_marker_no_op_on_dirty_sha(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """Dirty SHA = don't pollute the cache. The marker would be
+    unsound (next clean commit could re-use the same parent SHA)."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "abc1234")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: True)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+
+    assert not (tmp_path / ".cache").exists()
+
+
+def test_write_cache_marker_no_op_when_no_git(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """No git repo (sha == 'nogit') = don't cache. Direct ``pytest``
+    invocations outside a repo shouldn't pollute anywhere."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "nogit")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+
+    assert not (tmp_path / ".cache").exists()
+
+
+def test_is_layer_cached_green_true_when_marker_exists(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """Marker present + matches current SHA → green."""
+    _stub_short_sha(monkeypatch, "abc1234")
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+    assert runner.is_layer_cached_green("unit") is True
+
+
+def test_is_layer_cached_green_false_when_no_marker(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """No marker = not cached."""
+    _stub_short_sha(monkeypatch, "abc1234")
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+
+    assert runner.is_layer_cached_green("unit") is False
+
+
+def test_is_layer_cached_green_false_when_sha_doesnt_match(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """Marker for one SHA doesn't help when current SHA differs.
+    Defensive against handing-edited markers / shared cache dirs."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "abc1234")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+
+    monkeypatch.setattr(runner, "_short_sha", lambda: "different")
+    assert runner.is_layer_cached_green("unit") is False
+
+
+def test_is_layer_cached_green_false_for_non_skippable_layers(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """Heavy layers (deploy, api, browser) NEVER report cached-green
+    even if a marker file exists. Their pass-state is per-run by
+    nature (live AWS / per-test resource names)."""
+    _stub_short_sha(monkeypatch, "abc1234")
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+    # Force a marker file to exist for "deploy" — even with the file
+    # present, is_layer_cached_green should still return False.
+    (tmp_path / ".cache").mkdir(parents=True)
+    (tmp_path / ".cache" / "abc1234.deploy.json").write_text(
+        '{"sha": "abc1234", "layer": "deploy", "passed_at": "2026-05-07T00:00:00+00:00"}',
+    )
+    assert runner.is_layer_cached_green("deploy") is False
+
+
+def test_is_layer_cached_green_false_when_dirty(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """Dirty SHA = always re-run, even with a green marker (the
+    cached state reflects the parent commit, not the current dirty
+    state)."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "abc1234")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+    runner.write_cache_marker("unit", duration_seconds=1.5)
+
+    monkeypatch.setattr(runner, "_is_dirty", lambda: True)
+    assert runner.is_layer_cached_green("unit") is False
+
+
+def test_skippable_layers_are_unit_and_db_only() -> None:
+    """Lock the contract: only the cheap layers participate in the
+    cache. Catches a future drift where someone adds 'deploy' here."""
+    assert runner.SKIPPABLE_LAYERS == ("unit", "db")

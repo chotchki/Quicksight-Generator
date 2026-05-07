@@ -15,6 +15,9 @@ run/
 # Y.2.gate runner per-invocation output dirs; auto-pruned to last N=20
 runs/
 
+# Y.2.gate.b.8.impl — per-SHA per-layer green-pass cache for --skip-cheap.
+.run_tests_cache/
+
 # IDE
 .idea/
 .vscode/
