@@ -6,14 +6,22 @@ resources reference the datasource and account specified here.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
-from quicksight_gen.common.env_keys import QS_GEN_PRINCIPAL_ARNS
+from quicksight_gen.common.env_keys import (
+    QS_GEN_APP2_DB_POOL_SIZE,
+    QS_GEN_AWS_ACCOUNT_ID,
+    QS_GEN_AWS_REGION,
+    QS_GEN_DATASOURCE_ARN,
+    QS_GEN_DEMO_DATABASE_URL,
+    QS_GEN_DIALECT,
+    QS_GEN_PRINCIPAL_ARNS,
+    QS_GEN_RESOURCE_PREFIX,
+)
 from quicksight_gen.common.sql import Dialect
 
 if TYPE_CHECKING:
@@ -356,18 +364,21 @@ def load_config(path: str | Path | None = None) -> Config:
                 _reject_unknown_config_keys(raw_dict, p)
                 values.update(raw_dict)
 
-    # Env vars override YAML
+    # Env vars override YAML. The (cfg_key → EnvVar) shape goes
+    # through the typed registry — get_or_none() coerces + validates
+    # at the boundary; any malformed override surfaces as
+    # EnvVarInvalid carrying the env-var name + description.
     env_map = {
-        "aws_account_id": "QS_GEN_AWS_ACCOUNT_ID",
-        "aws_region": "QS_GEN_AWS_REGION",
-        "datasource_arn": "QS_GEN_DATASOURCE_ARN",
-        "resource_prefix": "QS_GEN_RESOURCE_PREFIX",
-        "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
-        "dialect": "QS_GEN_DIALECT",
-        "app2_db_pool_size": "QS_GEN_APP2_DB_POOL_SIZE",
+        "aws_account_id": QS_GEN_AWS_ACCOUNT_ID,
+        "aws_region": QS_GEN_AWS_REGION,
+        "datasource_arn": QS_GEN_DATASOURCE_ARN,
+        "resource_prefix": QS_GEN_RESOURCE_PREFIX,
+        "demo_database_url": QS_GEN_DEMO_DATABASE_URL,
+        "dialect": QS_GEN_DIALECT,
+        "app2_db_pool_size": QS_GEN_APP2_DB_POOL_SIZE,
     }
-    for cfg_key, env_key in env_map.items():
-        env_val = os.environ.get(env_key)
+    for cfg_key, spec in env_map.items():
+        env_val = spec.get_or_none()
         if env_val is not None:
             values[cfg_key] = env_val
 

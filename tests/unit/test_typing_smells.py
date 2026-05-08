@@ -1,6 +1,6 @@
 """X.2.o.5 — custom AST lint catching typing smells pyright doesn't flag.
 
-Two checks today, both extensible — drop a new ``Check`` into
+Three checks today, all extensible — drop a new ``Check`` into
 ``CHECKS`` and the runner picks it up:
 
 - **bare-str-id** — function parameters named like ID identifiers
@@ -15,6 +15,16 @@ Two checks today, both extensible — drop a new ``Check`` into
   (basedpyright only), so this fills the gap. ``Any`` is sometimes
   principled (DB drivers, JSON values, ``getattr`` dispatch); those
   sites suppress per-line with a one-line WHY.
+
+- **envvar-bypass** (Y.2.gate.b.15.lint.envvar) — direct
+  ``os.environ.get`` / ``os.environ[...]`` / ``os.getenv`` /
+  ``monkeypatch.setenv`` / ``monkeypatch.delenv`` calls with a
+  ``QS_GEN_*`` or ``QS_E2E_*`` string literal as the first arg.
+  These bypass the typed ``EnvVar`` registry at
+  ``common/env_keys.py``, defeating type coercion + value
+  validation + the operator-facing ``EnvVarRequired`` /
+  ``EnvVarInvalid`` errors. Whitelist: the registry itself + its
+  unit test.
 
 Suppression
 -----------
@@ -221,6 +231,118 @@ class ExplicitAnyCheck(Check):
 
 
 # ---------------------------------------------------------------------------
+# Check: envvar-bypass (Y.2.gate.b.15.lint.envvar)
+# ---------------------------------------------------------------------------
+
+
+# Names matching this pattern are owned by the env_keys.py registry.
+# Anything matching that the lint encounters outside the whitelist is
+# a bug going forward.
+_ENV_VAR_NAME_RE = re.compile(r"^QS_(GEN|E2E)_[A-Z0-9_]+$")
+
+
+def _is_qs_env_literal(node: ast.AST) -> str | None:
+    """Return the env-var name if ``node`` is a ``Constant(str)`` matching
+    the QS_GEN/QS_E2E pattern; else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        if _ENV_VAR_NAME_RE.match(node.value):
+            return node.value
+    return None
+
+
+def _matches_attr_chain(node: ast.AST, *parts: str) -> bool:
+    """True iff ``node`` is the attribute chain ``parts[0].parts[1]...``.
+
+    Examples (with ``parts=("os", "environ", "get")``):
+      - ``os.environ.get``  → True
+      - ``other.environ.get`` → False
+      - ``os.environ`` → False (chain too short)
+    """
+    if len(parts) < 2:
+        return False
+    cur: ast.AST = node
+    for attr in reversed(parts[1:]):
+        if not isinstance(cur, ast.Attribute) or cur.attr != attr:
+            return False
+        cur = cur.value
+    return isinstance(cur, ast.Name) and cur.id == parts[0]
+
+
+class _EnvVarBypassVisitor(ast.NodeVisitor):
+    """Walk all Call + Subscript nodes; flag bare ``QS_*`` env access."""
+
+    def __init__(self, file: Path) -> None:
+        self.file = file
+        self.smells: list[Smell] = []
+
+    def _flag(self, lineno: int, name: str, shape: str) -> None:
+        self.smells.append(Smell(
+            file=self.file,
+            lineno=lineno,
+            checker="envvar-bypass",
+            message=(
+                f"bare {shape} access of {name!r} — use "
+                f"``env_keys.{name}.get_or_none()`` (or ``.require()`` / "
+                f"``.serialize(...)``) from common/env_keys.py instead. "
+                f"The typed registry catches typos at import time, "
+                f"validates values (paths exist, ints positive, ARNs "
+                f"well-formed), and gives operator-actionable errors. "
+                f"If this is genuinely a different env var that lives "
+                f"outside the registry, add a ``# typing-smell: "
+                f"ignore[envvar-bypass]`` with a one-line reason."
+            ),
+        ))
+
+    def visit_Call(self, node: ast.Call) -> None:
+        # os.environ.get(NAME, ...) / os.environ.setdefault(NAME, ...)
+        if _matches_attr_chain(node.func, "os", "environ", "get") or \
+                _matches_attr_chain(node.func, "os", "environ", "setdefault"):
+            if node.args:
+                name = _is_qs_env_literal(node.args[0])
+                if name is not None:
+                    self._flag(node.lineno, name, "os.environ.*()")
+        # os.getenv(NAME, ...)
+        elif _matches_attr_chain(node.func, "os", "getenv"):
+            if node.args:
+                name = _is_qs_env_literal(node.args[0])
+                if name is not None:
+                    self._flag(node.lineno, name, "os.getenv()")
+        # monkeypatch.setenv(NAME, ...) / monkeypatch.delenv(NAME, ...)
+        elif isinstance(node.func, ast.Attribute) and \
+                node.func.attr in ("setenv", "delenv") and \
+                isinstance(node.func.value, ast.Name) and \
+                node.func.value.id == "monkeypatch":
+            if node.args:
+                name = _is_qs_env_literal(node.args[0])
+                if name is not None:
+                    self._flag(
+                        node.lineno, name,
+                        f"monkeypatch.{node.func.attr}()",
+                    )
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        # os.environ[NAME] (read) or os.environ[NAME] = ... (write)
+        if isinstance(node.value, ast.Attribute) and \
+                node.value.attr == "environ" and \
+                isinstance(node.value.value, ast.Name) and \
+                node.value.value.id == "os":
+            # Subscript .slice on Python 3.9+ is the inner expression
+            # directly (no ast.Index wrapper).
+            name = _is_qs_env_literal(node.slice)
+            if name is not None:
+                self._flag(node.lineno, name, "os.environ[...]")
+        self.generic_visit(node)
+
+
+class EnvVarBypassCheck(Check):
+    def find_smells(self, src: str, tree: ast.AST, file: Path) -> Iterable[Smell]:
+        v = _EnvVarBypassVisitor(file)
+        v.visit(tree)
+        return v.smells
+
+
+# ---------------------------------------------------------------------------
 # Suppression filtering
 # ---------------------------------------------------------------------------
 
@@ -286,6 +408,17 @@ def _build_checks() -> list[Check]:
         REPO_ROOT / "src/quicksight_gen/common/html/server.py",
         REPO_ROOT / "src/quicksight_gen/common/config.py",
     ]
+    # envvar-bypass spans src/ + tests/ (both have env access). The
+    # registry itself + its unit test are the two legit consumers of
+    # raw os.environ — whitelisted via path exclusion below.
+    envvar_scope = [
+        p for p in (
+            _expand_paths([REPO_ROOT / "src/quicksight_gen"])
+            + _expand_paths([REPO_ROOT / "tests"])
+        )
+        if p.name != "env_keys.py"
+        and p.name != "test_env_keys.py"
+    ]
     return [
         BareStrIdCheck(
             name="bare-str-id",
@@ -302,6 +435,16 @@ def _build_checks() -> list[Check]:
                 "a real type or suppress per-line with a WHY"
             ),
             files=explicit_any_scope,
+        ),
+        EnvVarBypassCheck(
+            name="envvar-bypass",
+            description=(
+                "bare os.environ.get / os.environ[...] / os.getenv / "
+                "monkeypatch.setenv|delenv with a QS_GEN_/QS_E2E_ "
+                "string literal — use the typed EnvVar registry at "
+                "common/env_keys.py instead"
+            ),
+            files=envvar_scope,
         ),
     ]
 

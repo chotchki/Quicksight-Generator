@@ -459,3 +459,72 @@ QS_GEN_DB_TESTS: Final = EnvVar(
     coercer=_bool_coercer,
     optional=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# Cfg-shaped env vars — overrides for fields in `Config`.
+#
+# config.py's `load_config` walks a (cfg_key → EnvVar) map; each
+# spec here owns one cfg field that can be overridden via env. Used
+# in CI / containerized setups where editing run/config.yaml isn't
+# practical. Most are str (cfg loader does its own coercion to
+# Path / int as needed).
+
+QS_GEN_AWS_ACCOUNT_ID: Final = EnvVar(
+    name="QS_GEN_AWS_ACCOUNT_ID",
+    description="AWS account ID — overrides cfg.aws_account_id.",
+    coercer=str,
+    optional=True,
+    validator=matches(re.compile(r"\d{12}")),
+)
+
+QS_GEN_AWS_REGION: Final = EnvVar(
+    name="QS_GEN_AWS_REGION",
+    description="AWS region (us-east-1 shape) — overrides cfg.aws_region.",
+    coercer=str,
+    optional=True,
+    validator=matches(_AWS_REGION_RE),
+)
+
+QS_GEN_DATASOURCE_ARN: Final = EnvVar(
+    name="QS_GEN_DATASOURCE_ARN",
+    description=(
+        "QuickSight datasource ARN — overrides cfg.datasource_arn. "
+        "Required only when cfg has no demo_database_url."
+    ),
+    coercer=str,
+    optional=True,
+    validator=matches(_IAM_ARN_RE),
+)
+
+QS_GEN_RESOURCE_PREFIX: Final = EnvVar(
+    name="QS_GEN_RESOURCE_PREFIX",
+    description=(
+        "Resource ID prefix (kebab-case) — overrides "
+        "cfg.resource_prefix. Default in cfg is 'qs-gen'."
+    ),
+    coercer=str,
+    optional=True,
+)
+
+QS_GEN_DIALECT: Final = EnvVar(
+    name="QS_GEN_DIALECT",
+    description=(
+        "DB dialect (postgres / oracle / sqlite) — overrides "
+        "cfg.dialect."
+    ),
+    coercer=str,
+    optional=True,
+    validator=matches(re.compile(r"postgres|oracle|sqlite")),
+)
+
+QS_GEN_APP2_DB_POOL_SIZE: Final = EnvVar(
+    name="QS_GEN_APP2_DB_POOL_SIZE",
+    description=(
+        "App2 DB pool size — overrides cfg.app2_db_pool_size. "
+        "Cfg loader coerces from string to int."
+    ),
+    coercer=str,
+    optional=True,
+    # No validator — load_config does the int coercion + range check.
+)

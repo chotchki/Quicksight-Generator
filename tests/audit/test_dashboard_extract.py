@@ -31,9 +31,13 @@ from tests.audit._dashboard_extract import (
 # Set env vars here (not in a fixture) because the L1 app's tree is
 # session-scoped and constructed at module import in the fixture
 # below — it needs cfg-shaped env vars before the first call.
-os.environ.setdefault("QS_GEN_AWS_ACCOUNT_ID", "111122223333")
-os.environ.setdefault("QS_GEN_AWS_REGION", "us-west-2")
-os.environ.setdefault(
+# Direct os.environ.setdefault is intentional here (vs. EnvVar.serialize):
+# setdefault preserves any operator-set value, and validate-on-set
+# would reject the test placeholders against the real IAM-ARN regex
+# in the wrong direction (the test deliberately uses a fake account).
+os.environ.setdefault("QS_GEN_AWS_ACCOUNT_ID", "111122223333")  # typing-smell: ignore[envvar-bypass]: test fixture sets env BEFORE load_config; setdefault semantics
+os.environ.setdefault("QS_GEN_AWS_REGION", "us-west-2")  # typing-smell: ignore[envvar-bypass]: test fixture sets env BEFORE load_config
+os.environ.setdefault(  # typing-smell: ignore[envvar-bypass]: test fixture sets env BEFORE load_config
     "QS_GEN_DATASOURCE_ARN",
     "arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
 )
