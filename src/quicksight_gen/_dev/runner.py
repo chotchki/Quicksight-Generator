@@ -2142,10 +2142,33 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+_HELP_EPILOG = """\
+Auth (Y.2.gate.h+i):
+  AWS profile + QS embed user are read from run/config.<dialect>.yaml's
+  optional auth: block. Set:
+      auth:
+        aws_profile: "quicksight-gen-local"   # ~/.aws/credentials profile
+        quicksight_user_arn: null             # optional explicit override
+  When set, the runner injects AWS_PROFILE into every layer subprocess and
+  auto-derives QS_E2E_USER_ARN via STS+ListUsers — no env-var exports.
+  One-time IAM-user setup runbook + IAM policy json:
+      docs/audits/y_2_gate_h_i_combined_spike.md   §6 (runbook), §7 (policy)
+      docs/audits/_iam/quicksight-gen-local-policy.json
+
+Layer chain (Y.2.gate.b/c):
+  unit -> db -> app2 -> deploy -> api -> browser
+  ./run_tests.sh up_to=<layer>  runs the chain through that layer.
+  --variants=local-pg,local-oracle,local-sqlite  spins variant containers.
+  --variants=default  uses the operator's external Aurora (cfg-driven).
+"""
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run_tests.sh",
         description="Test layer chain runner. See module docstring for full usage.",
+        epilog=_HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subs = parser.add_subparsers(dest="verb", required=True)
 

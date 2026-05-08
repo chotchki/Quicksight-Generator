@@ -1,5 +1,57 @@
 # Release Notes
 
+## v8.8.0a5 — Y.2.gate.i close-out (instructions + tests + validation)
+
+Fifth alpha. Closes out `Y.2.gate.i.{2,3,4}` — the runtime wiring for
+the auth path already shipped under `h.1` + `i.1` in v8.8.0a3, but
+the supporting paperwork (operator-facing docs, unit tests for the
+derivation contract, validation acceptance criteria) was still open.
+Now done. The whole `Y.2.gate.i — AWS auth refresh` umbrella ticks.
+
+### What ships
+
+- **`Y.2.gate.i.2` — Instructions.** CLAUDE.md `Commands` block
+  now carries an `Auth (Y.2.gate.h+i)` sub-section: cfg `auth:`
+  block schema, why long-lived IAM keys over SSO (multi-hour
+  Claude-loop survival), pointer to spike §6 (runbook) + §7 (policy)
+  + the IAM policy json. Runner's `--help` now carries an
+  `Auth (Y.2.gate.h+i)` epilog block (`_HELP_EPILOG` in
+  `_dev/runner.py`) — same content surfaces directly when an operator
+  runs `./run_tests.sh --help`.
+- **`Y.2.gate.i.3` — Build paperwork.** 4 mock-boto3 unit tests in
+  `tests/unit/test_runner_skeleton.py` lock the `_derive_qs_user_arn`
+  contract: (a) cfg-override short-circuits boto3 entirely (sentinel
+  factory raises if called), (b) join-key derivation matches
+  `PrincipalId == "federated/iam/<UserId>"` + threads `aws_profile`
+  to `boto3.Session`, (c) no-match → actionable `RuntimeError` naming
+  UserId / IAM Arn / account / cfg-override escape / spike doc, (d)
+  boto3 errors propagate (no swallowing — locks the i.1 deferred
+  narrowing contract). Total runtime: ~0.2s.
+- **`Y.2.gate.i.4` — Validation.** (1) ✓ `./run_tests.sh up_to=browser`
+  ran end-to-end without env-var exports — VALIDATED LIVE in the c.5
+  close-out chain (~4 min wall, all 6 layers green); runner derived
+  `QS_E2E_USER_ARN` from `cfg.auth.aws_profile` silently. (2) ⊘ 4+ hour
+  Claude-loop validation is longitudinal — carried as ongoing
+  observation. (3) ✓ cfg-override path locked by a sentinel-boto3 unit
+  test. (4) ✓ expired-keys propagation locked by a fake-ClientError
+  unit test. Live access-key revoke skipped (blast-radius asymmetric
+  vs unit-test coverage).
+
+### Operator notes
+
+- New `Auth` section in CLAUDE.md is the canonical source for the
+  cfg `auth:` block schema and the long-lived-IAM-keys recommendation.
+- `./run_tests.sh --help` now self-documents the auth path — no need
+  to dig into the spike doc to know what to put in `auth.aws_profile`.
+
+### Memory housekeeping
+
+- `feedback_no_credential_friction.md` is a *principle* (kept — applies
+  beyond Y.2.gate to any future credential-touching code).
+- `project_qs_e2e_user_arn.md` content was rewritten earlier to
+  triage notes (auto-derive + 3-QS-user namespace map). MEMORY.md
+  index entry now matches that content (was a stale value-cache line).
+
 ## v8.8.0a4 — Layer chain reaches the browser tier (c.5 LANDED)
 
 Fourth alpha. Closes out `Y.2.gate.c.5.{deploy,api,browser}` —

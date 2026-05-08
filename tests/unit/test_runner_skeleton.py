@@ -2412,3 +2412,173 @@ def test_cmd_up_to_multi_variant_aggregates_timings(
     # Per-variant timings.json also exists under the nested dir.
     assert (top / "local-pg" / "timings.json").exists()
     assert (top / "local-oracle" / "timings.json").exists()
+
+
+# Y.2.gate.i.3 — _derive_qs_user_arn unit tests (mock-boto3).
+# The live derivation was validated under h.1 against three identity
+# types (IAM user, assumed-role, root) in account 470656905821.
+# These unit tests lock the join-key contract so refactors don't
+# silently break it.
+
+
+def _fake_cfg_for_derive(
+    *,
+    aws_profile: str | None = None,
+    quicksight_user_arn: str | None = None,
+    aws_region: str = "us-east-1",
+    aws_account_id: str = "111122223333",
+) -> SimpleNamespace:
+    """Minimal cfg shape consumed by _derive_qs_user_arn.
+
+    Uses SimpleNamespace instead of building a real Config — the
+    function only touches `cfg.auth`, `cfg.aws_region`, `cfg.aws_account_id`.
+    """
+    auth = SimpleNamespace(
+        aws_profile=aws_profile,
+        quicksight_user_arn=quicksight_user_arn,
+    )
+    return SimpleNamespace(
+        auth=auth,
+        aws_region=aws_region,
+        aws_account_id=aws_account_id,
+    )
+
+
+def test_derive_qs_user_arn_override_short_circuits_boto3(monkeypatch: Any) -> None:
+    """`cfg.auth.quicksight_user_arn` override returns immediately —
+    no STS / ListUsers calls, no boto3 import overhead. Critical for
+    CI where the operator pre-knows the ci-bot ARN and we don't want
+    to burn a ListUsers call per chain run."""
+    expected = "arn:aws:quicksight:us-east-1:111122223333:user/default/ci-bot"
+    cfg = _fake_cfg_for_derive(quicksight_user_arn=expected)
+
+    # Sentinel: if boto3 gets imported, fail loudly so the contract
+    # (override = no AWS call) can't silently regress.
+    def _no_boto3() -> Any:
+        raise AssertionError(
+            "Override path must not touch boto3 — _derive_qs_user_arn "
+            "should short-circuit on cfg.auth.quicksight_user_arn"
+        )
+
+    monkeypatch.setattr("boto3.Session", _no_boto3)
+    assert runner._derive_qs_user_arn(cfg) == expected  # pyright: ignore[reportArgumentType]: SimpleNamespace stand-in for Config
+
+
+def test_derive_qs_user_arn_match_by_principal_id(monkeypatch: Any) -> None:
+    """Join key: QS user's `PrincipalId == "federated/iam/<UserId>"`
+    where `<UserId>` is what STS GetCallerIdentity returns. Locked by
+    the h+i.0 spike against three identity types live."""
+    cfg = _fake_cfg_for_derive(aws_profile="quicksight-gen-local")
+
+    target_user_id = "AIDAEXAMPLEUSERID01"
+    expected_arn = "arn:aws:quicksight:us-east-1:111122223333:user/default/local-dev"
+
+    fake_sts = SimpleNamespace(
+        get_caller_identity=lambda: {
+            "UserId": target_user_id,
+            "Arn": "arn:aws:iam::111122223333:user/example",
+        },
+    )
+
+    fake_paginator = SimpleNamespace(
+        paginate=lambda **_kw: iter([
+            {
+                "UserList": [
+                    {"PrincipalId": "federated/iam/SOMEONE_ELSE", "Arn": "arn:other"},
+                    {"PrincipalId": f"federated/iam/{target_user_id}", "Arn": expected_arn},
+                ],
+            },
+        ]),
+    )
+    fake_qs = SimpleNamespace(get_paginator=lambda _name: fake_paginator)
+
+    def _client(service: str, region_name: str | None = None) -> Any:
+        if service == "sts":
+            return fake_sts
+        if service == "quicksight":
+            return fake_qs
+        raise AssertionError(f"unexpected service client: {service}")
+
+    fake_session = SimpleNamespace(client=_client)
+    captured: dict[str, Any] = {}
+
+    def _fake_session_factory(profile_name: str | None = None) -> Any:
+        captured["profile_name"] = profile_name
+        return fake_session
+
+    monkeypatch.setattr("boto3.Session", _fake_session_factory)
+    assert runner._derive_qs_user_arn(cfg) == expected_arn  # pyright: ignore[reportArgumentType]: SimpleNamespace stand-in for Config
+    # Profile must thread through to boto3.Session — derivation runs
+    # against the same creds the layer subprocesses will use.
+    assert captured["profile_name"] == "quicksight-gen-local"
+
+
+def test_derive_qs_user_arn_no_match_raises_actionable_error(monkeypatch: Any) -> None:
+    """When the STS UserId doesn't match any QS user PrincipalId, the
+    RuntimeError must name (a) the UserId, (b) the IAM Arn, (c) the
+    account, (d) the cfg-override escape hatch, (e) the spike doc.
+    Operator running this fresh shouldn't have to guess what to fix."""
+    cfg = _fake_cfg_for_derive()
+    user_id = "AIDAUNREGISTERED99"
+    iam_arn = "arn:aws:iam::111122223333:user/not-a-qs-user"
+
+    fake_sts = SimpleNamespace(
+        get_caller_identity=lambda: {"UserId": user_id, "Arn": iam_arn},
+    )
+    fake_paginator = SimpleNamespace(
+        paginate=lambda **_kw: iter([
+            {"UserList": [{"PrincipalId": "federated/iam/UNRELATED", "Arn": "arn:x"}]},
+        ]),
+    )
+    fake_qs = SimpleNamespace(get_paginator=lambda _name: fake_paginator)
+    fake_session = SimpleNamespace(
+        client=lambda service, region_name=None: (
+            fake_sts if service == "sts" else fake_qs
+        ),
+    )
+    monkeypatch.setattr("boto3.Session", lambda profile_name=None: fake_session)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        runner._derive_qs_user_arn(cfg)  # pyright: ignore[reportArgumentType]: SimpleNamespace stand-in for Config
+
+    msg = str(exc_info.value)
+    assert user_id in msg, f"error message must name STS UserId: {msg!r}"
+    assert iam_arn in msg, f"error message must name IAM Arn: {msg!r}"
+    assert "111122223333" in msg, f"error message must name account: {msg!r}"
+    assert "auth.quicksight_user_arn" in msg, (
+        f"error message must point operator at cfg-override escape: {msg!r}"
+    )
+    assert "y_2_gate_h_i_combined_spike" in msg, (
+        f"error message must point operator at the spike doc: {msg!r}"
+    )
+
+
+def test_derive_qs_user_arn_boto3_errors_propagate(monkeypatch: Any) -> None:
+    """i.1 deferred: ExpiredTokenException + UnrecognizedClientException
+    detection isn't narrowed in `_derive_qs_user_arn` — any boto3 error
+    bubbles up so `_run_one_variant`'s broad-except converts it to
+    EXIT_NEEDS_OPERATOR. This test locks the "no swallowing" contract:
+    if `_derive_qs_user_arn` ever grew its own try/except, the chain
+    would silently retry / return None / mask the auth failure."""
+    cfg = _fake_cfg_for_derive(aws_profile="quicksight-gen-local")
+
+    class _FakeClientError(Exception):
+        """Stand-in for botocore.exceptions.ClientError."""
+
+    def _failing_get_caller_identity() -> Any:
+        raise _FakeClientError(
+            "An error occurred (ExpiredToken) when calling the GetCallerIdentity "
+            "operation: The security token included in the request is expired"
+        )
+
+    fake_sts = SimpleNamespace(get_caller_identity=_failing_get_caller_identity)
+    fake_session = SimpleNamespace(
+        client=lambda service, region_name=None: fake_sts,
+    )
+    monkeypatch.setattr("boto3.Session", lambda profile_name=None: fake_session)
+
+    with pytest.raises(_FakeClientError) as exc_info:
+        runner._derive_qs_user_arn(cfg)  # pyright: ignore[reportArgumentType]: SimpleNamespace stand-in for Config
+    # Operator-facing surface: the original boto3 message must survive
+    # the propagation so `_run_one_variant`'s log-line shows what failed.
+    assert "ExpiredToken" in str(exc_info.value)

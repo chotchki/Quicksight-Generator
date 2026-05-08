@@ -80,6 +80,32 @@ pytest                              # unit + integration, fast, no AWS
 
 The `data apply --execute` path reads theme from the L2 institution YAML's inline `theme:` block; when omitted, deploy skips emitting a Theme resource and AWS QuickSight CLASSIC takes over (silent-fallback contract). Schema is emitted per-L2-instance via `common/l2/schema.py::emit_schema(l2_instance)` — base tables (`<prefix>_transactions`, `<prefix>_daily_balances`), Current* views, L1 invariant matviews, Investigation matviews. Seed via `emit_full_seed(l2_instance, scenario)` — composes `emit_baseline_seed` (90-day per-Rail leg generator) + `emit_seed` (planted L1/Investigation scenarios).
 
+### Auth (`Y.2.gate.h+i`) — cfg-driven, never `sso login` in the loop
+
+`run/config.<dialect>.yaml` carries an optional `auth:` block. Both fields are optional; when absent the runner falls back to ambient AWS env / SSO cache.
+
+```yaml
+auth:
+  # Profile name in ~/.aws/credentials. Runner injects AWS_PROFILE=<value>
+  # into every subprocess. Keys live in ~/.aws/credentials, NOT in cfg yaml.
+  aws_profile: "quicksight-gen-local"
+
+  # Optional explicit override; skips the auto-derive STS+ListUsers call.
+  # Use case: authed as one IAM principal but want embed URLs signed for
+  # a different QS user (CI's per-job cfg with the GH-secret value baked in).
+  quicksight_user_arn: null
+```
+
+When `aws_profile` is set:
+
+- Runner injects `AWS_PROFILE=<value>` into every layer subprocess (`AuthConfig` → `_run_one_variant`).
+- Runner auto-derives `QS_E2E_USER_ARN` via `sts:GetCallerIdentity` → `quicksight:ListUsers` → match on `PrincipalId == "federated/iam/<UserId>"`. **The operator no longer exports the env var.**
+- `quicksight_user_arn` (when set) wins over the derivation — no API calls fired.
+
+**Long-lived IAM user vs SSO.** The recommended local-dev approach is a dedicated `quicksight-gen-local` IAM user with long-lived access keys (NOT SSO). The reason: a multi-hour Claude-loop session burns through the SSO token's ~12-hour cache, and every cache miss triggers a browser-based `aws sso login` that Claude can't auto-invoke (per `Y.2.gate.b.14.4`'s refusal pattern). Long-lived keys never trigger a browser flow.
+
+**One-time onboarding:** runbook in `docs/audits/y_2_gate_h_i_combined_spike.md` §6. IAM policy: `docs/audits/_iam/quicksight-gen-local-policy.json` (mirror of `Github_e2e_testing` + `quicksight:ListUsers`). CI keeps OIDC unchanged.
+
 ## Project Structure
 
 ```
