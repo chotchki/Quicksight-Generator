@@ -1,5 +1,54 @@
 # Release Notes
 
+## v8.8.0a4 — Layer chain reaches the browser tier (c.5 LANDED)
+
+Fourth alpha. Closes out `Y.2.gate.c.5.{deploy,api,browser}` —
+the runner's three previously-stubbed top layers now actually
+dispatch real work. The full chain `unit → db → app2 → deploy →
+api → browser` runs end-to-end against the operator's external
+Aurora in ~4 minutes wall-clock, well inside the per-layer
+budgets locked in the c.5 PLAN entries.
+
+### What ships
+
+- **`deploy` layer (`c.5.deploy`)** — `_layer_command` builds
+  `quicksight-gen json apply --execute -c <cfg> --l2 <l2> -o <run_dir>/deploy/out`
+  from the per-variant env (`QS_GEN_CONFIG` + `QS_GEN_TEST_L2_INSTANCE`
+  injected by `h+i.0` + `h.6`). Default-variant cfg path falls back
+  to `_resolve_seed_config(_DEFAULT_RUNNER_CFG_CANDIDATES)` since
+  the default variant doesn't pre-inject cfg into env. Live: 112s.
+- **`api` layer (`c.5.api`)** — `pytest tests/e2e/ -m api -q -n auto`.
+  Test selection is mark-based (every API e2e file already carries
+  `pytestmark = [pytest.mark.e2e, pytest.mark.api]`) — the runner
+  doesn't enumerate test files; tests register themselves. Live:
+  24s, 48 tests.
+- **`browser` layer (`c.5.browser`)** — `pytest tests/e2e/ -m browser
+  -q -n 4` (4 workers per existing `./run_e2e.sh` default). Same
+  mark-based selection as api. Live: 57s, 21 passed + 16 skipped +
+  1 xfailed.
+- **Two test xfails recorded during c.5.browser validation
+  (`c.5.followup`).** (1) `test_l1_filters.py::test_date_range_filter_narrows_drift_sheet`
+  — Sasquatch L1 dashboard render flake (task backlog #466); xfail
+  strict=False until Y.2 SQL pushdown reshapes L1 dataset binds.
+  (2) `test_audit_dashboard_agreement.py` — entire file skipped;
+  module fixtures need `spec_example` seeded into BOTH PG + Oracle
+  in the same chain invocation (default variant only seeds ONE).
+  Re-enable per `Y.2.gate.k.1` multi-variant CI parity.
+
+### Operator notes
+
+- `./run_tests.sh up_to=browser` is now the canonical full-chain
+  entry point. Wall budget: ~4 min against external Aurora (no DB
+  container spin-up); local-pg / local-oracle add Docker startup time.
+- `pytest-xdist` is required for `-n auto` / `-n 4`. Already pulled
+  in via the `e2e` extras group; `uv sync --all-extras` covers it.
+
+### Deferred
+
+- The merged `b.3.impl.gather` parallelism (target=app2 + target=qs
+  fan-out via asyncio.gather) is still queued — c.5.browser today
+  runs only the QS browser tier; App2 has its own `app2` layer.
+
 ## v8.8.0a3 — Cfg-driven AWS auth + L2-instance alignment
 
 Third alpha. Folds `Y.2.gate.h+i.0` (combined spike + build) and
