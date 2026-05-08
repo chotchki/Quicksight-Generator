@@ -89,8 +89,12 @@ def test_layers_list_matches_audit_table() -> None:
     """Y.2.gate.b.11 lock — runner's LAYERS is the runtime authority; the audit
     doc layer table is the documented mirror. Pyright collapsed into unit
     (2026-05-07): conftest sessionstart handles type-check before pytest
-    runs, no separate runner layer."""
-    assert runner.LAYERS == ("unit", "db", "deploy", "api", "browser")
+    runs, no separate runner layer.
+
+    b.3.impl.layer (2026-05-07): `app2` inserted between `db` and
+    `deploy` per audit §7.10 (App2 = layer 3.7 fast-feedback gate
+    against local Docker, before AWS deploy)."""
+    assert runner.LAYERS == ("unit", "db", "app2", "deploy", "api", "browser")
 
 
 # Y.2.gate.c.8 — dependency probe tests.
@@ -108,11 +112,13 @@ def test_layer_deps_match_audit_table() -> None:
     """c.14-shape cross-check: layer-to-deps mapping reflects audit §3.
 
     unit is dependency-free (in-process; pyright runs via conftest sessionstart);
-    db needs docker (containers per b.2); deploy/api need aws + docker; browser
-    adds qs_arn for embed signing. Edits to either side without the other
-    should fail loudly."""
+    db needs docker (containers per b.2); app2 needs docker (b.3.impl.layer —
+    NO aws because App2 is local-only by audit §7.10);
+    deploy/api need aws + docker; browser adds qs_arn for embed signing.
+    Edits to either side without the other should fail loudly."""
     assert runner._LAYER_DEPS["unit"] == frozenset()
     assert runner._LAYER_DEPS["db"] == frozenset({"docker"})
+    assert runner._LAYER_DEPS["app2"] == frozenset({"docker"})
     assert runner._LAYER_DEPS["deploy"] == frozenset({"aws", "docker"})
     assert runner._LAYER_DEPS["api"] == frozenset({"aws", "docker"})
     assert runner._LAYER_DEPS["browser"] == frozenset({"aws", "docker", "qs_arn"})
@@ -327,7 +333,15 @@ def test_chain_through_db() -> None:
 
 
 def test_chain_through_browser_full() -> None:
-    assert runner.chain_through("browser") == ["unit", "db", "deploy", "api", "browser"]
+    """b.3.impl.layer (2026-05-07): app2 inserted between db and deploy
+    per audit §7.10."""
+    assert runner.chain_through("browser") == ["unit", "db", "app2", "deploy", "api", "browser"]
+
+
+def test_chain_through_app2() -> None:
+    """b.3.impl.layer — app2 is layer 3.7 (after db, before deploy).
+    Operator can stop at app2 to skip the AWS layers entirely."""
+    assert runner.chain_through("app2") == ["unit", "db", "app2"]
 
 
 def test_layer_command_unit_runs_pytest() -> None:
@@ -351,11 +365,69 @@ def test_layer_command_db_sets_e2e_gate() -> None:
     assert env_addl["QS_GEN_E2E"] == "1"
 
 
+def test_layer_command_app2_dispatches_html2_tests() -> None:
+    """b.3.impl.layer — Layer 3.7 (App2 against local Docker) dispatches
+    the three test_html2_*.py files. Both stub fetcher tests and the
+    live-DB fetcher test land in this layer because all three exercise
+    the App2 Starlette server + Playwright path."""
+    cmd_env = runner._layer_command("app2", Path("/tmp/run"))
+    assert cmd_env is not None
+    cmd, env_addl = cmd_env
+    cmd_str = " ".join(cmd)
+    assert "test_html2_executives.py" in cmd_str
+    assert "test_html2_executives_live.py" in cmd_str
+    assert "test_html2_money_trail.py" in cmd_str
+    # Behind QS_GEN_E2E=1 like every other tests/e2e/ file.
+    assert env_addl["QS_GEN_E2E"] == "1"
+    assert env_addl["QS_GEN_LAYER"] == "app2"
+
+
+def test_layer_command_app2_threads_run_dir_env() -> None:
+    """app2 runs Playwright; failure traces land under
+    `$QS_GEN_RUN_DIR/browser/<test-id>/...` per c.11."""
+    cmd_env = runner._layer_command("app2", Path("/tmp/myrun"))
+    assert cmd_env is not None
+    _, env_addl = cmd_env
+    assert env_addl["QS_GEN_RUN_DIR"] == "/tmp/myrun"
+
+
 def test_layer_command_stub_layers_return_none() -> None:
     """deploy/api/browser are not yet wired (need cfg loading + variants).
-    None signals the dispatch path to record skipped=True."""
+    None signals the dispatch path to record skipped=True. (`app2` IS
+    wired — see test_layer_command_app2_dispatches_html2_tests.)"""
     for layer in ("deploy", "api", "browser"):
         assert runner._layer_command(layer, Path("/tmp/run")) is None
+
+
+def test_app2_in_db_touching_layers() -> None:
+    """b.3.impl.layer — App2 reads from the variant DB via
+    `make_tree_db_fetcher`, so it MUST be in DB_TOUCHING_LAYERS to
+    receive QS_GEN_DEMO_DATABASE_URL from setup_variant. Otherwise
+    `--variants=local-pg` would seed the container but App2 would
+    still try to talk to whatever the cfg file points at."""
+    assert "app2" in runner.DB_TOUCHING_LAYERS
+
+
+def test_dispatch_layer_threads_variant_env_to_app2(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """b.3.impl.layer — variant_env merges into the app2 subprocess
+    env so QS_GEN_DEMO_DATABASE_URL is visible to make_tree_db_fetcher
+    inside the pytest subprocess. Mirrors the same wiring as the db
+    layer test but for app2."""
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: dict[str, str] = {}
+
+    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
+        captured.update(env or {})
+        return fake
+
+    with patch.object(subprocess, "run", side_effect=capture_env):
+        runner.dispatch_layer(
+            "app2", tmp_path, runner.RunOptions(),
+            variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
+        )
+    assert captured["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
 
 
 def test_dispatch_layer_stub_returns_skipped() -> None:
@@ -433,7 +505,7 @@ def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
     ):
         code = runner.main(["up_to=browser"])
     assert code == runner.EXIT_SUCCESS
-    assert dispatched == ["unit", "db", "deploy", "api", "browser"]
+    assert dispatched == ["unit", "db", "app2", "deploy", "api", "browser"]
 
 
 def test_prune_runs_pattern_accepts_dirty_suffix() -> None:
@@ -863,6 +935,11 @@ def test_audit_layers_table_mentions_every_runner_layer() -> None:
     runner_to_audit_name = {
         "unit": "Unit + JSON tests",
         "db": "DB SQL smoke",
+        # b.3.impl.layer (2026-05-07) — App2 promoted from layer 7
+        # to layer 3.7 per audit §7.10 ("App2 against local Docker
+        # as the early e2e gate"). Audit table row 7 still reads
+        # "App2 (HTMX) live e2e"; that phrase covers both placements.
+        "app2": "App2 (HTMX) live e2e",
         "deploy": "Deploy",
         "api": "API e2e",
         "browser": "Browser e2e",

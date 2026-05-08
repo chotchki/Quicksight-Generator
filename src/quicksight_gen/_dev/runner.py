@@ -48,10 +48,17 @@ EXIT_CONFIG_ERROR: Final = 3
 LAYERS: Final[tuple[str, ...]] = (
     "unit",
     "db",
+    "app2",
     "deploy",
     "api",
     "browser",
 )
+# Y.2.gate.b.3.impl.layer (2026-05-07) — `app2` inserted as layer 3.7
+# (between db + deploy) per audit §7.10. App2 is the local-Docker
+# fast-feedback gate: same dataset SQL as QS, no AWS contact, runs
+# the `tests/e2e/test_html2_*.py` files against the variant DB.
+# Locked by audit §7.10 (App2 promotion: ~80% of bug classes
+# catchable in App2 against local Docker).
 # Y.2.gate.c.7-followup (2026-05-07) — `pyright` collapsed into the `unit`
 # layer. The repo-root ``conftest.py::pytest_sessionstart`` (M.1.9c contract)
 # runs pyright on session start; on failure ``pytest.exit(returncode=2)``
@@ -102,6 +109,11 @@ _RUN_ID_PATTERN: Final = re.compile(r"^\d{8}T\d{6}Z-\w+(?:-dirty)?$")
 _LAYER_DEPS: Final[dict[str, frozenset[str]]] = {
     "unit": frozenset(),
     "db": frozenset({"docker"}),
+    # b.3.impl.layer — app2 needs Docker for the variant DB
+    # container; intentionally NO `aws` because App2 is local-Docker
+    # only by design (audit §7.10 LOCKED — App2 = local-feedback gate;
+    # QS = AWS-deploy parity cell at 6/7).
+    "app2": frozenset({"docker"}),
     "deploy": frozenset({"aws", "docker"}),
     "api": frozenset({"aws", "docker"}),
     "browser": frozenset({"aws", "docker", "qs_arn"}),
@@ -344,8 +356,30 @@ def _layer_command(
         if opts.parallel > 1:
             cmd += ["-n", str(opts.parallel)]
         return (cmd, {**env_addl, "QS_GEN_E2E": "1"})
+    if layer == "app2":
+        # b.3.impl.layer — App2 e2e (HTMX dialect, Playwright WebKit
+        # against the App2 Starlette server). Three test files today:
+        # `test_html2_executives.py` + `test_html2_money_trail.py`
+        # use stub fetchers (renderer correctness); `test_html2_executives_live.py`
+        # uses `make_tree_db_fetcher(tree_app, cfg)` against the variant
+        # DB — `connect_demo_db(cfg)` reads `QS_GEN_DEMO_DATABASE_URL`
+        # env override (config.py:364), so the variant URL flows
+        # through naturally. Behind `QS_GEN_E2E=1` like every other
+        # tests/e2e/ file. NO AWS contact (audit §7.10 LOCKED).
+        cmd = [
+            str(_VENV_BIN / "pytest"),
+            "tests/e2e/test_html2_executives.py",
+            "tests/e2e/test_html2_executives_live.py",
+            "tests/e2e/test_html2_money_trail.py",
+            "-q",
+        ]
+        if opts.only:
+            cmd += ["-k", opts.only]
+        if opts.parallel > 1:
+            cmd += ["-n", str(opts.parallel)]
+        return (cmd, {**env_addl, "QS_GEN_E2E": "1"})
     # deploy / api / browser: not yet wired. Need cfg loading (Y.2.gate.h.2)
-    # + variant fan-out (b.2 testcontainers + b.3 App2-as-early-gate).
+    # + variant fan-out (b.3.impl.gather for the 6/7 asyncio.gather).
     return None
 
 
@@ -693,7 +727,9 @@ KNOWN_VARIANTS: Final = ("default", "local-pg")
 # Y.2.gate.b.2.impl — layers whose subprocess needs the variant's
 # DB connection threaded through (QS_GEN_DEMO_DATABASE_URL etc.).
 # Unit doesn't need it; deploy/api/browser would (when wired).
-DB_TOUCHING_LAYERS: Final = ("db", "deploy", "api", "browser")
+# `app2` (b.3.impl.layer) reads the variant DB via the App2 fetcher
+# (`make_tree_db_fetcher`), so it lives here.
+DB_TOUCHING_LAYERS: Final = ("db", "app2", "deploy", "api", "browser")
 
 
 def resolve_variants(variants_arg: str) -> list[str]:
