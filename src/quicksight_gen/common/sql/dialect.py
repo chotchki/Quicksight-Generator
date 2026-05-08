@@ -370,6 +370,41 @@ def _sqlite_type_alias(type_name: str) -> str:
 # -- JSON --------------------------------------------------------------------
 
 
+def greatest(*args: str, dialect: Dialect) -> str:
+    """Row-wise greatest of two or more expressions.
+
+    PG / Oracle: ``GREATEST(a, b, ...)`` — the SQL-standard scalar
+    function (not an aggregate). SQLite: ``MAX(a, b, ...)`` — SQLite
+    overloads ``MAX`` to be a row-wise scalar when called with 2+
+    arguments and the column-aggregate when called with 1. Both
+    forms have identical semantics for our use case (clamping
+    expressions like ``GREATEST(x - y, 0)``).
+    """
+    joined = ", ".join(args)
+    if dialect is Dialect.SQLITE:
+        return f"MAX({joined})"
+    return f"GREATEST({joined})"
+
+
+def json_value(col: str, path_expr: str, dialect: Dialect) -> str:
+    """Extract a scalar from a JSON-shaped column via SQL/JSON path.
+
+    PG / Oracle: ``JSON_VALUE(col, path_expr)`` — the SQL/JSON-standard
+    function (Postgres 12+, Oracle 12.2+). SQLite: ``json_extract(col,
+    path_expr)`` — the JSON1 extension's equivalent (built into
+    stdlib ``sqlite3`` 3.38+). Both return scalar TEXT for the path's
+    leaf; missing paths return NULL.
+
+    ``path_expr`` is the SQL expression (already wrapped in quotes /
+    constructed at the call site, e.g. ``"'$.customer_id'"`` or
+    ``"'$.' || pKey"``) — same shape on every dialect, so the helper
+    only swaps the function name.
+    """
+    if dialect is Dialect.SQLITE:
+        return f"json_extract({col}, {path_expr})"
+    return f"JSON_VALUE({col}, {path_expr})"
+
+
 def json_check(col: str, dialect: Dialect) -> str:
     """``CHECK (col IS NULL OR col IS JSON)`` in PG / Oracle; SQLite
     uses ``CHECK (col IS NULL OR json_valid(col))``.

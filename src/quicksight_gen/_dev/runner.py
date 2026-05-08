@@ -927,7 +927,7 @@ def is_layer_cached_green(layer: str, *, variant: str = "default") -> bool:
 # single-non-default-variant case to deliver the keystone value:
 # operator can run db tests against a local container instead of
 # burning Aurora minutes.
-KNOWN_VARIANTS: Final = ("default", "local-pg", "local-oracle")
+KNOWN_VARIANTS: Final = ("default", "local-pg", "local-oracle", "local-sqlite")
 
 # Y.2.gate.b.2.impl — layers whose subprocess needs the variant's
 # DB connection threaded through (QS_GEN_DEMO_DATABASE_URL etc.).
@@ -954,6 +954,71 @@ def resolve_variants(variants_arg: str) -> list[str]:
     return raw
 
 
+class _SqliteHandle:
+    """Y.2.gate.b.2.impl.sqlite — teardown handle for the local-sqlite
+    variant. Mirrors the duck-typed ``.stop()`` shape that
+    ``teardown_variant`` calls on testcontainer handles, but unlinks
+    the per-invocation SQLite DB file + temp cfg instead of stopping
+    a Docker container.
+    """
+
+    def __init__(self, db_path: Path, cfg_path: Path) -> None:
+        self.db_path = db_path
+        self.cfg_path = cfg_path
+
+    def stop(self) -> None:
+        """Best-effort cleanup of the per-invocation files. Sidecar
+        contract preserved — never raises."""
+        for path in (self.db_path, self.cfg_path):
+            try:
+                path.unlink()
+            except (FileNotFoundError, OSError):
+                # Already gone or unwritable — drop it.
+                pass
+
+
+def _setup_local_sqlite() -> tuple[dict[str, str], object | None]:
+    """Create the per-invocation SQLite DB file + minimal cfg, return
+    the env overrides + handle the variant lifecycle expects.
+
+    Allocates a fresh temp directory (``tempfile.mkdtemp(prefix=
+    "qs-gen-sqlite-")``) so the DB and cfg files are isolated from
+    other concurrent invocations. The DB file is created empty —
+    ``schema apply`` populates it via ``connect_demo_db`` (which
+    handles the SQLite branch + ``STDDEV_SAMP`` aggregate
+    registration). The cfg carries:
+
+    - ``dialect: sqlite`` so emit_schema / emit_full_seed /
+      refresh_matviews_sql pick the SQLite arms of the dialect helpers;
+    - ``demo_database_url: sqlite:///<path>`` so connect_demo_db
+      points at the right file;
+    - ``aws_account_id`` + ``aws_region`` placeholders that satisfy
+      ``Config`` validators (the local-sqlite variant never touches
+      AWS — these fields are required by the loader but unused).
+
+    Both ``QS_GEN_DEMO_DATABASE_URL`` and ``QS_GEN_CONFIG`` end up in
+    the env overrides so DB-touching layer subprocesses (``db``,
+    ``app2``) load the right cfg + connect to the right file.
+    """
+    import tempfile
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="qs-gen-sqlite-"))  # typing-smell: ignore[qs-gen-prefix]: tempfile dir name only — not an AWS resource ID, just disambiguates per-invocation runner-managed temp dirs from other tools' tempfiles for operator-visible cleanup
+    db_path = tmp_dir / "demo.sqlite"
+    cfg_path = tmp_dir / "config.sqlite.yaml"
+    cfg_path.write_text(
+        f"aws_account_id: \"111122223333\"\n"
+        f"aws_region: \"us-east-1\"\n"
+        f"dialect: sqlite\n"
+        f"demo_database_url: \"sqlite:///{db_path}\"\n"
+        f"resource_prefix: \"qs-gen-sqlite\"\n"
+    )
+    env: dict[str, str] = {
+        QS_GEN_DEMO_DATABASE_URL.name: f"sqlite:///{db_path}",
+        QS_GEN_CONFIG.name: str(cfg_path),
+    }
+    return env, _SqliteHandle(db_path=db_path, cfg_path=cfg_path)
+
+
 def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
     """Bring up the resources a variant needs. Returns
     ``(env_overrides, handle_for_teardown)``. Caller threads
@@ -962,13 +1027,17 @@ def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
 
     For ``default``: no-op. For ``local-pg`` / ``local-oracle``:
     spins up a testcontainer and returns its connection URL as a
-    ``QS_GEN_DEMO_DATABASE_URL`` override.
+    ``QS_GEN_DEMO_DATABASE_URL`` override. For ``local-sqlite``:
+    no Docker — creates a temp DB file + temp cfg, returns BOTH
+    ``QS_GEN_DEMO_DATABASE_URL`` and ``QS_GEN_CONFIG`` overrides
+    (the cfg path is per-invocation, so it must be threaded
+    explicitly rather than discovered from the repo).
 
     PG container takes ~10-15s to start. Oracle container
     (``gvenzl/oracle-free:23-faststart``) takes ~20-30s — still
-    fast for a fresh Oracle DB. Lifetime is the chain (one container
-    reused across all layers in a single ``up_to`` invocation), not
-    per-layer.
+    fast for a fresh Oracle DB. SQLite is instant (file-create
+    only). Lifetime is the chain (one DB / container reused across
+    all layers in a single ``up_to`` invocation), not per-layer.
     """
     if name == "default":
         return {}, None
@@ -983,6 +1052,14 @@ def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
         container.start()
         raw_url: str = container.get_connection_url()  # type: ignore[no-untyped-call]: testcontainers method has no type annotations
         return {QS_GEN_DEMO_DATABASE_URL.name: _normalize_pg_url(raw_url)}, container
+    if name == "local-sqlite":
+        # Y.2.gate.b.2.impl.sqlite (2026-05-08) — no Docker, no
+        # network, no port allocation. Create a temp directory with a
+        # SQLite DB file + a minimal cfg pointing at it; both env
+        # overrides flow to layer subprocesses. Teardown unlinks both
+        # files via the ``_SqliteHandle.stop()`` duck-typed contract
+        # ``teardown_variant`` already calls.
+        return _setup_local_sqlite()
     if name == "local-oracle":
         from testcontainers.oracle import OracleDbContainer  # type: ignore[import-untyped]: third-party library lacks PEP 561 stubs
 
@@ -1093,7 +1170,9 @@ def _resolve_seed_config_for_variant(variant: str) -> Path | None:
     """Per-variant cfg dispatcher — returns the dialect-flavored cfg
     for ``local-pg`` / ``local-oracle``, ``None`` for ``default`` (the
     operator's external DB; cfg is whatever the test discovers on its
-    own, no override needed)."""
+    own, no override needed) and for ``local-sqlite`` (the per-
+    invocation cfg is generated by ``setup_variant`` and threaded via
+    ``env_overrides[QS_GEN_CONFIG]``, not discovered on disk)."""
     if variant == "local-pg":
         return _resolve_seed_config_for_local_pg()
     if variant == "local-oracle":
@@ -1112,8 +1191,9 @@ def seed_variant(
     db / deploy / api / browser layers have something to query.
 
     For ``default``: no-op (the operator's external Aurora / Oracle
-    is presumed already seeded). For ``local-pg``: spawns three CLI
-    subprocesses in dependency order against the container URL:
+    is presumed already seeded). For ``local-pg`` / ``local-oracle``
+    / ``local-sqlite``: spawns three CLI subprocesses in dependency
+    order against the variant's URL:
 
         1. ``quicksight-gen schema apply --execute -c <cfg> [--l2 <yaml>]``
            — creates base tables, Current* views, L1 invariant
@@ -1161,6 +1241,22 @@ def seed_variant(
                 "Create run/config.oracle.yaml (dialect: oracle) or "
                 "set QS_GEN_CONFIG to an oracle-dialect cfg path."
             )
+    elif name == "local-sqlite":
+        # Y.2.gate.b.2.impl.sqlite — cfg path comes from
+        # ``setup_variant`` (it generates the per-invocation cfg + DB
+        # file under a tempdir and returns the cfg path in
+        # ``env_overrides[QS_GEN_CONFIG]``). No on-disk cfg in
+        # ``run/`` — the SQLite variant is by-design ephemeral
+        # per-invocation. If the override isn't there, setup_variant
+        # was bypassed; fail loud.
+        cfg_str = env_overrides.get(QS_GEN_CONFIG.name)
+        if not cfg_str:
+            raise RuntimeError(
+                "local-sqlite variant: setup_variant must set "
+                "QS_GEN_CONFIG in env_overrides (it generates the "
+                "per-invocation cfg). Did the caller skip setup_variant?"
+            )
+        cfg_path = Path(cfg_str)
     else:
         raise ValueError(f"seed_variant: unknown variant {name!r}")
 

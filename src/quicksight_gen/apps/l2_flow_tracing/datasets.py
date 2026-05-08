@@ -59,6 +59,8 @@ from quicksight_gen.common.sheets.app_info import (
 from quicksight_gen.common.sql import (
     Dialect,
     dual_from,
+    greatest,
+    json_value,
     typed_null,
 )
 from quicksight_gen.common.tree import Dataset
@@ -514,10 +516,10 @@ def tt_completion_status_values() -> list[str]:
 
 
 def metadata_filter_clause(
-    l2_instance: L2Instance, metadata_col: str,
+    l2_instance: L2Instance, metadata_col: str, dialect: Dialect,
 ) -> str:
     """WHERE-fragment that filters by the metadata key/value cascade,
-    portable across Postgres + Oracle.
+    portable across Postgres + Oracle + SQLite.
 
     The natural form ``JSON_VALUE(metadata, '$.' || <<$pKey>>) IN (...)``
     works on Postgres but fails on Oracle: Oracle's ``JSON_VALUE``
@@ -533,7 +535,9 @@ def metadata_filter_clause(
     the cascade so a freshly-loaded dashboard renders all rows.
 
     ``metadata_col`` is the column the JSON_VALUE reads from
-    (typically ``metadata`` or ``parent_metadata``).
+    (typically ``metadata`` or ``parent_metadata``). ``dialect``
+    routes through ``json_value`` so SQLite gets ``json_extract``
+    (the JSON1 equivalent) instead of the SQL/JSON-standard form.
     """
     keys = declared_metadata_keys(l2_instance)
     lines = [f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}"]
@@ -541,7 +545,7 @@ def metadata_filter_clause(
         path = f"$.{k}"
         lines.append(
             f"  OR (<<$pKey>> = {_sql_str(k)} "
-            f"AND JSON_VALUE({metadata_col}, {_sql_str(path)}) "
+            f"AND {json_value(metadata_col, _sql_str(path), dialect)} "
             f"IN (<<$pValues>>))"
         )
     return "\n".join(lines)
@@ -604,7 +608,7 @@ def build_postings_dataset(
         # values. See `metadata_filter_clause` for the per-dialect-safe
         # WHERE shape.
         f"WHERE\n"
-        f"{metadata_filter_clause(l2_instance, 'metadata')}"
+        f"{metadata_filter_clause(l2_instance, 'metadata', cfg.dialect)}"
     )
     return build_dataset(
         cfg, cfg.prefixed("l2ft-postings-dataset"),
@@ -679,12 +683,13 @@ def build_meta_values_dataset(
         branches = []
         for k in keys:
             json_path = f"$.{k}"
+            jv = json_value("metadata", _sql_str(json_path), cfg.dialect)
             branches.append(
                 f"  SELECT {_sql_str(k)} AS metadata_key, "
-                f"JSON_VALUE(metadata, {_sql_str(json_path)}) AS metadata_value\n"
+                f"{jv} AS metadata_value\n"
                 f"  FROM {prefix}_current_transactions\n"
                 f"  WHERE metadata IS NOT NULL\n"
-                f"    AND JSON_VALUE(metadata, {_sql_str(json_path)}) IS NOT NULL"
+                f"    AND {jv} IS NOT NULL"
             )
         sql = "\n  UNION ALL\n".join(branches)
     return build_dataset(
@@ -760,12 +765,12 @@ def build_chains_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
         # GREATEST clamps at 0 — child can fire more than parent in some
         # patterns (e.g., one parent triggers many children); negative
         # orphans don't read intuitively in the visual.
-        f"  GREATEST(e.parent_firing_count - e.child_firing_count, 0) "
+        f"  {greatest('e.parent_firing_count - e.child_firing_count', '0', dialect=cfg.dialect)} "
         f"AS orphan_count,\n"
         f"  CASE\n"
         f"    WHEN e.parent_firing_count > 0\n"
         f"      THEN CAST(\n"
-        f"        GREATEST(e.parent_firing_count - e.child_firing_count, 0) "
+        f"        {greatest('e.parent_firing_count - e.child_firing_count', '0', dialect=cfg.dialect)} "
         f"AS DECIMAL(20,4)\n"
         f"      ) / e.parent_firing_count\n"
         f"    ELSE 0\n"
@@ -908,7 +913,7 @@ def build_chain_instances_dataset(
         f"  END AS completion_status\n"
         f"FROM firing_completion\n"
         f"WHERE\n"
-        f"{metadata_filter_clause(l2_instance, 'parent_metadata')}\n"
+        f"{metadata_filter_clause(l2_instance, 'parent_metadata', cfg.dialect)}\n"
         f"ORDER BY parent_posting DESC"
     )
     return build_dataset(
@@ -988,7 +993,7 @@ def build_exc_chain_orphans_dataset(
         f"  e.child_name,\n"
         f"  e.parent_firing_count,\n"
         f"  e.child_firing_count,\n"
-        f"  GREATEST(e.parent_firing_count - e.child_firing_count, 0) "
+        f"  {greatest('e.parent_firing_count - e.child_firing_count', '0', dialect=cfg.dialect)} "
         f"AS orphan_count\n"
         f"FROM edge_runtime e\n"
         f"WHERE e.required = 'Required'\n"
@@ -1252,7 +1257,7 @@ def build_unified_l2_exceptions_dataset(
         f"    FROM declared d\n"
         f"  )\n"
         f"  SELECT parent_name, child_name,\n"
-        f"    GREATEST(parent_firing_count - child_firing_count, 0) "
+        f"    {greatest('parent_firing_count - child_firing_count', '0', dialect=cfg.dialect)} "
         f"AS orphan_count\n"
         f"  FROM edge_runtime\n"
         f"  WHERE required = 'Required'\n"
@@ -1601,6 +1606,7 @@ def _dead_metadata_check_fragments(
             rail_name = str(r.name)
             key_name = str(key)
             json_path = f"$.{key_name}"
+            jv = json_value("t.metadata", _sql_str(json_path), dialect)
             fragments.append(
                 f"  SELECT {_sql_str(rail_name)} AS rail_name, "
                 f"{_sql_str(key_name)} AS metadata_key"
@@ -1610,8 +1616,7 @@ def _dead_metadata_check_fragments(
                 f"    FROM {prefix}_current_transactions t\n"
                 f"    WHERE t.rail_name = {_sql_str(rail_name)}\n"
                 f"      AND t.metadata IS NOT NULL\n"
-                f"      AND JSON_VALUE(t.metadata, "
-                f"{_sql_str(json_path)}) IS NOT NULL\n"
+                f"      AND {jv} IS NOT NULL\n"
                 f"  )"
             )
     return fragments
@@ -1793,7 +1798,7 @@ def build_tt_instances_dataset(
         f"  END AS completion_status\n"
         f"FROM firing_completion\n"
         f"WHERE\n"
-        f"{metadata_filter_clause(l2_instance, 'parent_metadata')}\n"
+        f"{metadata_filter_clause(l2_instance, 'parent_metadata', cfg.dialect)}\n"
         f"ORDER BY posting DESC, template_name, transfer_id"
     )
     return build_dataset(
@@ -2010,14 +2015,14 @@ def build_tt_legs_dataset(
         f"flow_source, flow_target, edge_kind, completion_status\n"
         f"FROM template_legs\n"
         f"WHERE\n"
-        f"{metadata_filter_clause(l2_instance, 'metadata')}\n"
+        f"{metadata_filter_clause(l2_instance, 'metadata', cfg.dialect)}\n"
         f"UNION ALL\n"
         f"SELECT template_name, transfer_id, posting, account_name, "
         f"account_role, amount_money, amount_direction, amount_abs, "
         f"flow_source, flow_target, edge_kind, completion_status\n"
         f"FROM chain_edges\n"
         f"WHERE\n"
-        f"{metadata_filter_clause(l2_instance, 'metadata')}\n"
+        f"{metadata_filter_clause(l2_instance, 'metadata', cfg.dialect)}\n"
         f"ORDER BY posting DESC, template_name, transfer_id"
     )
     return build_dataset(

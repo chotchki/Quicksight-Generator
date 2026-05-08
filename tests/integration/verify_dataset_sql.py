@@ -208,9 +208,16 @@ def _smoke_one(
     raw_sql, table_key = _custom_sql(ds)
     sub_sql = _substitute_qs_params(raw_sql, ds.DatasetParameters)
     smoke_sql = _wrap_smoke(sub_sql)
+    cur = conn.cursor()
+    # try/finally + manual close instead of ``with conn.cursor() as cur``
+    # — sqlite3.Cursor doesn't implement the context-manager protocol
+    # (it's not a context manager in stdlib sqlite3, only in psycopg /
+    # oracledb). All three dialects support ``cur.close()``.
     try:
-        with conn.cursor() as cur:
+        try:
             cur.execute(smoke_sql)
+        finally:
+            cur.close()
     except Exception as e:  # noqa: BLE001 — capture every DB error class
         # Rollback so the next dataset's query runs against a clean
         # transaction state. Both psycopg2 + oracledb support rollback

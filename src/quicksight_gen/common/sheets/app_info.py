@@ -113,6 +113,9 @@ def _liveness_sql(dialect: Dialect) -> str:
     Oracle has no ``information_schema``; the equivalent is
     ``USER_TABLES`` (the connecting user's tables in the user's
     default schema, which is also where the L2 schema emit lands).
+    SQLite has no ``information_schema`` either; the equivalent is
+    the ``sqlite_master`` table (built-in, queryable via
+    ``WHERE type='table'`` to filter out indexes/views).
 
     Either way the query is a one-row health check. The exact count
     isn't load-bearing — only that the query returns *something*
@@ -123,6 +126,12 @@ def _liveness_sql(dialect: Dialect) -> str:
             "SELECT COUNT(*) AS table_count "
             "FROM information_schema.tables "
             "WHERE table_schema = 'public'"
+        )
+    if dialect is Dialect.SQLITE:
+        return (
+            "SELECT COUNT(*) AS table_count "
+            "FROM sqlite_master "
+            "WHERE type='table'"
         )
     return "SELECT COUNT(*) AS table_count FROM USER_TABLES"
 
