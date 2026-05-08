@@ -60,7 +60,29 @@ from tests.audit._pdf_extract import count_invariant_table_rows
 from tests.audit._scenario_expectations import expected_audit_counts
 
 
-pytestmark = [pytest.mark.e2e, pytest.mark.browser]
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.browser,
+    # Y.2.gate.c.5.browser xfail (2026-05-08): module fixtures need
+    # spec_example seeded into BOTH postgres + oracle DBs in the same chain
+    # invocation (the test parametrizes across both dialects). The default
+    # variant's chain only seeds ONE L2 instance against ONE DB (per cfg.
+    # default_l2_instance), so postgres-stuck_* errors with UniqueViolation
+    # (sasquatch_pr already there) and every oracle-* errors with
+    # `Connection disconnected` (Oracle DB not reachable from default
+    # variant). This is a "different shape" test — really a multi-dialect
+    # integration test masquerading as a browser e2e. Re-enable after
+    # Y.2.gate.k.1 (multi-variant CI parity) wires both dialects into one
+    # runner invocation, OR move this file out of the browser-marked set
+    # into a dedicated `audit-agreement` layer.
+    pytest.mark.skip(
+        reason=(
+            "needs spec_example seeded into BOTH postgres + oracle DBs in "
+            "the same chain invocation; default-variant runner seeds one. "
+            "Re-enable per Y.2.gate.k.1 multi-variant CI parity."
+        ),
+    ),
+]
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
