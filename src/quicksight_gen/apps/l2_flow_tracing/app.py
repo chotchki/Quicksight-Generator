@@ -56,7 +56,7 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnShape
-from quicksight_gen.common.ids import ParameterName, SheetId
+from quicksight_gen.common.ids import FilterGroupId, ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.sheets.app_info import (
@@ -443,9 +443,9 @@ def _populate_param_filter_dropdown(
     sheet: Sheet,
     analysis: Analysis,
     dataset: Dataset,
-    fg_id: str,
+    fg_id: FilterGroupId,
     filter_id: str,
-    param_name: str,
+    param_name: ParameterName,
     col: str,
     title: str,
     all_values: list[str],
@@ -477,12 +477,12 @@ def _populate_param_filter_dropdown(
     ``completion_status`` filters across tt-instances + tt-legs).
     """
     p = analysis.add_parameter(StringParam(
-        name=ParameterName(param_name),
+        name=param_name,
         multi_valued=True,
         default=list(all_values),
     ))
     fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=fg_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=fg_id,
         cross_dataset=cross_dataset,
         filters=[CategoryFilter.with_parameter(
             filter_id=filter_id,
@@ -560,7 +560,7 @@ def _populate_rails_sheet(
         default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
     ))
     fg_date = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-rails-date",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l2ft-rails-date"),
         cross_dataset="SINGLE_DATASET",
         filters=[TimeRangeFilter(
             filter_id="filter-l2ft-rails-date",
@@ -589,20 +589,20 @@ def _populate_rails_sheet(
     # state without QS having to query anything.
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_postings,
-        fg_id="fg-l2ft-rails-rail", filter_id="filter-l2ft-rails-rail",
-        param_name="pL2ftRail", col="rail_name", title="Rail",
+        fg_id=FilterGroupId("fg-l2ft-rails-rail"), filter_id="filter-l2ft-rails-rail",
+        param_name=ParameterName("pL2ftRail"), col="rail_name", title="Rail",
         all_values=declared_rail_names(l2_instance),
     )
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_postings,
-        fg_id="fg-l2ft-rails-status", filter_id="filter-l2ft-rails-status",
-        param_name="pL2ftStatus", col="status", title="Status",
+        fg_id=FilterGroupId("fg-l2ft-rails-status"), filter_id="filter-l2ft-rails-status",
+        param_name=ParameterName("pL2ftStatus"), col="status", title="Status",
         all_values=transaction_status_values(),
     )
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_postings,
-        fg_id="fg-l2ft-rails-bundle", filter_id="filter-l2ft-rails-bundle",
-        param_name="pL2ftBundle", col="bundle_status", title="Bundle",
+        fg_id=FilterGroupId("fg-l2ft-rails-bundle"), filter_id="filter-l2ft-rails-bundle",
+        param_name=ParameterName("pL2ftBundle"), col="bundle_status", title="Bundle",
         all_values=bundle_status_values(),
     )
 
@@ -745,7 +745,7 @@ def _populate_chains_sheet(
         default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
     ))
     fg_date = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-chains-date",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l2ft-chains-date"),
         cross_dataset="SINGLE_DATASET",
         filters=[TimeRangeFilter(
             filter_id="filter-l2ft-chains-date",
@@ -766,17 +766,17 @@ def _populate_chains_sheet(
     # lazy-fetch dropdown options at render time).
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_chain_instances,
-        fg_id="fg-l2ft-chains-chain",
+        fg_id=FilterGroupId("fg-l2ft-chains-chain"),
         filter_id="filter-l2ft-chains-chain",
-        param_name="pL2ftChainsChain",
+        param_name=ParameterName("pL2ftChainsChain"),
         col="parent_chain_name", title="Chain",
         all_values=declared_chain_parents(l2_instance),
     )
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_chain_instances,
-        fg_id="fg-l2ft-chains-completion",
+        fg_id=FilterGroupId("fg-l2ft-chains-completion"),
         filter_id="filter-l2ft-chains-completion",
-        param_name="pL2ftChainsCompletion",
+        param_name=ParameterName("pL2ftChainsCompletion"),
         col="completion_status", title="Completion",
         all_values=chain_completion_status_values(),
     )
@@ -901,7 +901,7 @@ def _populate_transfer_templates_sheet(
         default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
     ))
     fg_date = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-tt-date",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l2ft-tt-date"),
         cross_dataset="ALL_DATASETS",
         filters=[TimeRangeFilter(
             filter_id="filter-l2ft-tt-date",
@@ -924,18 +924,18 @@ def _populate_transfer_templates_sheet(
     # work.
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_tt_instances,
-        fg_id="fg-l2ft-tt-template",
+        fg_id=FilterGroupId("fg-l2ft-tt-template"),
         filter_id="filter-l2ft-tt-template",
-        param_name="pL2ftTtTemplate",
+        param_name=ParameterName("pL2ftTtTemplate"),
         col="template_name", title="Template",
         all_values=declared_template_names(l2_instance),
         cross_dataset="ALL_DATASETS",
     )
     _populate_param_filter_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_tt_instances,
-        fg_id="fg-l2ft-tt-completion",
+        fg_id=FilterGroupId("fg-l2ft-tt-completion"),
         filter_id="filter-l2ft-tt-completion",
-        param_name="pL2ftTtCompletion",
+        param_name=ParameterName("pL2ftTtCompletion"),
         col="completion_status", title="Completion",
         all_values=tt_completion_status_values(),
         cross_dataset="ALL_DATASETS",
@@ -1100,7 +1100,7 @@ def _wire_l2ft_drill_filter_groups(
         ),
     ))
     fg_rail = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-drill-rail-on-postings",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l2ft-drill-rail-on-postings"),
         cross_dataset="SINGLE_DATASET",
         filters=[CategoryFilter.with_literal(
             filter_id="filter-fg-l2ft-drill-rail-on-postings",
@@ -1123,7 +1123,7 @@ def _wire_l2ft_drill_filter_groups(
         ),
     ))
     fg_chain = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-drill-chain-on-instances",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l2ft-drill-chain-on-instances"),
         cross_dataset="SINGLE_DATASET",
         filters=[CategoryFilter.with_literal(
             filter_id="filter-fg-l2ft-drill-chain-on-instances",
@@ -1141,7 +1141,7 @@ def _l2ft_drill(
     target_sheet: Sheet,
     name: str,
     writes: list,
-    trigger: str = "DATA_POINT_MENU",
+    trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = "DATA_POINT_MENU",
 ) -> Drill:
     """L2FT cross-sheet drill helper. Mirrors L1's `_l1_drill`: any
     drill param the caller doesn't write gets a DrillResetSentinel
@@ -1156,7 +1156,7 @@ def _l2ft_drill(
         target_sheet=target_sheet,
         writes=full_writes,
         name=name,
-        trigger=trigger,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        trigger=trigger,
     )
 
 

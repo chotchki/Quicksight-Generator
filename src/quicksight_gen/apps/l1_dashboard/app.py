@@ -34,6 +34,7 @@ Substep landmarks:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Literal
 
 from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
@@ -55,7 +56,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import ParameterName, SheetId
+from quicksight_gen.common.ids import FilterGroupId, ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.dataset_contract import ColumnShape
@@ -1603,11 +1604,11 @@ def _wire_date_range_filter(
     max_bound: dict[str, str] = {"Parameter": P_L1_DATE_END}
 
     def _scope_one(
-        dataset_key: str, date_col: str, sheet: Sheet, fg_id: str,
+        dataset_key: str, date_col: str, sheet: Sheet, fg_id: FilterGroupId,
     ) -> None:
         ds = datasets[dataset_key]
         fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+            filter_group_id=fg_id,
             cross_dataset="SINGLE_DATASET",
             filters=[TimeRangeFilter(
                 filter_id=f"filter-{fg_id}",
@@ -1630,9 +1631,9 @@ def _wire_date_range_filter(
     # Drift Timelines uses pre-aggregated datasets keyed on
     # business_day_end (one row per (day, role)).
     _scope_one(DS_DRIFT_TIMELINE, "business_day_end",
-               drift_timelines_sheet, "fg-l1-date-drift-timeline")
+               drift_timelines_sheet, FilterGroupId("fg-l1-date-drift-timeline"))
     _scope_one(DS_LEDGER_DRIFT_TIMELINE, "business_day_end",
-               drift_timelines_sheet, "fg-l1-date-ledger-drift-timeline")
+               drift_timelines_sheet, FilterGroupId("fg-l1-date-ledger-drift-timeline"))
     _scope_one(DS_OVERDRAFT, "business_day_start", overdraft_sheet,
                "fg-l1-date-overdraft")
     # Limit breach + today's exceptions expose `business_day` (truncated
@@ -1640,7 +1641,7 @@ def _wire_date_range_filter(
     _scope_one(DS_LIMIT_BREACH, "business_day", limit_breach_sheet,
                "fg-l1-date-limit-breach")
     _scope_one(DS_TODAYS_EXCEPTIONS, "business_day",
-               todays_exceptions_sheet, "fg-l1-date-todays-exceptions")
+               todays_exceptions_sheet, FilterGroupId("fg-l1-date-todays-exceptions"))
     # Q.1.b — Transactions sheet over the per-leg ledger; same `posting`
     # column shape as Pending/Unbundled Aging.
     _scope_one(DS_TRANSACTIONS, "posting", transactions_sheet,
@@ -1698,12 +1699,12 @@ def _wire_per_sheet_dropdowns(
 
     def _dropdown(
         *,
-        fg_id: str,
+        fg_id: FilterGroupId,
         ds: Dataset,
         col: str,
         title: str,
         sheet: Sheet,
-        cross_dataset: str = "SINGLE_DATASET",
+        cross_dataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = "SINGLE_DATASET",
     ) -> None:
         cat_filter = CategoryFilter.with_values(
             filter_id=f"filter-{fg_id}",
@@ -1713,8 +1714,8 @@ def _wire_per_sheet_dropdowns(
             select_all_options="FILTER_ALL_VALUES",
         )
         fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
-            cross_dataset=cross_dataset,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+            filter_group_id=fg_id,
+            cross_dataset=cross_dataset,
             filters=[cat_filter],
         ))
         fg.scope_sheet(sheet)
@@ -1728,11 +1729,11 @@ def _wire_per_sheet_dropdowns(
     # Drift — both drift + ledger_drift datasets share column names, so
     # ALL_DATASETS lets one dropdown filter both tables on the sheet.
     _dropdown(
-        fg_id="fg-l1-drift-account", ds=ds_drift, col="account_id",
+        fg_id=FilterGroupId("fg-l1-drift-account"), ds=ds_drift, col="account_id",
         title="Account", sheet=drift_sheet, cross_dataset="ALL_DATASETS",
     )
     _dropdown(
-        fg_id="fg-l1-drift-role", ds=ds_drift, col="account_role",
+        fg_id=FilterGroupId("fg-l1-drift-role"), ds=ds_drift, col="account_role",
         title="Account Role", sheet=drift_sheet,
         cross_dataset="ALL_DATASETS",
     )
@@ -1740,29 +1741,29 @@ def _wire_per_sheet_dropdowns(
     # Drift Timelines — both timeline datasets share column names too.
     ds_drift_tl = datasets[DS_DRIFT_TIMELINE]
     _dropdown(
-        fg_id="fg-l1-drift-tl-role", ds=ds_drift_tl, col="account_role",
+        fg_id=FilterGroupId("fg-l1-drift-tl-role"), ds=ds_drift_tl, col="account_role",
         title="Account Role", sheet=drift_timelines_sheet,
         cross_dataset="ALL_DATASETS",
     )
 
     # Overdraft — single dataset.
     _dropdown(
-        fg_id="fg-l1-overdraft-account", ds=ds_overdraft,
+        fg_id=FilterGroupId("fg-l1-overdraft-account"), ds=ds_overdraft,
         col="account_id", title="Account", sheet=overdraft_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-overdraft-role", ds=ds_overdraft,
+        fg_id=FilterGroupId("fg-l1-overdraft-role"), ds=ds_overdraft,
         col="account_role", title="Account Role",
         sheet=overdraft_sheet,
     )
 
     # Limit Breach — single dataset; account + transfer_type.
     _dropdown(
-        fg_id="fg-l1-limit-breach-account", ds=ds_lb, col="account_id",
+        fg_id=FilterGroupId("fg-l1-limit-breach-account"), ds=ds_lb, col="account_id",
         title="Account", sheet=limit_breach_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-limit-breach-type", ds=ds_lb, col="transfer_type",
+        fg_id=FilterGroupId("fg-l1-limit-breach-type"), ds=ds_lb, col="transfer_type",
         title="Transfer Type", sheet=limit_breach_sheet,
     )
 
@@ -1770,15 +1771,15 @@ def _wire_per_sheet_dropdowns(
     # M.2b.10 plan).
     ds_sp = datasets[DS_STUCK_PENDING]
     _dropdown(
-        fg_id="fg-l1-pending-account", ds=ds_sp, col="account_id",
+        fg_id=FilterGroupId("fg-l1-pending-account"), ds=ds_sp, col="account_id",
         title="Account", sheet=pending_aging_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-pending-type", ds=ds_sp, col="transfer_type",
+        fg_id=FilterGroupId("fg-l1-pending-type"), ds=ds_sp, col="transfer_type",
         title="Transfer Type", sheet=pending_aging_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-pending-rail", ds=ds_sp, col="rail_name",
+        fg_id=FilterGroupId("fg-l1-pending-rail"), ds=ds_sp, col="rail_name",
         title="Rail", sheet=pending_aging_sheet,
     )
 
@@ -1786,15 +1787,15 @@ def _wire_per_sheet_dropdowns(
     # dataset.
     ds_su = datasets[DS_STUCK_UNBUNDLED]
     _dropdown(
-        fg_id="fg-l1-unbundled-account", ds=ds_su, col="account_id",
+        fg_id=FilterGroupId("fg-l1-unbundled-account"), ds=ds_su, col="account_id",
         title="Account", sheet=unbundled_aging_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-unbundled-type", ds=ds_su, col="transfer_type",
+        fg_id=FilterGroupId("fg-l1-unbundled-type"), ds=ds_su, col="transfer_type",
         title="Transfer Type", sheet=unbundled_aging_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-unbundled-rail", ds=ds_su, col="rail_name",
+        fg_id=FilterGroupId("fg-l1-unbundled-rail"), ds=ds_su, col="rail_name",
         title="Rail", sheet=unbundled_aging_sheet,
     )
 
@@ -1806,22 +1807,22 @@ def _wire_per_sheet_dropdowns(
     # noise.
     ds_sa_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
     _dropdown(
-        fg_id="fg-l1-supersession-reason", ds=ds_sa_tx, col="supersedes",
+        fg_id=FilterGroupId("fg-l1-supersession-reason"), ds=ds_sa_tx, col="supersedes",
         title="Supersedes Reason", sheet=supersession_audit_sheet,
     )
 
     # Today's Exceptions — check_type narrows the unified UNION; account
     # + transfer_type are the secondary narrow-downs.
     _dropdown(
-        fg_id="fg-l1-todays-exc-check-type", ds=ds_te, col="check_type",
+        fg_id=FilterGroupId("fg-l1-todays-exc-check-type"), ds=ds_te, col="check_type",
         title="Check Type", sheet=todays_exceptions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-todays-exc-account", ds=ds_te, col="account_id",
+        fg_id=FilterGroupId("fg-l1-todays-exc-account"), ds=ds_te, col="account_id",
         title="Account", sheet=todays_exceptions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-todays-exc-type", ds=ds_te, col="transfer_type",
+        fg_id=FilterGroupId("fg-l1-todays-exc-type"), ds=ds_te, col="transfer_type",
         title="Transfer Type", sheet=todays_exceptions_sheet,
     )
 
@@ -1829,23 +1830,23 @@ def _wire_per_sheet_dropdowns(
     # account / transfer / status / origin / transfer_type.
     ds_tx = datasets[DS_TRANSACTIONS]
     _dropdown(
-        fg_id="fg-l1-tx-account", ds=ds_tx, col="account_id",
+        fg_id=FilterGroupId("fg-l1-tx-account"), ds=ds_tx, col="account_id",
         title="Account", sheet=transactions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-tx-transfer", ds=ds_tx, col="transfer_id",
+        fg_id=FilterGroupId("fg-l1-tx-transfer"), ds=ds_tx, col="transfer_id",
         title="Transfer", sheet=transactions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-tx-status", ds=ds_tx, col="status",
+        fg_id=FilterGroupId("fg-l1-tx-status"), ds=ds_tx, col="status",
         title="Status", sheet=transactions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-tx-origin", ds=ds_tx, col="origin",
+        fg_id=FilterGroupId("fg-l1-tx-origin"), ds=ds_tx, col="origin",
         title="Origin", sheet=transactions_sheet,
     )
     _dropdown(
-        fg_id="fg-l1-tx-type", ds=ds_tx, col="transfer_type",
+        fg_id=FilterGroupId("fg-l1-tx-type"), ds=ds_tx, col="transfer_type",
         title="Transfer Type", sheet=transactions_sheet,
     )
 
@@ -1898,7 +1899,7 @@ def _wire_daily_statement_filters(
 
     # Summary dataset: account_id + business_day_start.
     summary_account_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l1-ds-summary-account",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l1-ds-summary-account"),
         cross_dataset="SINGLE_DATASET",
         filters=[CategoryFilter.with_parameter(
             filter_id="filter-l1-ds-summary-account",
@@ -1910,7 +1911,7 @@ def _wire_daily_statement_filters(
     summary_account_fg.scope_sheet(daily_statement_sheet)
 
     summary_date_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l1-ds-summary-date",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l1-ds-summary-date"),
         cross_dataset="SINGLE_DATASET",
         filters=[TimeEqualityFilter(
             filter_id="filter-l1-ds-summary-date",
@@ -1925,7 +1926,7 @@ def _wire_daily_statement_filters(
     # Transactions dataset: account_id + business_day (DATE_TRUNC of
     # posting); same parameter-bound shape.
     txn_account_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l1-ds-txn-account",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l1-ds-txn-account"),
         cross_dataset="SINGLE_DATASET",
         filters=[CategoryFilter.with_parameter(
             filter_id="filter-l1-ds-txn-account",
@@ -1937,7 +1938,7 @@ def _wire_daily_statement_filters(
     txn_account_fg.scope_sheet(daily_statement_sheet)
 
     txn_date_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l1-ds-txn-date",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=FilterGroupId("fg-l1-ds-txn-date"),
         cross_dataset="SINGLE_DATASET",
         filters=[TimeEqualityFilter(
             filter_id="filter-l1-ds-txn-date",
@@ -1997,7 +1998,7 @@ def _l1_drill(
     target_sheet: Sheet,
     name: str,
     writes: list,  # list[tuple[DrillParam, ...]]
-    trigger: str = "DATA_POINT_CLICK",
+    trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = "DATA_POINT_CLICK",
     action_id: str | AutoResolved = AUTO,
 ) -> Drill:
     """Cross-sheet drill with auto-reset on un-written sentinel params.
@@ -2015,7 +2016,7 @@ def _l1_drill(
         target_sheet=target_sheet,
         writes=full_writes,
         name=name,
-        trigger=trigger,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        trigger=trigger,
         action_id=action_id,
     )
 
@@ -2054,7 +2055,7 @@ def _wire_drill_filter_groups(
 
     @dataclass(frozen=True)
     class _DrillDest:
-        fg_id: str
+        fg_id: FilterGroupId
         param_name: str
         dataset_id: str
         column_name: str
@@ -2062,35 +2063,35 @@ def _wire_drill_filter_groups(
 
     specs: list[_DrillDest] = [
         _DrillDest(
-            fg_id="fg-l1-drill-account-on-drift",
+            fg_id=FilterGroupId("fg-l1-drill-account-on-drift"),
             param_name=P_L1_FILTER_ACCOUNT,
             dataset_id=DS_DRIFT,
             column_name="account_id",
             sheet_id=SHEET_DRIFT,
         ),
         _DrillDest(
-            fg_id="fg-l1-drill-account-on-ledger-drift",
+            fg_id=FilterGroupId("fg-l1-drill-account-on-ledger-drift"),
             param_name=P_L1_FILTER_ACCOUNT,
             dataset_id=DS_LEDGER_DRIFT,
             column_name="account_id",
             sheet_id=SHEET_DRIFT,
         ),
         _DrillDest(
-            fg_id="fg-l1-drill-account-on-overdraft",
+            fg_id=FilterGroupId("fg-l1-drill-account-on-overdraft"),
             param_name=P_L1_FILTER_ACCOUNT,
             dataset_id=DS_OVERDRAFT,
             column_name="account_id",
             sheet_id=SHEET_OVERDRAFT,
         ),
         _DrillDest(
-            fg_id="fg-l1-drill-account-on-limit-breach",
+            fg_id=FilterGroupId("fg-l1-drill-account-on-limit-breach"),
             param_name=P_L1_FILTER_ACCOUNT,
             dataset_id=DS_LIMIT_BREACH,
             column_name="account_id",
             sheet_id=SHEET_LIMIT_BREACH,
         ),
         _DrillDest(
-            fg_id="fg-l1-drill-transfer-on-transactions",
+            fg_id=FilterGroupId("fg-l1-drill-transfer-on-transactions"),
             param_name=P_L1_TX_TRANSFER,
             dataset_id=DS_TRANSACTIONS,
             column_name="transfer_id",
@@ -2118,7 +2119,7 @@ def _wire_drill_filter_groups(
             ),
         ))
         fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=spec.fg_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+            filter_group_id=spec.fg_id,
             cross_dataset="SINGLE_DATASET",
             filters=[CategoryFilter.with_literal(
                 filter_id=f"filter-{spec.fg_id}",

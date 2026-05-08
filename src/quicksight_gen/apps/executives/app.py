@@ -40,7 +40,7 @@ from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.l2 import L2Instance, ThemePreset
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
@@ -281,7 +281,7 @@ _FG_EXEC_ACCT_ACTIVE_ONLY = "fg-exec-account-active-only"
 P_EXEC_DATE_START = "pExecDateStart"
 P_EXEC_DATE_END = "pExecDateEnd"
 _FG_EXEC_DATE_TXN = "fg-exec-date-transaction-summary"
-_FG_EXEC_DATE_ACCT = "fg-exec-date-account-summary"
+_FG_EXEC_DATE_ACCT = FilterGroupId("fg-exec-date-account-summary")
 
 # Default = last 30 days. Exec sheets show daily-grain summaries
 # rather than per-leg detail, so 30 days reads as one trend page
@@ -303,14 +303,14 @@ def _populate_account_coverage(
     kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-account-kpi-open",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-account-kpi-open"),
         title="Total Open Accounts",
         subtitle="Every account that has ever appeared in daily_balances",
         values=[ds_acct["account_id"].count(field_id="exec-acct-open-count")],
     )
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-account-kpi-active",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-account-kpi-active"),
         title="Active Accounts",
         subtitle=(
             "Accounts with at least one successful transaction "
@@ -328,7 +328,7 @@ def _populate_account_coverage(
     chart_row = sheet.layout.row(height=_CHART_ROW_SPAN)
     chart_row.add_bar_chart(
         width=_HALF,
-        visual_id="exec-account-bar-open-by-type",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-account-bar-open-by-type"),
         title="Open Accounts by Type",
         subtitle="Total open-account count grouped by account_type",
         category=[
@@ -344,7 +344,7 @@ def _populate_account_coverage(
     )
     chart_row.add_bar_chart(
         width=_HALF,
-        visual_id="exec-account-bar-active-by-type",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-account-bar-active-by-type"),
         title="Active Accounts by Type",
         subtitle=(
             "Accounts with activity_count > 0, grouped by account_type"
@@ -366,7 +366,7 @@ def _populate_account_coverage(
     # surface at the top.
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
-        visual_id="exec-account-detail-table",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-account-detail-table"),
         title="Account Detail",
         subtitle=(
             "Per-account row with last activity date and total count "
@@ -413,7 +413,7 @@ def _populate_transaction_volume(
     kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-txn-kpi-total",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-txn-kpi-total"),
         title="Total Transactions",
         subtitle=(
             "Sum of transfer count across the selected period and "
@@ -423,7 +423,7 @@ def _populate_transaction_volume(
     )
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-txn-kpi-avg-daily",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-txn-kpi-avg-daily"),
         title="Average Daily Volume",
         subtitle=(
             "Average daily transfer count, averaged across days that "
@@ -440,7 +440,7 @@ def _populate_transaction_volume(
     # composition signal in one visual.
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
-        visual_id="exec-txn-bar-daily-stacked",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-txn-bar-daily-stacked"),
         title="Daily Transaction Count by Type",
         subtitle=(
             "Each day's transfer count, stacked by transfer_type so "
@@ -463,7 +463,7 @@ def _populate_transaction_volume(
     # date axis to give the "where did the volume come from" snapshot.
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
-        visual_id="exec-txn-bar-by-type",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-txn-bar-by-type"),
         title="Period Total by Type",
         subtitle="Total transfer count over the selected period, per transfer_type",
         category=[
@@ -495,7 +495,7 @@ def _populate_money_moved(
     kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-money-kpi-net",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-money-kpi-net"),
         title="Net Money Moved",
         subtitle=(
             "Σ signed amount across the period — positive = inflow to "
@@ -508,7 +508,7 @@ def _populate_money_moved(
     )
     kpi_row.add_kpi(
         width=_HALF,
-        visual_id="exec-money-kpi-gross",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-money-kpi-gross"),
         title="Gross Money Moved",
         subtitle=(
             "Total handle — sum of per-transfer dollar magnitudes "
@@ -524,7 +524,7 @@ def _populate_money_moved(
     # be a line chart if the tree had one.
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
-        visual_id="exec-money-bar-daily-stacked",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-money-bar-daily-stacked"),
         title="Daily Gross Dollars Moved by Type",
         subtitle=(
             "Each day's gross dollar volume, stacked by transfer_type"
@@ -549,7 +549,7 @@ def _populate_money_moved(
     # transfer_type.
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
-        visual_id="exec-money-bar-by-type",  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        visual_id=VisualId("exec-money-bar-by-type"),
         title="Period Total Gross Dollars by Type",
         subtitle=(
             "Total gross dollar volume over the period, per "
@@ -658,7 +658,7 @@ def _wire_date_range_filter(
     # Accounts" by design, so use ALL_VALUES to keep them visible
     # regardless of date window.
     acct_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=_FG_EXEC_DATE_ACCT,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+        filter_group_id=_FG_EXEC_DATE_ACCT,
         cross_dataset="SINGLE_DATASET",
         filters=[TimeRangeFilter(
             filter_id="filter-exec-date-account-summary",
@@ -677,11 +677,11 @@ def _wire_date_range_filter(
     # cross_dataset stays SINGLE_DATASET because the binding is to
     # the same dataset on both sheets.
     for sheet, fg_id in (
-        (transaction_volume_sheet, "fg-exec-date-txn-volume"),
-        (money_moved_sheet, "fg-exec-date-money-moved"),
+        (transaction_volume_sheet, FilterGroupId("fg-exec-date-txn-volume")),
+        (money_moved_sheet, FilterGroupId("fg-exec-date-money-moved")),
     ):
         fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+            filter_group_id=fg_id,
             cross_dataset="SINGLE_DATASET",
             filters=[TimeRangeFilter(
                 filter_id=f"filter-{fg_id}",
@@ -722,7 +722,7 @@ def _analysis_name(l2_instance: L2Instance) -> str:
 # populators have run. The L.6.2 commit only populates Getting
 # Started; the other 3 sheets ship as bare shells (id + metadata
 # only) until L.6.4 / L.6.5 / L.6.6 land.
-_EXEC_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
+_EXEC_SHEET_SPECS: tuple[tuple[SheetId, str, str, str], ...] = (
     (SHEET_EXEC_GETTING_STARTED, "Getting Started", "Getting Started",
      "Landing page — summarises each tab in this dashboard so readers "
      "know where to look first. No filters or visuals."),
@@ -780,7 +780,7 @@ def build_executives_app(
     sheets: dict[str, Sheet] = {}
     for sheet_id, name, title, description in _EXEC_SHEET_SPECS:
         sheets[sheet_id] = analysis.add_sheet(Sheet(
-            sheet_id=sheet_id,  # type: ignore[arg-type]: bare literal pending typed-ID wrap (X.2.o.3 sweep deferred)
+            sheet_id=sheet_id,
             name=name,
             title=title,
             description=description,
