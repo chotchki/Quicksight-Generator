@@ -1,10 +1,61 @@
 # Y.2.gate.a — Test layer chain audit
 
-> **Status:** draft for user review.
-> **Purpose:** canonical inventory of what tests exist today, how each one is invoked + gated, and the gaps the Y.2.gate runner needs to close.
-> **Origin:** Y.2.b shipped a SQL exception that the e2e suite let through (the smoke verifier was a CLI script not pytest-collected). Y.2.gate.a is the audit pass that maps the chain so we can build a runner that prevents the recurrence.
+> **Status:** living spec — original audit (§§1–9) was the pre-implementation snapshot; §0 (added 2026-05-08) is the current-state overlay. Locked decisions in §7 stand; sections marked "(SUPERSEDED)" got replaced by post-implementation reality.
+> **Purpose:** canonical inventory of where the test chain stands + where it's going. Every Y.2.gate sub-task keys off this doc.
+> **Origin:** Y.2.b shipped a SQL exception that the e2e suite let through (the smoke verifier was a CLI script not pytest-collected). Y.2.gate.a was the audit pass that mapped the chain so we could build a runner that prevents the recurrence.
 
-This doc is the source of truth for the runner design (Y.2.gate.b–g). When something here is wrong, fix here first; downstream tasks key off it.
+This doc is the source of truth for runner design (Y.2.gate.b–g, now extended through Y.2.gate.n). When something here is wrong, fix here first; PLAN.md tasks key off it.
+
+---
+
+## 0. Status snapshot — 2026-05-08
+
+**Where we are:** the runner exists (`quicksight_gen/_dev/runner.py` ~1700 LOC + `./run_tests.sh` shim) and dispatches the full **6-layer chain** end-to-end. v8.8.0a5 closed out `Y.2.gate.i` (auth refresh); v8.8.0a4 closed out `c.5.{deploy,api,browser}`. Live: `./run_tests.sh up_to=browser --variants=default --skip-cheap` runs the operator's external Aurora chain in ~4 minutes wall, all layers green.
+
+**The chain shape today** (replaces the original §2 8-layer table):
+
+| Layer  | Substrate                                | Status                  | Wall (single-variant) |
+|--------|------------------------------------------|-------------------------|-----------------------|
+| unit   | pyright + `pytest tests/{unit,json,...}` | ✅ wired                 | ~20s                  |
+| db     | `pytest tests/data + tests/e2e/test_dataset_sql_smoke + verify_demo_apply` against variant DB | ✅ wired (b.2.impl.{schema,oracle,sqlite}) | ~30s local-pg, ~90s local-oracle, ~10s sqlite |
+| app2   | `pytest tests/e2e/test_html2_*.py` against variant DB (HTMX dialect, no AWS) | ✅ wired (b.3.impl.layer) | ~45s                  |
+| deploy | `quicksight-gen json apply --execute -c <cfg> --l2 <l2> -o <dir>`             | ✅ wired (c.5.deploy)     | ~112s                 |
+| api    | `pytest tests/e2e/ -m api -n auto`                                             | ✅ wired (c.5.api)        | ~24s                  |
+| browser| `pytest tests/e2e/ -m browser -n 4`                                            | ✅ wired (c.5.browser)    | ~57s                  |
+
+(Layers collapse the original §2's 8 — per §7.6 `up_to=db` and §7.7 6/7-merge + harness-drop. Audit §7.10's "App2 as early e2e gate" landed as the dedicated `app2` layer between db and deploy.)
+
+**Variants today:** ONLY the dialect axis (`default | local-pg | local-oracle | local-sqlite`). The L2-instance and fuzz-seed axes the original audit anticipated (§3 + §7.11) are stubs — fix tracked as `Y.2.gate.m` (added 2026-05-08).
+
+**Gates shipped (LANDED markers in PLAN.md):**
+
+| Gate                         | Status      | Notable shipped sub-tasks                                                  |
+|------------------------------|-------------|----------------------------------------------------------------------------|
+| `a` audit                    | ✅           | this doc                                                                   |
+| `b` runner design            | partial     | b.0 spike, b.2.impl.{schema,oracle,sqlite}, b.3.impl.layer, b.15.{spec,lint}.* all LANDED; b.3.impl.gather pending |
+| `c` runner impl              | partial     | c.5.{deploy,api,browser}, c.6.async, c.11.app2-server-logs all LANDED; c.7+ remaining |
+| `h` credential auto-discovery | ✅          | combined h+i.0 spike → IAM user setup → h.1 ARN auto-derive                |
+| `i` auth refresh             | ✅           | i.0–i.4 all LANDED (v8.8.0a5 close-out)                                    |
+| `j` parallelism              | mostly done | j.1–j.4, j.9, j.10 LOCKED; j.5 (container reuse) pending; j.6/7/8 effectively shipped via c.5's --parallel/--only/--skip-cheap |
+| `k` CI parity                | partial     | k.2, k.4 LOCKED; k.1, k.3, k.5, k.6, k.7 pending — most blocked on `m` |
+| `l` ephemeral AWS infra      | partial     | l.1, l.3–l.6 LOCKED; l.2 (`up`/`down`/`status` commands) pending            |
+| `m` variant matrix           | ⚠ NEW       | added 2026-05-08; gap surfaced post-c.5; blocks rest of `k.*` and re-enable of audit-dashboard-agreement test |
+| `n` terminal gate            | pending     | renamed from `m` 2026-05-08; gates resumption of Y.2.c+ work after a–m done |
+
+**Two carry-forwards from c.5.followup** (xfail/skip with documented blocker):
+
+- `tests/e2e/test_l1_filters.py::test_date_range_filter_narrows_drift_sheet` — Sasquatch L1 dashboard render flake (task backlog #466); xfail until Y.2 SQL pushdown reshapes L1 dataset binds.
+- `tests/e2e/test_audit_dashboard_agreement.py` — entire file skipped; needs `spec_example` seeded into BOTH PG + Oracle in the same chain invocation. Blocked on `m.4` (matrix composition) — once the runner can express `local-pg×spec_example,local-oracle×spec_example` as a parallel variant set, the file's fixtures find both DBs.
+
+**Forward path** (semantic dependency order, not strictly temporal):
+
+```
+m (variant matrix) → k (CI parity) → j.5 (container reuse) → b.3.impl.gather → n (Y.2.c+ unblocked)
+```
+
+`m → k`: k.1's `variants=full` references a matrix that `m` builds. `k → j.5`: container-reuse policy is local-only optimization, sequenced after CI shape lands. `j.5 → b.3.impl.gather`: app2|qs target merging at layer 6/7 is orthogonal to variant fan-out but cleanest after both are done. `n` is the terminal gate that releases the rest of Y.2.
+
+**Pointer to live PLAN:** see `PLAN.md::Y.2.gate.{a..n}` for the up-to-date task tree. Sub-task statuses there are authoritative; this snapshot freezes a moment in time.
 
 ---
 
@@ -18,7 +69,9 @@ Friction (looking up ARNs, env-var passthrough, `aws sso login`) is automation b
 
 ---
 
-## 2. The layer table (canonical)
+## 2. The layer table (PRE-IMPLEMENTATION SNAPSHOT — superseded by §0's runner chain)
+
+> **Note:** this table captures the 8-layer pre-runner inventory. The runner consolidated 8 layers into 6 per §7.6 (`up_to=db` collapses 3a/3b/3c/3d/3e) + §7.7 (6/7 merge + harness drop). For the current shape see §0. Kept here as the historical inventory of what tests existed when the audit was written.
 
 | # | Layer | What | Where | Today's invocation | Auto-hooked? | Variants today | Preconditions | Wall-clock (single-variant) |
 |---|---|---|---|---|---|---|---|---|
@@ -39,7 +92,15 @@ Friction (looking up ARNs, env-var passthrough, `aws sso login`) is automation b
 
 ---
 
-## 3. Variant axes (per layer enablement)
+## 3. Variant axes (DESIGN-INTENT TABLE — current state below)
+
+> **Status as of 2026-05-08:** the table below was the design-intent inventory at audit time. **Only the dialect axis got built.** The L2-instance axis is per-variant-fixed (one L2 per variant), and the fuzz-seed axis is a stub (`--fuzz-seeds=N` parses but doesn't fan out). The gap is tracked as **`Y.2.gate.m` (variant matrix composition)** — see PLAN.md and §0 above.
+>
+> **Today's variant set:** `default` (operator's external Aurora), `local-pg`, `local-oracle`, `local-sqlite`. Each variant binds to ONE L2 instance via `cfg.default_l2_instance` + `QS_GEN_TEST_L2_INSTANCE` env injection. No matrix composition.
+>
+> **What `m` will deliver:** `VariantSpec(dialect, l2_instance, fuzz_seed)` parser + `--variants=local-pg×spec_example,local-pg×sasquatch_pr` cross-product + actual N-seed fan-out for `--fuzz-seeds=N` + `variants=full` canonical matrix. Concrete unblock: `tests/e2e/test_audit_dashboard_agreement.py` (currently skipped, needs same L2 across two dialect variants in one chain run) re-enables.
+>
+> Original design-intent table preserved below for the historical record:
 
 | Variant | Layer 1 | 2a | 2b | 2c | 3a | 3b | 3c | 3d | 3e | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -580,12 +641,59 @@ For verification — every test/script file the audit considered.
 
 ---
 
-## 9. Next steps
+## 9. Where we are vs where we are going (revised 2026-05-08)
 
-1. **User reviews this doc.** Push back on anything wrong, fill in gaps, decide §7's open questions.
-2. **Lock the layer table + variant axes.** Iterate inline.
-3. **Y.2.gate.b — Design the runner** uses §2 + §3 + §7 decisions as the spec.
-4. **Y.2.gate.c — Implement.**
-5. **Y.2.gate.{d,e,f,h,i,j,k} — wire conventions, regression test, convert CLI verifiers, automate creds, parallelism, CI parity.**
+> Replaces the original "user reviews this doc + lock + Y.2.gate.b/c/etc." next-steps list. Most of those happened — see §0 for the shipped/landed map.
+
+### What's done
+
+**Foundation in place** (the audit's premise has been validated):
+- Runner exists, dispatches the full 6-layer chain end-to-end, captures per-(layer, variant) artifacts under `runs/<utc-ts>-<sha>/<variant>/<layer>/`.
+- `./run_tests.sh up_to=browser --variants=default --skip-cheap` runs in ~4 min wall against external Aurora; all layers green.
+- The c.5 close-out validated that the original "stop at first failure with clear attribution" goal is met live.
+- Auth automation: cfg-driven `auth.aws_profile`, auto-derived `QS_E2E_USER_ARN`, no `aws sso login` in the loop. The original "friction is automation backlog" principle (§1) discharged for the AWS-credential class.
+- EnvVar registry (`b.15.spec`) + AST lints catch bypass; the silent-skip-via-missing-env class of bug from §7.2 is structurally prevented now.
+- Layer dispatch interlock (`l.3` LOCKED) probes actual dependency state pre-layer; no stale-state-file footgun.
+
+### What's left (semantic dependency order)
+
+1. **`m` — Variant matrix composition** (added 2026-05-08, blocks the rest of `k.*`).
+   - The audit's §3 variant-axes table + §7.11 fuzz-seed framing was the locked design intent; only dialect implementation followed through. The L2-instance and fuzz-seed axes are stubs.
+   - 6 sub-tasks: spike → `VariantSpec` + parser + composer → L2 fan-out → fuzz fan-out → `variants=full` canonical matrix → live validation.
+   - Concrete consumer: re-enables `tests/e2e/test_audit_dashboard_agreement.py` (currently skipped; needs same L2 across two dialect variants in one chain).
+2. **`k` — CI parity** (blocked on `m`).
+   - `k.1` (push:main + PR cells invoke `up_to=browser variants=full`), `k.3` (PR-quick `up_to=smoke variants=pg`), `k.6` (existing CI alignment — rewrite GH workflow YAMLs as runner wrappers), `k.5` (pre-push hook), `k.7` (failure-surface parity).
+   - `k.2` + `k.4` already LOCKED (`e2e-oracle-browser` nightly cron + `timings.json` workflow artifact upload).
+   - `k.3`'s `up_to=smoke` references a layer that doesn't exist yet — either define `smoke` as a pseudo-layer or pick a real one (likely `unit` + `db --variants=local-pg`).
+3. **`j.5` — Container reuse policy** (local-only optimization, sequenced after CI shape lands).
+   - PG containers cheap (~5s) → recreate per session OK. Oracle 19c heavy (~30-60s, ~5GB) → name-cache across runs.
+   - SQLite in-process; no container.
+4. **`b.3.impl.gather` — `asyncio.gather` at merged layer 6/7** (`target=app2|qs` parallel fast-fail).
+   - §7.7 + §7.10 + §7.12 LOCKED the design (App2 + QS run in parallel, not sequential).
+   - Today the `app2` layer dispatches independently from `browser`; the gather pattern collapses them at the merged layer.
+   - Orthogonal to `m` — variant axis fan-out is one dimension; target=app2|qs at layer 6/7 is another.
+5. **`l.2` — Local lifecycle commands** (`up`/`down`/`status [--cost]`).
+   - §7.12 LOCKED the spec; commands not yet implemented.
+   - `down` cost-discipline depends on operator habit (`l.5` rejected auto-stop timer).
+6. **`n` — Terminal `Y.2.c+ unblocked` gate**.
+   - Releases the rest of Y.2 (Phase Y SQL pushdown sweep) once a–m done.
+
+### Open questions worth flagging for the spike at `m.0`
+
+(Decisions deferred to spike — surfaced here so they're visible at audit-revision time.)
+
+- **Variant string syntax:** `local-pg×spec_example` (Unicode `×`, readable, requires slug for paths) vs `local-pg:spec_example` (shell-safe, ambiguous with port-style syntax) vs `local-pg.spec_example` (typeable but conflicts with PLAN sub-letter naming).
+- **Canonical L2 set source:** cfg-yaml `l2_instances:` list (explicit, adds knob) vs glob `run/*.yaml` (implicit, fragile to operator-side files) vs hardcoded const in runner (clearest contract, but rebuild per L2 add).
+- **`variants=full` definition:** `{pg, oracle, sqlite} × {spec_example, sasquatch_pr}` = 6 variants for full chain? Include `sasquatch_ar`? The CI-cell budget vs coverage tradeoff is real — every variant in `full` runs every layer.
+- **Fuzz × L2-axis interaction:** likely mutex (fuzz output IS a synthetic L2), but the spike should confirm and document why.
+
+### Two carry-forwards
+
+The c.5 close-out surfaced two test xfails that aren't c.5 regressions but blocked on different shapes:
+
+- `test_l1_filters.py::test_date_range_filter_narrows_drift_sheet` — Sasquatch L1 dashboard render flake (task backlog #466); xfail strict=False. Drops out when `Y.2` SQL pushdown reshapes L1 dataset binds (downstream of `n`).
+- `test_audit_dashboard_agreement.py` — entire file skipped; re-enables on `m.4` per above.
+
+Both documented in PLAN.md::`Y.2.gate.c.5.followup`.
 
 When this doc is locked we delete the gaps section + ship it as the canonical reference (move to `src/quicksight_gen/docs/reference/test-layer-chain.md` per the original Y.2.gate.a parenthetical).
