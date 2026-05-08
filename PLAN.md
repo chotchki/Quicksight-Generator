@@ -492,6 +492,7 @@ Spike-proven pattern applied across every sheet that has SQL-pushdownable filter
 - [ ] **Y.2.f — L1 universal date range across every L1 dataset.** `date_from` / `date_to` move from analysis-level TimeRangeFilter into dataset SQL `WHERE posted_at BETWEEN <<$pDateFrom>> AND <<$pDateTo>>` pattern. Highest-impact change for L1 perf.
 - [ ] **Y.2.g — L1 per-sheet filter controls** (Drift / Overdraft / Limit Breach / Today's Exceptions / Daily Statement / Transactions / Pending Aging / Unbundled Aging / Supersession Audit). Per-sheet sub-bullet as we hit them.
 - [ ] **Y.2.h — Executives datasets review.** Verify whether any Exec sheet has filters that benefit; sweep what does. Likely a thin pass.
+    - [ ] **Y.2.h.1 — Re-enable `test_date_filter_narrows_every_date_sensitive_count_kpi` (xfail-marked 2026-05-08, runner gate.h.6 chain validation).** Two KPIs on Account Coverage failed: 'Total Open Accounts' (snapshot count — date filter only narrows the inner activity CTE, not the outer accounts CTE that drives the COUNT) and 'Active Accounts' (depends on a visual-pinned filter `activity_count > 0` that App2 doesn't apply yet). Both narrow correctly in QS; App2 will narrow correctly once Y.2 pushes the predicates down into dataset SQL (eliminates the visual-pinned-filter dependency for App2). Drop the `@pytest.mark.xfail` decorator after Y.2 lands and verify the chain stays green.
 
 ### Y.2.gate — Test layer chain audit + runner (HARD prereq for Y.2.c+)
 
