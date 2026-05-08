@@ -482,16 +482,24 @@ def _layer_command(
         return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
     if layer == "deploy":
         # Y.2.gate.c.5.deploy — `quicksight-gen json apply --execute` against
-        # the cfg + L2 the per-variant setup already discovered. Cfg is
-        # threaded via QS_GEN_CONFIG (per-variant override OR
-        # _resolve_runner_cfg_path's default-candidate list); L2 is threaded
-        # via QS_GEN_TEST_L2_INSTANCE (cfg.default_l2_instance, h.6).
-        # Without either, the deploy can't pick what to push — return None
-        # so dispatch_layer prints `dispatch-skip` with a clear reason.
-        # Output dir lands inside the run dir so per-run JSON artifacts stay
-        # isolated (operator can diff between runs without `out/` collisions).
+        # the cfg + L2 the runner discovered. Two cfg-path sources, in order:
+        # (1) `variant_env[QS_GEN_CONFIG]` — `_run_one_variant` only injects
+        #     this for non-default variants (local-pg / local-oracle /
+        #     local-sqlite, where the per-variant cfg matches the variant's
+        #     dialect-flavored DB). For the default variant `_run_one_variant`
+        #     doesn't inject it because the variant's cfg-discovery is
+        #     subprocess-side via `tests/e2e/conftest.py` etc.
+        # (2) Fall back to `_resolve_seed_config(_DEFAULT_RUNNER_CFG_CANDIDATES)`
+        #     so the default variant still finds run/config.{postgres,oracle}.yaml.
+        # L2 path (`QS_GEN_TEST_L2_INSTANCE`) is always set by `_run_one_variant`
+        # when cfg.default_l2_instance is configured (h.6); when it isn't we
+        # genuinely can't deploy and fall through to the dispatch-skip path
+        # with an actionable error.
         ve = variant_env or {}
         cfg_str = ve.get(QS_GEN_CONFIG.name)
+        if cfg_str is None:
+            fallback_cfg_path = _resolve_seed_config(_DEFAULT_RUNNER_CFG_CANDIDATES)
+            cfg_str = str(fallback_cfg_path) if fallback_cfg_path is not None else None
         l2_str = ve.get(QS_GEN_TEST_L2_INSTANCE.name)
         if cfg_str is None or l2_str is None:
             # Caller's dispatch_layer will print `dispatch-skip` — operator
