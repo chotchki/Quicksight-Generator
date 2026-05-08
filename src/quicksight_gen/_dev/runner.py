@@ -152,11 +152,24 @@ class ProbeFailure:
     message: str
 
 
-def _run_probe_subprocess(cmd: list[str], timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
+def _run_probe_subprocess(
+    cmd: list[str],
+    timeout: float = 10.0,
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a probe subprocess with a timeout so a hanging command can't lock
     the runner. ``timeout=10s`` is generous; AWS CLI typically finishes in <2s,
     docker ps in <1s. On TimeoutExpired we synthesize a returncode=124 + empty
-    stdout/stderr the caller can branch on."""
+    stdout/stderr the caller can branch on.
+
+    ``env_overrides`` (Y.2.gate.h+i.0): caller-supplied env additions merged
+    on top of `os.environ` for this subprocess only. Used by `_probe_aws` to
+    inject `AWS_PROFILE` from cfg before the SSO-default check fails — keeps
+    the long-lived-IAM-keys path working even when the operator's ambient
+    SSO token is expired.
+    """
+    env = {**os.environ, **env_overrides} if env_overrides else None
     try:
         return subprocess.run(
             cmd,
@@ -164,6 +177,7 @@ def _run_probe_subprocess(cmd: list[str], timeout: float = 10.0) -> subprocess.C
             text=True,
             check=False,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args=cmd, returncode=124, stdout="", stderr="probe timed out")
@@ -176,8 +190,28 @@ def _probe_aws() -> ProbeFailure | None:
 
     Returns ``None`` if creds work. On expired/missing/unknown failure, returns
     a ``ProbeFailure`` whose message tells the operator exactly what to type
-    (`! aws sso login`); we **never** auto-invoke the SSO browser flow."""
-    result = _run_probe_subprocess(["aws", "sts", "get-caller-identity"])
+    (`! aws sso login`); we **never** auto-invoke the SSO browser flow.
+
+    Y.2.gate.h+i.0 — honors ``cfg.auth.aws_profile`` if discoverable. The
+    runner injects `AWS_PROFILE` into subprocess env_overrides at variant
+    setup, but the probe runs BEFORE that — so without this lookup, a probe
+    running on an expired SSO ambient session would fail even when the cfg
+    points at a long-lived IAM-keys profile that would have worked. Same
+    cfg-discovery shape as `_probe_qs_e2e_user_arn`.
+    """
+    env_overrides: dict[str, str] | None = None
+    cfg_path = _resolve_seed_config(_DEFAULT_RUNNER_CFG_CANDIDATES)
+    if cfg_path is not None:
+        try:
+            from quicksight_gen.common.config import load_config  # noqa: PLC0415 — lazy
+            cfg = load_config(str(cfg_path))
+        except Exception:  # noqa: BLE001 — bad cfg surfaces elsewhere; here we just want a yes/no
+            cfg = None
+        if cfg is not None and cfg.auth is not None and cfg.auth.aws_profile is not None:
+            env_overrides = {"AWS_PROFILE": cfg.auth.aws_profile}
+    result = _run_probe_subprocess(
+        ["aws", "sts", "get-caller-identity"], env_overrides=env_overrides,
+    )
     if result.returncode == 0:
         return None
 
