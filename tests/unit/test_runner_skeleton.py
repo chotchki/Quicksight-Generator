@@ -1537,6 +1537,33 @@ def _fake_popen_factory(captured: dict[str, Any], *, returncode: int = 0):
     return _fake_popen
 
 
+def _fake_spawn_with_tee(
+    captured: list[dict[str, Any]], *, returncode: int = 0,
+):
+    """Y.2.gate.c.6.async — fake ``_spawn_with_tee`` for tests that
+    drive ``seed_variant`` (which calls ``_spawn_with_tee`` per step).
+    Captures every call's cmd/env/paths/prefix into ``captured`` and
+    returns ``(returncode, 0.01)``. Append-shape (one dict per call)
+    so a 3-step seed_variant produces 3 entries — the assertions then
+    check ordering + per-step shape."""
+    def _fake(
+        cmd: Any, *, cwd: Any, env: Any,
+        stdout_path: Any, stderr_path: Any,
+        terminal_prefix: str = "",
+    ) -> tuple[int, float]:
+        captured.append({
+            "cmd": list(cmd),
+            "cwd": cwd,
+            "env": dict(env or {}),
+            "stdout_path": stdout_path,
+            "stderr_path": stderr_path,
+            "terminal_prefix": terminal_prefix,
+        })
+        return returncode, 0.01
+
+    return _fake
+
+
 def test_dispatch_layer_threads_variant_env_to_db_layer(
     monkeypatch: Any, tmp_path: Path,
 ) -> None:
@@ -1727,18 +1754,16 @@ def test_seed_variant_local_pg_runs_three_subprocesses(
     )
     monkeypatch.delenv(QS_GEN_TEST_L2_INSTANCE.name, raising=False)
 
-    captured_cmds: list[list[str]] = []
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runner, "_spawn_with_tee", _fake_spawn_with_tee(captured),
+    )
 
-    def capture_cmd(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured_cmds.append(list(cmd))
-        return fake
-
-    with patch.object(subprocess, "run", side_effect=capture_cmd):
-        runner.seed_variant("local-pg", {"QS_GEN_DEMO_DATABASE_URL": "x"})
+    runner.seed_variant("local-pg", {"QS_GEN_DEMO_DATABASE_URL": "x"})
 
     # Three subprocesses, in order.
-    assert len(captured_cmds) == 3
+    assert len(captured) == 3
+    captured_cmds = [c["cmd"] for c in captured]
     # Each is `quicksight-gen <verb> apply/refresh --execute -c <cfg>`.
     verbs = [(c[1], c[2]) for c in captured_cmds]
     assert verbs == [("schema", "apply"), ("data", "apply"), ("data", "refresh")]
@@ -1761,21 +1786,18 @@ def test_seed_variant_threads_env_overrides_to_subprocesses(
     )
     monkeypatch.delenv(QS_GEN_TEST_L2_INSTANCE.name, raising=False)
 
-    captured_envs: list[dict[str, str]] = []
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
-
-    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured_envs.append(dict(env or {}))
-        return fake
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runner, "_spawn_with_tee", _fake_spawn_with_tee(captured),
+    )
 
     container_url = "postgresql+psycopg2://test:test@localhost:60455/test"
-    with patch.object(subprocess, "run", side_effect=capture_env):
-        runner.seed_variant("local-pg", {"QS_GEN_DEMO_DATABASE_URL": container_url})
+    runner.seed_variant("local-pg", {"QS_GEN_DEMO_DATABASE_URL": container_url})
 
     # Every step sees the override.
-    assert len(captured_envs) == 3
-    for env_seen in captured_envs:
-        assert env_seen.get("QS_GEN_DEMO_DATABASE_URL") == container_url
+    assert len(captured) == 3
+    for entry in captured:
+        assert entry["env"].get("QS_GEN_DEMO_DATABASE_URL") == container_url
 
 
 def test_seed_variant_honors_qs_gen_test_l2_instance(
@@ -1794,17 +1816,15 @@ def test_seed_variant_honors_qs_gen_test_l2_instance(
     )
     monkeypatch.setenv(QS_GEN_TEST_L2_INSTANCE.name, str(l2_yaml))
 
-    captured_cmds: list[list[str]] = []
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runner, "_spawn_with_tee", _fake_spawn_with_tee(captured),
+    )
 
-    def capture(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured_cmds.append(list(cmd))
-        return fake
+    runner.seed_variant("local-pg", {})
 
-    with patch.object(subprocess, "run", side_effect=capture):
-        runner.seed_variant("local-pg", {})
-
-    for cmd in captured_cmds:
+    for entry in captured:
+        cmd = entry["cmd"]
         assert "--l2" in cmd
         assert str(l2_yaml) in cmd
 
@@ -1841,17 +1861,15 @@ def test_seed_variant_local_oracle_runs_three_subprocesses(
     )
     monkeypatch.delenv(QS_GEN_TEST_L2_INSTANCE.name, raising=False)
 
-    captured_cmds: list[list[str]] = []
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runner, "_spawn_with_tee", _fake_spawn_with_tee(captured),
+    )
 
-    def capture_cmd(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured_cmds.append(list(cmd))
-        return fake
+    runner.seed_variant("local-oracle", {"QS_GEN_DEMO_DATABASE_URL": "x"})
 
-    with patch.object(subprocess, "run", side_effect=capture_cmd):
-        runner.seed_variant("local-oracle", {"QS_GEN_DEMO_DATABASE_URL": "x"})
-
-    assert len(captured_cmds) == 3
+    assert len(captured) == 3
+    captured_cmds = [c["cmd"] for c in captured]
     verbs = [(c[1], c[2]) for c in captured_cmds]
     assert verbs == [("schema", "apply"), ("data", "apply"), ("data", "refresh")]
     for cmd in captured_cmds:
@@ -1901,10 +1919,12 @@ def test_seed_variant_raises_on_subprocess_failure(
     )
     monkeypatch.delenv(QS_GEN_TEST_L2_INSTANCE.name, raising=False)
 
-    fake_fail = subprocess.CompletedProcess(args=["fake"], returncode=1)
-    with patch.object(subprocess, "run", return_value=fake_fail):
-        with pytest.raises(RuntimeError, match="schema"):
-            runner.seed_variant("local-pg", {})
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runner, "_spawn_with_tee", _fake_spawn_with_tee(captured, returncode=1),
+    )
+    with pytest.raises(RuntimeError, match="schema"):
+        runner.seed_variant("local-pg", {})
 
 
 def test_resolve_seed_config_explicit_env_override(
@@ -1961,7 +1981,7 @@ def test_cmd_up_to_seeds_variant_when_db_layer_in_chain(
 
     seed_calls: list[tuple[str, dict[str, str]]] = []
 
-    def fake_seed(name: str, env_overrides: dict[str, str]) -> None:
+    def fake_seed(name: str, env_overrides: dict[str, str], **_: Any) -> None:
         seed_calls.append((name, env_overrides))
 
     monkeypatch.setattr(runner, "seed_variant", fake_seed)
@@ -1999,7 +2019,7 @@ def test_cmd_up_to_skips_seed_when_chain_is_unit_only(
     seed_calls: list[str] = []
     monkeypatch.setattr(
         runner, "seed_variant",
-        lambda name, env: seed_calls.append(name),
+        lambda name, env, **_: seed_calls.append(name),
     )
     monkeypatch.setattr(runner, "teardown_variant", lambda h: None)
 
@@ -2031,7 +2051,7 @@ def test_cmd_up_to_skips_seed_for_default_variant(
     seed_calls: list[str] = []
     monkeypatch.setattr(
         runner, "seed_variant",
-        lambda name, env: seed_calls.append(name),
+        lambda name, env, **_: seed_calls.append(name),
     )
     monkeypatch.setattr(runner, "teardown_variant", lambda h: None)
 
@@ -2078,7 +2098,7 @@ def test_cmd_up_to_seed_failure_still_runs_teardown(
         lambda name: ({"QS_GEN_DEMO_DATABASE_URL": "x"}, handle),
     )
 
-    def fail_seed(name: str, env: dict[str, str]) -> None:
+    def fail_seed(name: str, env: dict[str, str], **_: Any) -> None:
         raise RuntimeError("boom: schema apply died")
 
     monkeypatch.setattr(runner, "seed_variant", fail_seed)
@@ -2096,3 +2116,194 @@ def test_cmd_up_to_seed_failure_still_runs_teardown(
     rc = runner.cmd_up_to(args)
     assert rc == runner.EXIT_NEEDS_OPERATOR
     assert teardown_calls == [handle]
+
+
+# Y.2.gate.c.6.async — multi-variant asyncio.gather fan-out tests.
+# Cover the four design locks: nested per-variant run dirs, per-line
+# terminal prefix (asserted via captured kwargs to dispatch_layer),
+# soft fast-fail per variant (one variant failing doesn't kill the
+# sibling's run), and exit-code aggregation (any failure → final
+# EXIT_FAILURE).
+
+def test_cmd_up_to_multi_variant_runs_each_variant(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Multi-variant: every variant in --variants gets its own
+    _run_one_variant invocation. Both variants run; neither short-
+    circuits the other (asyncio.gather collects all results)."""
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
+
+    invocations: list[tuple[str, Path, str]] = []
+
+    def fake_run_one(
+        variant: str, run_dir: Path, options: Any, chain: list[str],
+        *, terminal_prefix: str = "",
+    ) -> tuple[str, list[runner.LayerResult], int]:
+        invocations.append((variant, run_dir, terminal_prefix))
+        return variant, [
+            runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+        ], runner.EXIT_SUCCESS
+
+    monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+
+    parser = runner._build_parser()
+    args = parser.parse_args([
+        "up_to", "unit", "--variants", "local-pg,local-oracle",
+    ])
+    rc = runner.cmd_up_to(args)
+    assert rc == runner.EXIT_SUCCESS
+    variants_seen = {variant for variant, _, _ in invocations}
+    assert variants_seen == {"local-pg", "local-oracle"}
+
+
+def test_cmd_up_to_multi_variant_nests_run_dir_per_variant(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Per design lock #1 — nested ``runs/<id>/<variant>/``. Easier
+    to ripgrep + per-variant artifacts (cmd.json, stdout.log, seed/)
+    don't collide between sibling variants."""
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
+
+    invocations: list[tuple[str, Path]] = []
+
+    def fake_run_one(
+        variant: str, run_dir: Path, options: Any, chain: list[str],
+        *, terminal_prefix: str = "",
+    ) -> tuple[str, list[runner.LayerResult], int]:
+        invocations.append((variant, run_dir))
+        return variant, [
+            runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+        ], runner.EXIT_SUCCESS
+
+    monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+
+    parser = runner._build_parser()
+    args = parser.parse_args([
+        "up_to", "unit", "--variants", "local-pg,local-oracle",
+    ])
+    runner.cmd_up_to(args)
+
+    # Per-variant run_dir is the top-level run_dir suffixed with the
+    # variant name. The top-level run_dir lives under RUNS_DIR.
+    by_variant = dict(invocations)
+    assert by_variant["local-pg"].name == "local-pg"
+    assert by_variant["local-oracle"].name == "local-oracle"
+    assert by_variant["local-pg"].parent == by_variant["local-oracle"].parent
+    assert by_variant["local-pg"].parent.parent == tmp_path / "runs"
+
+
+def test_cmd_up_to_multi_variant_threads_terminal_prefix(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Per design lock #2 — per-line terminal prefix
+    ``[<variant>] `` flows from cmd_up_to → _run_one_variant →
+    (downstream into dispatch_layer + _tee_stream)."""
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
+
+    prefixes: dict[str, str] = {}
+
+    def fake_run_one(
+        variant: str, run_dir: Path, options: Any, chain: list[str],
+        *, terminal_prefix: str = "",
+    ) -> tuple[str, list[runner.LayerResult], int]:
+        prefixes[variant] = terminal_prefix
+        return variant, [
+            runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+        ], runner.EXIT_SUCCESS
+
+    monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+
+    parser = runner._build_parser()
+    args = parser.parse_args([
+        "up_to", "unit", "--variants", "local-pg,local-oracle",
+    ])
+    runner.cmd_up_to(args)
+
+    assert prefixes == {
+        "local-pg": "[local-pg] ",
+        "local-oracle": "[local-oracle] ",
+    }
+
+
+def test_cmd_up_to_multi_variant_soft_fast_fail_per_variant(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Per design lock #3 — soft fast-fail. One variant failing does
+    NOT abort sibling variants. Both variants always run to completion
+    (or to their own first failure inside _run_one_variant). Final
+    exit code reports any-failure as EXIT_FAILURE."""
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
+
+    invoked: list[str] = []
+
+    def fake_run_one(
+        variant: str, run_dir: Path, options: Any, chain: list[str],
+        *, terminal_prefix: str = "",
+    ) -> tuple[str, list[runner.LayerResult], int]:
+        invoked.append(variant)
+        if variant == "local-pg":
+            return variant, [
+                runner.LayerResult(layer="unit", exit_code=1, duration_seconds=0.1),
+            ], runner.EXIT_FAILURE
+        return variant, [
+            runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+        ], runner.EXIT_SUCCESS
+
+    monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+
+    parser = runner._build_parser()
+    args = parser.parse_args([
+        "up_to", "unit", "--variants", "local-pg,local-oracle",
+    ])
+    rc = runner.cmd_up_to(args)
+    # Both variants ran — soft fast-fail did not skip the sibling.
+    assert set(invoked) == {"local-pg", "local-oracle"}
+    # Failure wins the final exit code.
+    assert rc == runner.EXIT_FAILURE
+
+
+def test_cmd_up_to_multi_variant_aggregates_timings(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Multi-variant top-level timings.json keys layers with
+    ``<variant>.<layer>`` so report_drift's per-layer compare works
+    unchanged + per-variant attribution stays clear in CI artifacts."""
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
+
+    def fake_run_one(
+        variant: str, run_dir: Path, options: Any, chain: list[str],
+        *, terminal_prefix: str = "",
+    ) -> tuple[str, list[runner.LayerResult], int]:
+        return variant, [
+            runner.LayerResult(layer="unit", exit_code=0, duration_seconds=1.5),
+        ], runner.EXIT_SUCCESS
+
+    monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+
+    parser = runner._build_parser()
+    args = parser.parse_args([
+        "up_to", "unit", "--variants", "local-pg,local-oracle",
+    ])
+    runner.cmd_up_to(args)
+
+    # Find the run dir we just created.
+    runs_dir = tmp_path / "runs"
+    run_dirs = [p for p in runs_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    top = run_dirs[0]
+    aggregated = json.loads((top / "timings.json").read_text())
+    assert "local-pg.unit" in aggregated["layer_durations"]
+    assert "local-oracle.unit" in aggregated["layer_durations"]
+    # Per-variant timings.json also exists under the nested dir.
+    assert (top / "local-pg" / "timings.json").exists()
+    assert (top / "local-oracle" / "timings.json").exists()

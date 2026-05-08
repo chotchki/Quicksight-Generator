@@ -26,6 +26,7 @@ Substrate: pytest-as-orchestrator + this thin Python wrapper. See
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -407,18 +408,87 @@ def _layer_command(
 
 
 def _tee_stream(
-    src: TextIOWrapper, terminal: TextIOWrapper, sink: TextIOWrapper,
+    src: TextIOWrapper,
+    terminal: TextIOWrapper,
+    sink: TextIOWrapper,
+    *,
+    terminal_prefix: str = "",
 ) -> None:
     """Drain ``src`` line-by-line, writing each line to both ``terminal``
     (live operator feedback) and ``sink`` (persisted artifact). Used in
     a daemon thread per stream so stdout + stderr drain in parallel
     without buffer-fill deadlock.
+
+    ``terminal_prefix`` (Y.2.gate.c.6.async) is prepended to each line
+    written to the terminal so per-variant fan-out shows
+    ``[local-pg] foo`` / ``[local-oracle] bar`` interleaved without
+    losing track of which variant emitted which line. The sink (per-
+    variant log file under ``<run_dir>/<variant>/<layer>/{stdout,
+    stderr}.log``) gets the bare line — the directory already encodes
+    the variant.
     """
     for line in iter(src.readline, ""):
-        terminal.write(line)
+        if terminal_prefix:
+            terminal.write(terminal_prefix + line)
+        else:
+            terminal.write(line)
         terminal.flush()
         sink.write(line)
         sink.flush()
+
+
+def _spawn_with_tee(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    stdout_path: Path,
+    stderr_path: Path,
+    terminal_prefix: str = "",
+) -> tuple[int, float]:
+    """Spawn ``cmd`` as a subprocess; tee stdout/stderr to operator's
+    terminal AND to the named log files; return (returncode, duration).
+
+    Daemon threads drain each pipe so a full buffer on one stream can't
+    deadlock the other. ``terminal_prefix`` flows to ``_tee_stream`` for
+    per-variant line tagging in multi-variant fan-out.
+
+    Y.2.gate.c.6.async — extracted from ``dispatch_layer`` so
+    ``seed_variant`` (and any future subprocess) can capture + prefix
+    with the same contract.
+    """
+    start = time.monotonic()
+    with stdout_path.open("w") as out_f, stderr_path.open("w") as err_f:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=1, text=True,
+        )
+        # mypy/pyright: Popen with stdout/stderr=PIPE + text=True
+        # narrows both to TextIOWrapper, but the static analysis loses
+        # the narrowing through the with-block branching. assert here.
+        assert proc.stdout is not None and proc.stderr is not None
+        t_out = threading.Thread(
+            target=_tee_stream,
+            args=(proc.stdout, sys.stdout, out_f),
+            kwargs={"terminal_prefix": terminal_prefix},
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_tee_stream,
+            args=(proc.stderr, sys.stderr, err_f),
+            kwargs={"terminal_prefix": terminal_prefix},
+            daemon=True,
+        )
+        t_out.start()
+        t_err.start()
+        proc.wait()
+        # Drain both pipes before declaring done — wait() doesn't wait
+        # on the reader threads.
+        t_out.join()
+        t_err.join()
+    duration = time.monotonic() - start
+    return proc.returncode, duration
 
 
 def dispatch_layer(
@@ -427,6 +497,7 @@ def dispatch_layer(
     options: RunOptions | None = None,
     *,
     variant_env: dict[str, str] | None = None,
+    terminal_prefix: str = "",
 ) -> LayerResult:
     """Y.2.gate.c.5 — run one layer; return its result.
 
@@ -458,7 +529,7 @@ def dispatch_layer(
     """
     cmd_env = _layer_command(layer, run_dir, options)
     if cmd_env is None:
-        print(f"runner: dispatch-skip [{layer}] not-yet-wired (cfg loading + variants)")
+        print(f"{terminal_prefix}runner: dispatch-skip [{layer}] not-yet-wired (cfg loading + variants)")
         return LayerResult(layer=layer, exit_code=0, duration_seconds=0.0, skipped=True)
 
     cmd, env_addl = cmd_env
@@ -534,45 +605,26 @@ def dispatch_layer(
     }
     cmd_path.write_text(json.dumps(cmd_meta, indent=2) + "\n")
 
-    print(f"runner: dispatch-run [{layer}] {' '.join(cmd)}")
-    start = time.monotonic()
-    with stdout_path.open("w") as out_f, stderr_path.open("w") as err_f:
-        proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, env=env,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            bufsize=1, text=True,
-        )
-        # mypy/pyright: Popen with stdout/stderr=PIPE + text=True
-        # narrows both to TextIOWrapper, but the static analysis loses
-        # the narrowing through the with-block branching. assert here.
-        assert proc.stdout is not None and proc.stderr is not None
-        t_out = threading.Thread(
-            target=_tee_stream, args=(proc.stdout, sys.stdout, out_f),
-            daemon=True,
-        )
-        t_err = threading.Thread(
-            target=_tee_stream, args=(proc.stderr, sys.stderr, err_f),
-            daemon=True,
-        )
-        t_out.start()
-        t_err.start()
-        proc.wait()
-        # Drain both pipes before declaring done — wait() doesn't wait
-        # on the reader threads.
-        t_out.join()
-        t_err.join()
-    duration = time.monotonic() - start
+    print(f"{terminal_prefix}runner: dispatch-run [{layer}] {' '.join(cmd)}")
+    returncode, duration = _spawn_with_tee(
+        cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        terminal_prefix=terminal_prefix,
+    )
 
     # Re-write cmd.json with the result. Append shape (rather than two
     # files) keeps the per-layer summary in one place. Defensive
     # ensure-dir handles the race window (see _ensure_dir comment).
-    cmd_meta["exit_code"] = proc.returncode
+    cmd_meta["exit_code"] = returncode
     cmd_meta["duration_seconds"] = duration
     _ensure_dir()
     cmd_path.write_text(json.dumps(cmd_meta, indent=2) + "\n")
 
     return LayerResult(
-        layer=layer, exit_code=proc.returncode, duration_seconds=duration,
+        layer=layer, exit_code=returncode, duration_seconds=duration,
     )
 
 
@@ -1049,7 +1101,13 @@ def _resolve_seed_config_for_variant(variant: str) -> Path | None:
     return None
 
 
-def seed_variant(name: str, env_overrides: dict[str, str]) -> None:
+def seed_variant(
+    name: str,
+    env_overrides: dict[str, str],
+    *,
+    run_dir: Path | None = None,
+    terminal_prefix: str = "",
+) -> None:
     """Y.2.gate.b.2.impl.schema — bootstrap the variant's DB so the
     db / deploy / api / browser layers have something to query.
 
@@ -1118,14 +1176,36 @@ def seed_variant(name: str, env_overrides: dict[str, str]) -> None:
         ("data", "refresh"),
     )
     cli = str(_VENV_BIN / "quicksight-gen")
+    # Y.2.gate.c.6.async — capture per-step stdout/stderr to
+    # ``<run_dir>/seed/<step>.{stdout,stderr}.log`` so multi-variant
+    # fan-out leaves a per-variant trail (the variant lives in
+    # ``run_dir`` itself, e.g., ``runs/<id>/local-pg/seed/...``).
+    # When ``run_dir`` is None (callers that don't care about the
+    # persisted trail), capture goes to ``/dev/null`` — terminal
+    # streaming still works.
+    seed_dir: Path | None = None
+    if run_dir is not None:
+        seed_dir = run_dir / "seed"
+        seed_dir.mkdir(parents=True, exist_ok=True)
     for step in seed_steps:
         cmd = [cli, *step, "--execute", "-c", str(cfg_path), *l2_arg]
-        print(f"runner: variant-seed [{name}] {' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=False)
-        if result.returncode != 0:
+        print(f"{terminal_prefix}runner: variant-seed [{name}] {' '.join(cmd)}")
+        step_label = "-".join(step)
+        if seed_dir is not None:
+            stdout_path = seed_dir / f"{step_label}.stdout.log"
+            stderr_path = seed_dir / f"{step_label}.stderr.log"
+        else:
+            stdout_path = Path(os.devnull)
+            stderr_path = Path(os.devnull)
+        returncode, _ = _spawn_with_tee(
+            cmd, cwd=REPO_ROOT, env=env,
+            stdout_path=stdout_path, stderr_path=stderr_path,
+            terminal_prefix=terminal_prefix,
+        )
+        if returncode != 0:
             raise RuntimeError(
                 f"variant-seed [{name}] failed at step {' '.join(step)!r} "
-                f"(rc={result.returncode})"
+                f"(rc={returncode})"
             )
 
 
@@ -1213,6 +1293,113 @@ def _options_from_args(args: argparse.Namespace) -> RunOptions:
     )
 
 
+def _run_one_variant(
+    variant: str,
+    run_dir: Path,
+    options: RunOptions,
+    chain: list[str],
+    *,
+    terminal_prefix: str = "",
+) -> tuple[str, list[LayerResult], int]:
+    """Y.2.gate.c.6.async — run one variant's full chain end-to-end.
+
+    Owns the variant's lifecycle: setup → seed (DB-touching layers
+    only) → dispatch chain (stop on first fail per b.9) → teardown
+    (always, via finally). Returns (variant, layer_results, exit_code)
+    so the caller (single- or multi-variant) can aggregate.
+
+    ``run_dir`` is the per-variant directory: for single-variant
+    invocations this is the top-level ``runs/<id>/`` (no nesting,
+    back-compat); for multi-variant fan-out this is
+    ``runs/<id>/<variant>/`` so per-variant artifacts (cmd.json,
+    stdout.log, stderr.log, seed/) don't collide. ``terminal_prefix``
+    (e.g., ``[local-pg] ``) is prepended to every line printed by this
+    coroutine + every line streamed from spawned subprocesses, so
+    interleaved fan-out output stays attributable.
+
+    Soft fast-fail per c.6.async lock: a layer failure inside this
+    variant breaks out of the layer loop but does NOT raise — the
+    finally cleans up the container, the function returns the partial
+    layer_results + EXIT_FAILURE. The caller's gather collects every
+    variant's return regardless of pass/fail (no exception
+    propagation kills sibling variants).
+    """
+    if variant != "default":
+        print(f"{terminal_prefix}runner: variant={variant} (spinning up container...)")
+    variant_env, variant_handle = setup_variant(variant)
+    # Y.2.gate.b.2.impl.oracle — also thread QS_GEN_CONFIG into the
+    # layer subprocess env. Layers that load cfg (e.g.,
+    # tests/e2e/test_dataset_sql_smoke.py reading run/config.yaml by
+    # default) MUST pick up the dialect-matching cfg or the connector
+    # selection (cfg.dialect → psycopg vs oracledb) mismatches the
+    # variant URL (env QS_GEN_DEMO_DATABASE_URL), producing
+    # "invalid connection option oracle+oracledb://" from psycopg.
+    variant_cfg = _resolve_seed_config_for_variant(variant)
+    if variant_cfg is not None:
+        variant_env[QS_GEN_CONFIG.name] = str(variant_cfg)
+    if variant_env:
+        for key, val in variant_env.items():
+            display = (val[:60] + "...") if len(val) > 60 else val
+            print(f"{terminal_prefix}runner: variant-env [{key}]={display}")
+
+    final_code = EXIT_SUCCESS
+    layer_results: list[LayerResult] = []
+    try:
+        # Y.2.gate.b.2.impl.schema — non-default variants spin up
+        # empty containers; seed schema + data + matview refresh
+        # before the first DB-touching layer dispatches. Skipped
+        # when the chain is unit-only (saves ~30s on type-check
+        # iteration). Wrapped inside the try block so a seed failure
+        # still hits teardown_variant via the finally.
+        if variant != "default" and any(layer in DB_TOUCHING_LAYERS for layer in chain):
+            print(f"{terminal_prefix}runner: variant={variant} seeding (schema apply + data apply + data refresh)...")
+            try:
+                seed_variant(
+                    variant, variant_env,
+                    run_dir=run_dir, terminal_prefix=terminal_prefix,
+                )
+            except RuntimeError as exc:
+                print(f"{terminal_prefix}runner: variant-seed failed: {exc}", file=sys.stderr)
+                return variant, layer_results, EXIT_NEEDS_OPERATOR
+
+        for layer in chain:
+            # Y.2.gate.b.8.impl — `--skip-cheap` short-circuits cheap
+            # layers (unit, db) when the current SHA already has a
+            # green cache marker. Defensive: dirty-SHA / non-skippable
+            # / no-cache all degrade to "run normally". Cache lookup
+            # is variant-aware: a green marker for variant X doesn't
+            # signal green for variant Y.
+            if options.skip_cheap and is_layer_cached_green(layer, variant=variant):
+                print(f"{terminal_prefix}runner: layer-cached [{layer}] skipped (--skip-cheap, current SHA already green for variant={variant})")
+                cached_result = LayerResult(
+                    layer=layer, exit_code=0, duration_seconds=0.0, skipped=True,
+                )
+                layer_results.append(cached_result)
+                continue
+
+            result = dispatch_layer(
+                layer, run_dir, options,
+                variant_env=variant_env, terminal_prefix=terminal_prefix,
+            )
+            layer_results.append(result)
+            marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
+            print(f"{terminal_prefix}runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
+            if not result.passed:
+                print(f"{terminal_prefix}runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
+                final_code = EXIT_FAILURE
+                break
+            # Y.2.gate.b.8.impl — record the green pass so a future
+            # --skip-cheap on the same SHA + variant can short-circuit.
+            if not result.skipped and result.passed:
+                write_cache_marker(layer, duration_seconds=result.duration_seconds, variant=variant)
+    finally:
+        teardown_variant(variant_handle)
+        if variant_handle is not None:
+            print(f"{terminal_prefix}runner: variant={variant} container torn down")
+
+    return variant, layer_results, final_code
+
+
 def cmd_up_to(args: argparse.Namespace) -> int:
     """Run the test chain up to and including the named layer.
 
@@ -1227,6 +1414,15 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     cross-layer = sequential). Stubbed layers (deploy/api/browser pending cfg
     loading + variants) report skipped + pass-through so the chain doesn't
     falsely block.
+
+    Y.2.gate.c.6.async — multi-variant fan-out: when ``--variants`` resolves
+    to >1 entry, each variant runs concurrently via ``asyncio.gather`` with
+    its own nested run_dir (``runs/<id>/<variant>/``) and per-line terminal
+    prefix (``[<variant>] ``). Soft fast-fail per variant: a failure in one
+    variant doesn't kill its siblings — every variant runs to completion (or
+    its own first failure). Top-level ``timings.json`` aggregates across
+    variants with ``<variant>.<layer>`` keys so ``report_drift`` works
+    unchanged.
     """
     options = _options_from_args(args)
 
@@ -1254,94 +1450,107 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     if options.fuzz_seed_value is not None:
         print(f"runner: fuzz_seed={options.fuzz_seed_value} (pin via QS_GEN_FUZZ_SEED env to repro)")
 
-    # Y.2.gate.b.2.impl — resolve variants up front; spin up
-    # containers ONCE for the whole chain (not per layer). Multi-
-    # variant fan-out lands with c.6.async; today b.2.impl scopes to
-    # a single non-default variant per invocation.
     try:
         variants = resolve_variants(options.variants)
     except ValueError as exc:
         print(f"runner: {exc}", file=sys.stderr)
         return EXIT_NEEDS_OPERATOR
-    if len(variants) > 1:
-        print(
-            f"runner: multi-variant fan-out not yet wired (Y.2.gate.c.6.async); "
-            f"got --variants={options.variants}",
-            file=sys.stderr,
-        )
-        return EXIT_NEEDS_OPERATOR
-    variant = variants[0]
-    if variant != "default":
-        print(f"runner: variant={variant} (spinning up container...)")
-    variant_env, variant_handle = setup_variant(variant)
-    # Y.2.gate.b.2.impl.oracle — also thread QS_GEN_CONFIG into the
-    # layer subprocess env. Layers that load cfg (e.g.,
-    # tests/e2e/test_dataset_sql_smoke.py reading run/config.yaml by
-    # default) MUST pick up the dialect-matching cfg or the connector
-    # selection (cfg.dialect → psycopg vs oracledb) mismatches the
-    # variant URL (env QS_GEN_DEMO_DATABASE_URL), producing
-    # "invalid connection option oracle+oracledb://" from psycopg.
-    variant_cfg = _resolve_seed_config_for_variant(variant)
-    if variant_cfg is not None:
-        variant_env[QS_GEN_CONFIG.name] = str(variant_cfg)
-    if variant_env:
-        for key, val in variant_env.items():
-            print(f"runner: variant-env [{key}]={val[:60]}..." if len(val) > 60 else f"runner: variant-env [{key}]={val}")
 
     chain = chain_through(args.layer)
     print(f"runner: chain={chain}")
-    final_code = EXIT_SUCCESS
-    layer_results: list[LayerResult] = []
-    try:
-        # Y.2.gate.b.2.impl.schema — non-default variants spin up
-        # empty containers; seed schema + data + matview refresh
-        # before the first DB-touching layer dispatches. Skipped
-        # when the chain is unit-only (saves ~30s on type-check
-        # iteration). Wrapped inside the try block so a seed failure
-        # still hits teardown_variant via the finally.
-        if variant != "default" and any(layer in DB_TOUCHING_LAYERS for layer in chain):
-            print(f"runner: variant={variant} seeding (schema apply + data apply + data refresh)...")
+
+    if len(variants) == 1:
+        # Single-variant: stay synchronous; un-nested run_dir for back-compat.
+        # Tests + tooling that read ``runs/<id>/<layer>/{cmd.json,*.log}``
+        # keep working unchanged.
+        variant = variants[0]
+        _, layer_results, final_code = _run_one_variant(
+            variant, run_dir, options, chain,
+        )
+        collect_run_outputs(run_dir, layer_results)
+        print(f"runner: wrote {(run_dir / 'timings.json').relative_to(REPO_ROOT)}")
+        report_drift(run_dir)
+    else:
+        # Multi-variant: fan out via asyncio.gather, each variant in its own
+        # nested run_dir + with its own ``[<variant>] `` terminal prefix.
+        # ``asyncio.to_thread`` bridges the sync ``_run_one_variant`` (which
+        # blocks on subprocess + container I/O) into the event loop without
+        # forcing the whole chain to be async. Per design lock: no
+        # concurrency cap (default to len(variants) — Docker is the
+        # bottleneck, not the runner).
+        print(f"runner: variants={variants} (parallel fan-out)")
+        # Pre-create per-variant dirs so the post-gather
+        # ``collect_run_outputs`` always has a target to write to,
+        # even if a variant was a complete no-op (e.g., probes failed
+        # inside the variant or all layers were skipped via cache).
+        for v in variants:
+            (run_dir / v).mkdir(parents=True, exist_ok=True)
+        # Pre-warm the testcontainers Ryuk reaper singleton serially so
+        # parallel ``setup_variant`` calls don't race on
+        # ``Reaper._create_instance`` — otherwise both threads try to
+        # create a container with the same fixed Ryuk name and the
+        # second one crashes with HTTP 409 from Docker. Lazy-imported
+        # so the runner stays Docker-free for unit-only invocations.
+        if any(v != "default" for v in variants):
             try:
-                seed_variant(variant, variant_env)
-            except RuntimeError as exc:
-                print(f"runner: variant-seed failed: {exc}", file=sys.stderr)
-                return EXIT_NEEDS_OPERATOR
+                from testcontainers.core.container import Reaper  # type: ignore[import-untyped]: third-party library lacks PEP 561 stubs
+                Reaper.get_instance()
+            except Exception as exc:  # noqa: BLE001
+                # Reaper init failure is non-fatal — the per-variant
+                # ``setup_variant`` will surface the real error with
+                # operator-actionable context. Log here so the
+                # operator sees the pre-warm attempt.
+                print(f"runner: reaper pre-warm skipped ({exc!r}); continuing")
 
-        for layer in chain:
-            # Y.2.gate.b.8.impl — `--skip-cheap` short-circuits cheap
-            # layers (unit, db) when the current SHA already has a
-            # green cache marker. Defensive: dirty-SHA / non-skippable
-            # / no-cache all degrade to "run normally". Cache lookup
-            # is variant-aware: a green marker for variant X doesn't
-            # signal green for variant Y.
-            if options.skip_cheap and is_layer_cached_green(layer, variant=variant):
-                print(f"runner: layer-cached [{layer}] skipped (--skip-cheap, current SHA already green for variant={variant})")
-                cached_result = LayerResult(
-                    layer=layer, exit_code=0, duration_seconds=0.0, skipped=True,
+        async def _gather() -> list[tuple[str, list[LayerResult], int]]:
+            tasks = [
+                asyncio.to_thread(
+                    _run_one_variant,
+                    v, run_dir / v, options, chain,
+                    terminal_prefix=f"[{v}] ",
                 )
-                layer_results.append(cached_result)
-                continue
+                for v in variants
+            ]
+            return await asyncio.gather(*tasks)
 
-            result = dispatch_layer(layer, run_dir, options, variant_env=variant_env)
-            layer_results.append(result)
-            marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
-            print(f"runner: layer-{marker} [{layer}] rc={result.exit_code} duration={result.duration_seconds:.2f}s")
-            if not result.passed:
-                print(f"runner: stop-on-first-failure — chain halted at {layer}", file=sys.stderr)
-                final_code = EXIT_FAILURE
-                break
-            # Y.2.gate.b.8.impl — record the green pass so a future
-            # --skip-cheap on the same SHA + variant can short-circuit.
-            if not result.skipped and result.passed:
-                write_cache_marker(layer, duration_seconds=result.duration_seconds, variant=variant)
-    finally:
-        teardown_variant(variant_handle)
-        if variant_handle is not None:
-            print(f"runner: variant={variant} container torn down")
+        per_variant_results = asyncio.run(_gather())
 
-    collect_run_outputs(run_dir, layer_results)
-    print(f"runner: wrote {(run_dir / 'timings.json').relative_to(REPO_ROOT)}")
-    report_drift(run_dir)
+        # Per-variant timings.json under each variant subdir (keeps the
+        # per-variant run-dir self-contained — useful for CI artifact
+        # uploads + post-mortem of one variant).
+        for variant, layer_results, _ in per_variant_results:
+            variant_dir = run_dir / variant
+            collect_run_outputs(variant_dir, layer_results)
+            print(f"runner: wrote {(variant_dir / 'timings.json').relative_to(REPO_ROOT)}")
+
+        # Aggregated top-level timings.json with ``<variant>.<layer>``
+        # keyed durations. ``report_drift`` reads this against the prior
+        # run's top-level — so when both prior + current ran the same
+        # variants, drift fires per-variant per-layer with no special
+        # casing in ``compute_drift``.
+        aggregated_results: list[LayerResult] = []
+        for variant, layer_results, _ in per_variant_results:
+            for r in layer_results:
+                aggregated_results.append(LayerResult(
+                    layer=f"{variant}.{r.layer}",
+                    exit_code=r.exit_code,
+                    duration_seconds=r.duration_seconds,
+                    skipped=r.skipped,
+                ))
+        collect_run_outputs(run_dir, aggregated_results)
+        print(f"runner: wrote {(run_dir / 'timings.json').relative_to(REPO_ROOT)}")
+        report_drift(run_dir)
+
+        # Final code: any non-zero variant fails the run. EXIT_FAILURE
+        # wins over EXIT_NEEDS_OPERATOR (real failures hide config gaps
+        # — the operator should fix the failure first).
+        codes = [code for _, _, code in per_variant_results if code != EXIT_SUCCESS]
+        if EXIT_FAILURE in codes:
+            final_code = EXIT_FAILURE
+        elif codes:
+            final_code = codes[0]
+        else:
+            final_code = EXIT_SUCCESS
 
     pruned = prune_old_runs()
     if pruned:
