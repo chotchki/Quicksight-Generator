@@ -30,7 +30,6 @@ from tests._test_helpers import make_test_config
 from tests.e2e._harness_html2 import (
     assert_layer2_sankey_shape,
     html2_server,
-    trigger_initial_swap,
     visual_svg,
 )
 from quicksight_gen.common.html._smoke_app import (
@@ -75,12 +74,13 @@ def server_url() -> Iterator[str]:
 
 
 def test_layer2_initial_load_renders_sankey(server_url: str) -> None:
-    """Page loads → click Refresh → swap fires → d3 hydrates the
-    Sankey from the swapped fragment. Layer 1 says 5 nodes / 4
-    links → Layer 2 asserts SVG has 5 rects / 4 paths."""
+    """Page loads → HTMX auto-fetch fires on DOMContentLoaded (the
+    visual-data div carries `hx-trigger="load"`) → swap fires → d3
+    hydrates the Sankey from the swapped fragment. Layer 1 says 5
+    nodes / 4 links → Layer 2 asserts SVG has 5 rects / 4 paths."""
     with webkit_page() as page:
         page.goto(server_url)
-        trigger_initial_swap(page)
+        page.wait_for_load_state("networkidle")
         sankey_svg = visual_svg(page, "Sankey")
         sankey_svg.wait_for(state="attached", timeout=5000)
         assert_layer2_sankey_shape(
@@ -153,9 +153,11 @@ def test_layer2_click_pivots_sankey(server_url: str) -> None:
             else None
         ))
 
-        page.goto(server_url)
+        # X.2.g.1.a auto-load fires the data fetch as soon as the
+        # body lands in the DOM; wrap the goto so expect_response
+        # catches that initial fetch.
         with page.expect_response(_DATA_URL_GLOB) as init_resp:
-            trigger_initial_swap(page)
+            page.goto(server_url)
         assert init_resp.value.status == 200
 
         sankey_svg = visual_svg(page, "Sankey")
@@ -178,13 +180,18 @@ def test_layer2_click_pivots_sankey(server_url: str) -> None:
         )
         after_paths = sankey_svg.locator("path").count()
 
-    assert len(captured_urls) >= 2, (
-        f"Expected ≥2 GETs, saw {len(captured_urls)}: "
-        f"{captured_urls}"
+    # X.2.g.1.a auto-load: every visual on the sheet auto-fetches
+    # (here both smoke-sankey AND smoke-force), so we can't assume
+    # captured_urls[1] is the click pivot. Filter to Sankey-only +
+    # require at least one with anchor= present.
+    sankey_urls = [u for u in captured_urls if "/visuals/smoke-sankey/" in u]
+    assert len(sankey_urls) >= 2, (
+        f"Expected ≥2 Sankey GETs (initial + click pivot), saw "
+        f"{len(sankey_urls)}: {sankey_urls}"
     )
-    assert "anchor=" in captured_urls[1], (
-        f"Second GET didn't include anchor in URL. "
-        f"URL: {captured_urls[1]!r}. fireAnchorRequest in the "
+    assert any("anchor=" in u for u in sankey_urls), (
+        f"No Sankey GET included anchor in URL. "
+        f"Sankey URLs: {sankey_urls}. fireAnchorRequest in the "
         f"bootstrap JS isn't merging anchor into the query string, "
         f"OR the click reached the wrong handler."
     )
@@ -215,8 +222,9 @@ def test_layer2_catches_missing_chart_data_bug(server_url: str) -> None:
 
         page.route(_DATA_URL_GLOB, intercept)
         page.goto(server_url)
-        trigger_initial_swap(page)
-
+        # Auto-load fires the data fetch; intercept route returns
+        # an empty body. SVG never appears because no chart-data
+        # script lands in the DOM.
         sankey_svg = visual_svg(page, "Sankey")
         with pytest.raises(playwright_sync_api.TimeoutError):
             sankey_svg.wait_for(state="attached", timeout=2000)

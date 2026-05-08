@@ -109,18 +109,6 @@ def html2_server(
         thread.join(timeout=5)
 
 
-def trigger_initial_swap(page: Any) -> None:
-    """Click the Refresh button to fire the first HTMX swap.
-
-    The page shell renders an empty placeholder div for each
-    visual; the chart-data script only arrives via the swap. This
-    helper mirrors the QS harness's "wait for visual to render"
-    pattern but for the HTMX dialect — without this click, no
-    SVG ever appears.
-    """
-    page.click("button[hx-get]")
-
-
 def visual_section(page: Any, kind: str) -> Any:
     """Return the Playwright locator for a visual section by kind.
 
