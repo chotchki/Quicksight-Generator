@@ -743,6 +743,81 @@ The new authoring pattern needs to be the canonical one for any future filter / 
 - [ ] **Y.10.c — Tag + push.**
 - [ ] **Y.10.d — Verify release pipeline runs green** (the existing `e2e-against-testpypi` gate already covers this).
 
+### Y.11 — CLI shape revisit: cfg ⇄ L2 dual-yaml factoring
+
+Surfaced 2026-05-08 during `Y.2.gate.h.6` build. The runner now reads
+`cfg.default_l2_instance: tests/l2/sasquatch_pr.yaml` and threads it as
+`QS_GEN_TEST_L2_INSTANCE` into subprocess env_overrides — meaning the operator
+declares the L2 instance ONCE in cfg and the runner aligns the seed flow + the
+dataset-SQL smoke test automatically. **This makes the CLI's existing dual-arg
+shape (`-c <cfg.yaml> --l2 <l2.yaml>`) partially redundant**: every `quicksight-gen
+{schema|data|json|audit} {apply|clean|...}` invocation requires `--l2 <yaml>`
+even though the cfg now carries that pointer. The dual-yaml factoring itself
+may also be wrong now — a single combined cfg-with-L2-pointer (or a single
+yaml union) might be the right shape.
+
+Spike-before-implement (per `feedback_spike_before_locking_implementation.md`):
+this is a CLI-surface change touching every operator command + every doc
+example + tests. Wrong factoring locks in for years.
+
+- [ ] **Y.11.0 — SPIKE: combined-yaml vs cfg-with-L2-pointer vs status-quo
+  (LOCKED 2026-05-08; spike before Y.11.1).** Output `docs/audits/y_11_cli_shape_spike.md`.
+  Compare the candidate factorings against today's two-yaml shape:
+
+  - **A. Status quo + `--l2` defaults from `cfg.default_l2_instance`.**
+    Operator can omit `--l2`; cfg implies it; explicit `--l2 <yaml>` overrides.
+    Smallest delta, mostly-additive. Only one breaking case: cfg without
+    `default_l2_instance:` AND CLI without `--l2` becomes ambiguous (was an
+    error before; now silently uses bundled `default_l2_instance()` =
+    spec_example).
+  - **B. Single combined yaml.** Cfg + L2 merge into one file; CLI takes one
+    `-c <combined.yaml>`. Eliminates the dual-yaml friction entirely.
+    Trade-off: cfg yaml grows large (couple hundred lines for a real
+    institution); env-only fields (account, DB password, signing material)
+    co-mingle with institution-flavor fields (rails, chains, accounts) — the
+    Q.5 separation existed for a reason (dev secrets vs institution shape are
+    different release cadences).
+  - **C. Cfg-with-L2-pointer + `--l2` removed entirely.** Cfg ALWAYS carries
+    `default_l2_instance:` (made required); CLI drops `--l2`. Operators who
+    deploy multiple L2 instances against one cfg use multiple cfg files (one
+    per instance). Cleanest narrow change. Forces multi-instance operators to
+    duplicate cfg.
+  - **D. `--l2 <yaml>` becomes `--l2 <name>` indexed against an L2 registry
+    in cfg.** Cfg carries `l2_instances: { sasquatch_pr: tests/l2/sasquatch_pr.yaml,
+    spec_example: tests/l2/spec_example.yaml }` plus `default_l2_instance: sasquatch_pr`.
+    CLI: `--l2 spec_example` (named, short). Multi-instance operators get
+    cleaner ergonomics; single-instance operators still benefit from the
+    default. Trade-off: another layer of indirection.
+
+  **Constraint set:**
+  1. **Operator types `quicksight-gen json apply --execute` with no other
+     args** and gets a sane deploy of the default L2.
+  2. **Multi-L2 operators don't have to copy cfg files** to deploy each L2.
+  3. **Existing `--l2 <yaml>` invocations keep working** OR a clean migration
+     path is documented (sed-able rename, deprecation warning, etc.).
+  4. **Doc examples shrink** — every CLAUDE.md / README / handbook command
+     example currently shows `-c X --l2 Y`; the spike's chosen shape should
+     simplify the dominant single-instance case.
+  5. **Tests pass without env-var passthrough** — the runner's
+     `QS_GEN_TEST_L2_INSTANCE` injection (h.6) covers the test-side; the spike
+     decides whether the CLI grows the same default behavior for non-test
+     invocations.
+
+  **Likely outcome (to validate in spike):** A or D. A is the smallest delta;
+  D is the cleanest if multi-L2-per-cfg becomes common.
+
+- [ ] **Y.11.1 — Implement per spike result.** Updates touch `cli/json.py`,
+  `cli/schema.py`, `cli/data.py`, `cli/audit.py`, `cli/_helpers.py::resolve_l2_for_demo`,
+  every CLAUDE.md / README / handbook example, every test that invokes
+  `runner.invoke([...,"--l2",...])`, and every CI workflow YAML that uses
+  `--l2`. Migration warning for at least one minor version.
+- [ ] **Y.11.2 — Sweep memory entries + docs for stale `--l2 <yaml>` references.**
+- [ ] **Y.11.3 — Update CLAUDE.md "Commands" block** to show the new shape as
+  canonical; keep the explicit `--l2` form as the "multi-instance / explicit
+  override" sub-pattern.
+- [ ] **Y.11.4 — Bump version to v9.x.0 (breaking CLI change) + RELEASE_NOTES
+  entry highlighting the simplification + migration recipe.**
+
 ---
 
 ## Sustainment & minor features
