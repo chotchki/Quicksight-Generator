@@ -1,5 +1,144 @@
 # Release Notes
 
+## v8.8.0a2 — Test-layer chain runner + SQLite as third dialect
+
+Second alpha. Two themes: a new test-layer chain runner that
+unifies local + CI invocations behind a single `./run_tests.sh`
+entry point, and SQLite landing as a peer to PostgreSQL + Oracle
+across the schema / seed / matview / audit-PDF surface. The
+runner work is dev-only (the `_dev/` package is excluded from the
+wheel) — no end-user API change. Install the alpha with
+``pip install --pre quicksight-gen``.
+
+### What ships in this alpha
+
+- **Test-layer chain runner** (`Y.2.gate.b/c`). New
+  `quicksight_gen/_dev/runner.py` (~1700 LOC) plus the
+  `./run_tests.sh` bash shim. Verbs:
+  - `up_to <layer>` — runs the chain (`unit → db → app2 → deploy
+    → api → browser`) up to the named layer; stops on first
+    failure; per-layer artifacts under `runs/<run-id>/<layer>/`
+    (`cmd.json`, `stdout.log`, `stderr.log`).
+  - `up | down | status [--cost] | sweep` — lifecycle stubs and
+    orphan cleanup against the operator's AWS resource graph.
+  - `--variants <csv>` selects local-DB variants
+    (`local-pg | local-oracle | local-sqlite`); multi-variant
+    fan-out runs them in parallel via `asyncio.gather`.
+  - `--parallel N` threads `pytest-xdist -n N` into eligible layers.
+  - `--skip-cheap` short-circuits unit/db when the current SHA
+    has a green cache marker.
+  - `--allow-dirty-deploy` overrides the layer-4+ tracked-changes
+    refusal.
+  - `--seed-density N` scales the demo seed's per-Rail densify /
+    broken-rail / fanout-boost knobs.
+
+- **Local-DB variants via `testcontainers-python`**:
+  - `local-pg` boots `postgres:17-alpine` (~10s).
+  - `local-oracle` boots `gvenzl/oracle-free:23-faststart` (~25s).
+  - `local-sqlite` is no-Docker — temp file under a per-invocation
+    `tempfile.mkdtemp` + auto-generated cfg threaded into the
+    layer subprocesses.
+
+- **Multi-variant parallel fan-out** (`Y.2.gate.c.6.async`).
+  Cross-variant chains run concurrently via `asyncio.gather` +
+  `asyncio.to_thread`. Per-variant terminal prefix
+  (`[local-pg] …`) so interleaved output stays attributable; soft
+  fast-fail per variant; per-variant artifact dirs under
+  `runs/<run-id>/<variant>/<layer>/`.
+
+- **Per-run output isolation + drift report**
+  (`Y.2.gate.b.4 / c.2 / c.3`). Every invocation lands under
+  `runs/<utc-ts>-<short-sha>[-dirty]/` with `timings.json` +
+  `hashes.json`; drift-diff vs the prior run prints per-layer
+  `±%` with a `⚠` marker on `±50%` swings. Last 20 runs auto-pruned.
+
+- **Browser trace + App 2 server-log capture**
+  (`Y.2.gate.c.11 + c.11.app2-server-logs`). Failed Playwright
+  runs save `trace.zip` + extracted `trace/` + `screenshot.png` +
+  `console.txt` + `network.txt` under
+  `runs/<id>/browser/<test-id>/`. App 2's uvicorn access log +
+  any `quicksight_gen.app2.devlog` events flow to
+  `runs/<id>/app2/server.log` for post-mortem.
+
+- **Top-queries auto-capture** (`Y.2.gate.c.10`). After every
+  DB-touching layer, the top-50 most expensive queries land at
+  `runs/<id>/db/<dialect>/top-queries.md` (PG via
+  `pg_stat_statements`, Oracle via `v$sqlstats`).
+
+- **Typed `EnvVar` registry + AST lint family** (`Y.2.gate.b.15`).
+  All `QS_GEN_*` / `QS_E2E_*` env-var access goes through a
+  typed `EnvVar[T]` instance in `common/env_keys.py` (validators,
+  required-vs-optional, coercer); 8 paired lints in
+  `tests/unit/test_typing_smells.py` catch convention bypasses
+  (env-var bypass, bare type-ignore comments, unseeded `random.X()`
+  in seed modules, direct `boto3.client(...)` outside the 4
+  wrappers, hardcoded `qs-gen-` prefix, `datetime.now()` in
+  determinism-sensitive modules, `time.sleep` in `tests/e2e/`,
+  `@dataclass` without frozen/eq=False in `common/tree/`,
+  `json.dumps` without `indent=2` in CLI/file-emit paths,
+  `boto3.create_*` without `Tags=`).
+
+### SQLite as third database dialect (X.3)
+
+- **`Dialect.SQLITE` is a peer to PostgreSQL + Oracle** across
+  every helper in `common/sql/dialect.py`: type names, casts,
+  date arithmetic, JSON path extraction (new `json_value`
+  helper — PG/Oracle `JSON_VALUE`, SQLite `json_extract`),
+  row-wise `greatest`, date literals, `with_recursive`,
+  matview-as-table emit (`CREATE TABLE … AS SELECT`), and
+  refresh-as-DELETE+INSERT.
+- **`emit_schema(instance, dialect=SQLITE)` works end-to-end**
+  against an in-memory or file-backed SQLite. JSON metadata is
+  validated via `json_valid` (JSON1 extension, built into stdlib
+  `sqlite3` 3.38+).
+- **`build_full_seed_sql` emits SQLite-compatible INSERTs** —
+  timestamp literals strip TZ + use `datetime()`-friendly form;
+  the locked seed lives at
+  `tests/data/_locked_seeds/spec_example.sqlite.sql`.
+- **Audit PDF SQLite arm** (`X.3.g.2`): `quicksight-gen audit
+  apply --execute -c <sqlite-cfg>` produces the regulator-ready
+  PDF against a SQLite seed; same provenance contract as the
+  PG / Oracle paths.
+- **Layer 1 SQLite tests** (`X.3.g.1`): 8 tests in
+  `tests/unit/test_layer1_query_sqlite.py` cover the `query_*` /
+  `assert_*` helpers against an in-memory SQLite.
+- **The `local-sqlite` runner variant** (`b.2.impl.sqlite`):
+  zero Docker, zero AWS, ~21s wall-clock for the unit + db chain.
+
+### Bug fixes
+
+- **L2FT money_trail e2e** (`X.2.h.6`): three Playwright tests
+  fixed — chain-root parameter binding, sigma-slider value
+  propagation, recipient-fanout HAVING threshold encoding.
+- **App2 cache-busting** (`X.2.g.2.e`): static asset URLs gain a
+  per-server-boot fingerprint so browsers don't serve stale CSS
+  / JS after a re-deploy.
+- **Re-emitted matview SQL is now ASCII-clean** for SQLite (the
+  `--` SQL comment marker breaks if used inside a multi-line
+  string template); no more silent matview empties on SQLite.
+
+### Removed
+
+- **Python 3.12 support** is dropped; 3.13 is now the minimum.
+  3.12 was supported until the Y.2 phase work began; dropping
+  it shrinks the test matrix and frees up newer-syntax features
+  as they land.
+
+### Known limits
+
+- Cloud-layer dispatch (`deploy / api / browser`) is still
+  stubbed in the runner — `up_to=db` runs end-to-end, the
+  cloud layers print a skip line and pass through. Wiring lands
+  with `c.5.{deploy, api, browser}` after `h.1 / h.2 / h.3`
+  config plumbing + the `i.0` AWS auth spike close.
+- App 2 still cannot read from a SQLite-backed cfg
+  (`X.3.e` pending) — the X.3 work makes the schema / seed /
+  matview / audit-PDF paths SQLite-compatible, but the
+  HTMX dashboards still need PG or Oracle.
+- The 4-way cross-tool agreement gate (`X.2.j` — `expected ==
+  PDF == HTMX == QS`) is not yet locked; `v8.x.0` / `v9.0.0`
+  GA waits on it.
+
 ## v8.8.0a1 — App 2 (HTMX dashboard renderer) preview
 
 First public preview of **App 2**: a self-hosted HTMX + d3 +
