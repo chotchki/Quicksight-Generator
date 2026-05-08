@@ -15,13 +15,13 @@ the first, and assert the Transactions table still has > 0 rows.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     count_table_total_rows,
+    wait_for_dropdown_options_present,
+    wait_for_table_nonzero,
     generate_dashboard_embed_url,
     read_dropdown_options,
     screenshot,
@@ -115,11 +115,9 @@ def test_metadata_value_pick_does_not_empty_transactions_table(
         )
 
         # Cascade query refreshes the Value dropdown options based on
-        # pMetaKey; give QS a beat to re-fetch before reading options.
-        time.sleep(2)  # typing-smell: ignore[no-sleep]: known flake — convert to wait_for_function poll (b.15.followup.l2ft-no-sleep)
-
-        value_options = read_dropdown_options(
-            page, "Metadata Value", timeout_ms=page_timeout,
+        # pMetaKey; poll until the new options populate (or timeout).
+        value_options = wait_for_dropdown_options_present(
+            page, "Metadata Value", timeout_ms=10_000,
         )
         if not value_options:
             pytest.skip(
@@ -136,14 +134,13 @@ def test_metadata_value_pick_does_not_empty_transactions_table(
             timeout_ms=page_timeout,
         )
 
-        # QS recomputes the postings query after the parameter write;
-        # let it settle then read the count. Using a fixed sleep rather
-        # than wait-for-change because the regression we're guarding
-        # (table → 0 rows) IS a count change, but the happy path may
-        # leave the count unchanged if the picked value happens to
-        # appear on every leg in the window — wait-for-change would
-        # then hit a misleading TimeoutError on the passing case.
-        time.sleep(5)  # typing-smell: ignore[no-sleep]: known flake — convert to wait_for_function poll (b.15.followup.l2ft-no-sleep)
+        # QS recomputes the postings query after the parameter write.
+        # Poll on "table non-empty" rather than "count changed" —
+        # the regression we're guarding (table → 0 rows) IS a count
+        # change, but the happy path may leave the count unchanged
+        # if the picked value happens to appear on every leg in the
+        # window. wait_for_table_nonzero side-steps the false-timeout.
+        wait_for_table_nonzero(page, "Transactions", timeout_ms=10_000)
         after = count_table_total_rows(
             page, "Transactions", timeout_ms=page_timeout,
         )

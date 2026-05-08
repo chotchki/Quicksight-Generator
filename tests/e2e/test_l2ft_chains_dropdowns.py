@@ -16,13 +16,12 @@ table doesn't go empty.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     count_table_rows,
+    wait_for_table_nonzero,
     generate_dashboard_embed_url,
     read_dropdown_options,
     screenshot,
@@ -102,11 +101,15 @@ def _pick_each_option_and_assert_table_nonempty(
         set_multi_select_values(
             page, dropdown_title, [option], timeout_ms=page_timeout,
         )
-        # ``count_table_rows`` reads DOM only (saturates ~10) which is
-        # enough for "table not empty" — fast vs. the slow
-        # ``count_table_total_rows`` scroll-and-count walker.
-        time.sleep(5)  # typing-smell: ignore[no-sleep]: known flake — convert to wait_for_function poll (b.15.followup.l2ft-no-sleep)
-        after = count_table_rows(page, "Chain Instances")
+        # Poll until the table is non-empty (or timeout). Replaces a
+        # blind 5s sleep — fast on the happy path, fails fast on a
+        # real "narrowing emptied the table" regression.
+        try:
+            after = wait_for_table_nonzero(
+                page, "Chain Instances", timeout_ms=10_000,
+            )
+        except Exception:
+            after = count_table_rows(page, "Chain Instances")
         if after <= 0:
             failures.append(option)
             screenshot(

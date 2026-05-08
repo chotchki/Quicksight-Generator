@@ -14,6 +14,7 @@ itself is deployed in another region.
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, TypeVar
@@ -1368,6 +1369,63 @@ def wait_for_kpi_value_to_change(
         f"{visual_title!r} KPI value never changed from {before!r} "
         f"within {timeout_ms}ms"
     )
+
+
+def wait_for_table_nonzero(
+    page: Page, visual_title: str, timeout_ms: int,
+) -> int:
+    """Poll a table visual's row count until it's > 0 (or timeout).
+
+    Returns the new row count. Use this after triggering a filter /
+    dropdown pick when the assertion is "table not empty" rather than
+    "count changed" — the change-based wait would false-timeout when
+    the picked value happens to leave the count unchanged (e.g., an
+    L2FT cascade pick where the value covers every row in the
+    window). The "must remain non-empty" semantic is the actual
+    regression guard for those tests.
+    """
+    page.wait_for_function(
+        """({title}) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const rows = new Set();
+                v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
+                    if (m) rows.add(m[1]);
+                });
+                return rows.size > 0;
+            }
+            return false;
+        }""",
+        arg={"title": visual_title},
+        timeout=timeout_ms,
+    )
+    return count_table_rows(page, visual_title)
+
+
+def wait_for_dropdown_options_present(
+    page: Page, dropdown_title: str, timeout_ms: int,
+) -> list[str]:
+    """Poll ``read_dropdown_options`` until it returns at least one
+    option (or timeout).
+
+    Replaces fixed-sleep waits in cascade-dropdown tests where one
+    parameter pick (e.g., a Metadata Key) repopulates a downstream
+    dropdown's options (e.g., Metadata Value). The dropdown is closed
+    between reads, so this is a Python-side retry loop rather than a
+    ``page.wait_for_function`` JS poll. Fail-fasts on a real "options
+    never populate" regression; tight on the happy path.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    last: list[str] = []
+    while time.monotonic() < deadline:
+        last = read_dropdown_options(page, dropdown_title, timeout_ms=2_000)
+        if last:
+            return last
+        time.sleep(0.25)  # typing-smell: ignore[no-sleep]: 250ms inter-poll backoff inside a bounded retry loop with overall timeout
+    return last
 
 
 def wait_for_table_rows_to_change(
