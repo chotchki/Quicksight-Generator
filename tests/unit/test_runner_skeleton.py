@@ -107,7 +107,9 @@ def test_layers_list_matches_audit_table() -> None:
 
 # Y.2.gate.c.8 — dependency probe tests.
 
+import io
 import subprocess
+import sys
 from typing import Any
 from unittest.mock import patch
 
@@ -426,19 +428,13 @@ def test_dispatch_layer_threads_variant_env_to_app2(
     env so QS_GEN_DEMO_DATABASE_URL is visible to make_tree_db_fetcher
     inside the pytest subprocess. Mirrors the same wiring as the db
     layer test but for app2."""
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
-    captured: dict[str, str] = {}
-
-    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured.update(env or {})
-        return fake
-
-    with patch.object(subprocess, "run", side_effect=capture_env):
+    captured: dict[str, Any] = {}
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)):
         runner.dispatch_layer(
             "app2", tmp_path, runner.RunOptions(),
             variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
         )
-    assert captured["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
+    assert captured["env"]["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
 
 
 def test_dispatch_layer_stub_returns_skipped() -> None:
@@ -450,19 +446,22 @@ def test_dispatch_layer_stub_returns_skipped() -> None:
 
 
 def test_dispatch_layer_runs_real_subprocess(tmp_path: Path) -> None:
-    """Real dispatch invokes subprocess.run; the result reflects the exit code."""
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
-    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+    """Real dispatch invokes subprocess.Popen; the result reflects the exit code."""
+    captured: dict[str, Any] = {}
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)) as mock_popen:
         result = runner.dispatch_layer("unit", tmp_path)
-    assert mock_run.called
+    assert mock_popen.called
     assert result.passed is True
     assert result.skipped is False
     assert result.exit_code == 0
 
 
 def test_dispatch_layer_failure_propagates(tmp_path: Path) -> None:
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=1, stdout="", stderr="")
-    with patch.object(subprocess, "run", return_value=fake):
+    captured: dict[str, Any] = {}
+    with patch.object(
+        subprocess, "Popen",
+        side_effect=_fake_popen_factory(captured, returncode=1),
+    ):
         result = runner.dispatch_layer("unit", tmp_path)
     assert result.passed is False
     assert result.exit_code == 1
@@ -472,11 +471,10 @@ def test_dispatch_layer_passes_run_dir_via_env(tmp_path: Path) -> None:
     """QS_GEN_RUN_DIR threads through to the pytest subprocess so conftest
     fixtures (c.10/c.11/c.12) can route artifacts under runs/<run-id>/.
     QS_GEN_FUZZ_SEED also threads (c.6.xdist-safety)."""
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0, stdout="", stderr="")
-    with patch.object(subprocess, "run", return_value=fake) as mock_run:
+    captured: dict[str, Any] = {}
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)):
         runner.dispatch_layer("unit", tmp_path, runner.RunOptions(fuzz_seed_value=42))
-    call_kwargs = mock_run.call_args
-    env = call_kwargs.kwargs["env"]
+    env = captured["env"]
     assert env["QS_GEN_RUN_DIR"] == str(tmp_path)
     assert env["QS_GEN_LAYER"] == "unit"
     assert env["QS_GEN_FUZZ_SEED"] == "42"
@@ -1466,6 +1464,7 @@ def test_known_variants_includes_default_and_local_pg() -> None:
     setup_variant impl follows."""
     assert "default" in runner.KNOWN_VARIANTS
     assert "local-pg" in runner.KNOWN_VARIANTS
+    assert "local-oracle" in runner.KNOWN_VARIANTS
 
 
 def test_resolve_variants_default_returns_singleton() -> None:
@@ -1510,25 +1509,47 @@ def test_teardown_variant_swallows_exceptions() -> None:
     runner.teardown_variant(_Throws())  # must not raise
 
 
+def _fake_popen_factory(captured: dict[str, Any], *, returncode: int = 0):
+    """Build a Popen-shaped fake the dispatch_layer code can drive
+    through the new tee-to-file machinery without spinning up a real
+    subprocess. The fake captures the env it was called with for
+    assertions, returns immediately, and exposes empty stdout/stderr
+    iterators so the tee threads exit cleanly. ``returncode`` is the
+    fake exit code (default 0; pass 1 to simulate failure)."""
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.returncode = returncode
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def _fake_popen(
+        cmd: Any, cwd: Any = None, env: Any = None,
+        stdout: Any = None, stderr: Any = None,
+        bufsize: int = -1, text: bool = False,
+    ) -> _FakeProc:
+        captured["cmd"] = list(cmd)
+        captured["env"] = dict(env or {})
+        return _FakeProc()
+
+    return _fake_popen
+
+
 def test_dispatch_layer_threads_variant_env_to_db_layer(
     monkeypatch: Any, tmp_path: Path,
 ) -> None:
     """Y.2.gate.b.2.impl — variant_env merges into the subprocess env
     for DB-touching layers so QS_GEN_DEMO_DATABASE_URL etc. is visible
     to fixtures inside the pytest subprocess."""
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
-    captured: dict[str, str] = {}
-
-    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured.update(env or {})
-        return fake
-
-    with patch.object(subprocess, "run", side_effect=capture_env):
+    captured: dict[str, Any] = {}
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)):
         runner.dispatch_layer(
             "db", tmp_path, runner.RunOptions(),
             variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
         )
-    assert captured["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
+    assert captured["env"]["QS_GEN_DEMO_DATABASE_URL"] == "postgresql://localhost:5432/test"
 
 
 def test_dispatch_layer_does_not_thread_variant_env_to_unit(
@@ -1537,21 +1558,121 @@ def test_dispatch_layer_does_not_thread_variant_env_to_unit(
     """Unit layer doesn't need variant_env — passes through clean.
     Tests that assert no QS_GEN_DEMO_DATABASE_URL would otherwise
     break when the operator runs --variants=local-pg."""
-    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
-    captured: dict[str, str] = {}
-
-    def capture_env(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
-        captured.update(env or {})
-        return fake
-
+    captured: dict[str, Any] = {}
     monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
-    with patch.object(subprocess, "run", side_effect=capture_env):
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)):
         runner.dispatch_layer(
             "unit", tmp_path, runner.RunOptions(),
             variant_env={"QS_GEN_DEMO_DATABASE_URL": "postgresql://localhost:5432/test"},
         )
     # Variant env did NOT leak into the unit subprocess.
-    assert "QS_GEN_DEMO_DATABASE_URL" not in captured
+    assert "QS_GEN_DEMO_DATABASE_URL" not in captured["env"]
+
+
+# Y.2.gate.b.2.impl.oracle followup — per-layer subprocess capture.
+# Every dispatch persists cmd.json + stdout.log + stderr.log under
+# <run_dir>/<layer>/ so failures leave a complete trail in the run dir
+# (CI artifact upload, hands-off run review, post-mortem for the
+# next-step failure that the prior bare-streaming run made invisible).
+
+def test_dispatch_layer_writes_cmd_json_with_input_and_result(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """cmd.json captures the input we sent (cmd argv, cwd,
+    env-overrides) plus the result (exit code, duration). Re-written
+    after the subprocess finishes; the pre-run write is the
+    crash-trail safety net."""
+    monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
+    captured: dict[str, Any] = {}
+    with patch.object(subprocess, "Popen", side_effect=_fake_popen_factory(captured)):
+        result = runner.dispatch_layer(
+            "db", tmp_path, runner.RunOptions(),
+            variant_env={"QS_GEN_DEMO_DATABASE_URL": "url-x"},
+        )
+
+    cmd_json = json.loads((tmp_path / "db" / "cmd.json").read_text())
+    assert cmd_json["layer"] == "db"
+    assert cmd_json["cmd"] == captured["cmd"]
+    # env_overrides is the deltas only (variant env + per-layer env),
+    # NOT the inherited os.environ noise.
+    assert cmd_json["env_overrides"]["QS_GEN_DEMO_DATABASE_URL"] == "url-x"
+    assert "PATH" not in cmd_json["env_overrides"]
+    assert cmd_json["exit_code"] == result.exit_code
+    assert cmd_json["duration_seconds"] >= 0
+
+
+def test_dispatch_layer_captures_stdout_and_stderr_to_files(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Real-subprocess test: stdout + stderr each land in their own
+    log file under <run_dir>/<layer>/. Uses a tiny python -c so the
+    threading + tee path runs end-to-end without mocking Popen."""
+    monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
+
+    # Stub the layer-command resolver to return a deterministic
+    # tiny subprocess instead of the real pytest invocation.
+    cmd = [
+        sys.executable, "-c",
+        "import sys; sys.stdout.write('hello-out\\n'); "
+        "sys.stderr.write('hello-err\\n'); sys.exit(0)",
+    ]
+    monkeypatch.setattr(
+        runner, "_layer_command", lambda layer, run_dir, options: (cmd, {}),
+    )
+
+    runner.dispatch_layer("db", tmp_path, runner.RunOptions())
+
+    stdout = (tmp_path / "db" / "stdout.log").read_text()
+    stderr = (tmp_path / "db" / "stderr.log").read_text()
+    assert "hello-out" in stdout
+    assert "hello-err" in stderr
+    # Streams are kept separate — stderr content does NOT leak into stdout.log.
+    assert "hello-err" not in stdout
+    assert "hello-out" not in stderr
+
+
+def test_dispatch_layer_records_nonzero_exit_code(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Subprocess exits non-zero → cmd.json records the exact code
+    and the LayerResult propagates it to the caller (cmd_up_to uses
+    this to set EXIT_NEEDS_OPERATOR / stop the chain)."""
+    cmd = [sys.executable, "-c", "import sys; sys.exit(7)"]
+    monkeypatch.setattr(
+        runner, "_layer_command", lambda layer, run_dir, options: (cmd, {}),
+    )
+
+    result = runner.dispatch_layer("db", tmp_path, runner.RunOptions())
+    assert result.exit_code == 7
+
+    cmd_json = json.loads((tmp_path / "db" / "cmd.json").read_text())
+    assert cmd_json["exit_code"] == 7
+
+
+def test_dispatch_layer_recursion_guard_fails_loud(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Surfaced 2026-05-08: the runner used to spawn pytest recursively
+    when a test forgot to mock subprocess.Popen. The guard now refuses
+    to spawn pytest from inside pytest with the real Popen class, with
+    a message naming the fix. Deliberate-regression: assert the guard
+    fires rather than letting the recursive spawn explode.
+
+    Uses a fake ``pytest`` argv at cmd[0] so the guard's basename
+    check catches it. The real ``_layer_command`` returns
+    ``[VENV_BIN/pytest, tests/..., -q]`` for layers, so cmd[0] is
+    always pytest in production — same shape this test exercises.
+    """
+    cmd = ["pytest", "tests/unit", "-q"]
+    monkeypatch.setattr(
+        runner, "_layer_command", lambda layer, run_dir, options: (cmd, {}),
+    )
+    # PYTEST_CURRENT_TEST is set automatically by pytest; sanity-assert
+    # that we're inside it so the guard's first condition is met.
+    assert os.environ.get("PYTEST_CURRENT_TEST")
+
+    with pytest.raises(RuntimeError, match="recursive spawn explodes"):
+        runner.dispatch_layer("unit", tmp_path, runner.RunOptions())
 
 
 def test_cache_marker_variant_aware(monkeypatch: Any, tmp_path: Any) -> None:
@@ -1699,6 +1820,71 @@ def test_seed_variant_local_pg_raises_when_no_cfg_found(
     )
     with pytest.raises(RuntimeError, match="postgres-dialect cfg"):
         runner.seed_variant("local-pg", {})
+
+
+# Y.2.gate.b.2.impl.oracle — Oracle arm of seed_variant. Mirrors the
+# local-pg shape: same 3 CLI subprocesses, same env-threading + L2
+# override, distinct cfg-discovery list (run/config.oracle.yaml).
+# Live container test happens via `./run_tests.sh up_to=db
+# --variants=local-oracle`; these unit tests cover the wiring shape
+# without requiring Docker.
+
+def test_seed_variant_local_oracle_runs_three_subprocesses(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """Same shape as local-pg: schema apply → data apply → data refresh,
+    each with --execute pointed at the oracle-dialect cfg."""
+    cfg = tmp_path / "fake_oracle_cfg.yaml"
+    cfg.write_text("dialect: oracle\n")
+    monkeypatch.setattr(
+        runner, "_resolve_seed_config_for_local_oracle", lambda: cfg,
+    )
+    monkeypatch.delenv(QS_GEN_TEST_L2_INSTANCE.name, raising=False)
+
+    captured_cmds: list[list[str]] = []
+    fake = subprocess.CompletedProcess(args=["fake"], returncode=0)
+
+    def capture_cmd(cmd: Any, cwd: Any = None, env: Any = None, check: bool = False) -> Any:
+        captured_cmds.append(list(cmd))
+        return fake
+
+    with patch.object(subprocess, "run", side_effect=capture_cmd):
+        runner.seed_variant("local-oracle", {"QS_GEN_DEMO_DATABASE_URL": "x"})
+
+    assert len(captured_cmds) == 3
+    verbs = [(c[1], c[2]) for c in captured_cmds]
+    assert verbs == [("schema", "apply"), ("data", "apply"), ("data", "refresh")]
+    for cmd in captured_cmds:
+        assert "--execute" in cmd
+        assert "-c" in cmd
+        assert str(cfg) in cmd
+
+
+def test_seed_variant_local_oracle_raises_when_no_cfg_found(
+    monkeypatch: Any,
+) -> None:
+    """No oracle-dialect cfg → operator-actionable RuntimeError naming
+    `run/config.oracle.yaml` so the operator can fix it in one read."""
+    monkeypatch.setattr(
+        runner, "_resolve_seed_config_for_local_oracle", lambda: None,
+    )
+    with pytest.raises(RuntimeError, match="oracle-dialect cfg"):
+        runner.seed_variant("local-oracle", {})
+
+
+def test_resolve_seed_config_oracle_falls_back_to_run_oracle(
+    monkeypatch: Any, tmp_path: Path,
+) -> None:
+    """No env override + run/config.oracle.yaml exists at the repo root
+    → return that path. Symmetric with the local-pg cfg discovery —
+    each variant has its own dialect-flavored fallback list."""
+    monkeypatch.delenv(QS_GEN_CONFIG.name, raising=False)
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "run").mkdir(parents=True)
+    cfg = fake_repo / "run" / "config.oracle.yaml"
+    cfg.write_text("dialect: oracle\n")
+    monkeypatch.setattr(runner, "REPO_ROOT", fake_repo)
+    assert runner._resolve_seed_config_for_local_oracle() == cfg
 
 
 def test_seed_variant_raises_on_subprocess_failure(

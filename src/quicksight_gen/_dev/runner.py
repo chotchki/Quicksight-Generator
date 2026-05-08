@@ -33,8 +33,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
+from io import TextIOWrapper
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -404,6 +406,21 @@ def _layer_command(
     return None
 
 
+def _tee_stream(
+    src: TextIOWrapper, terminal: TextIOWrapper, sink: TextIOWrapper,
+) -> None:
+    """Drain ``src`` line-by-line, writing each line to both ``terminal``
+    (live operator feedback) and ``sink`` (persisted artifact). Used in
+    a daemon thread per stream so stdout + stderr drain in parallel
+    without buffer-fill deadlock.
+    """
+    for line in iter(src.readline, ""):
+        terminal.write(line)
+        terminal.flush()
+        sink.write(line)
+        sink.flush()
+
+
 def dispatch_layer(
     layer: str,
     run_dir: Path,
@@ -422,6 +439,22 @@ def dispatch_layer(
     the subprocess env so the variant's resources (Docker container
     URL etc.) are visible to pytest fixtures + cfg loaders inside the
     subprocess.
+
+    **Per-layer subprocess capture** (Y.2.gate.b.2.impl.oracle followup):
+    every dispatch persists four artifacts under ``<run_dir>/<layer>/``:
+
+    - ``cmd.json`` — the input: cmd argv, cwd, env-overrides (deltas
+      from inherited os.environ — the layer-specific keys + variant env,
+      not the noisy full environ). Written before the subprocess starts;
+      re-written after with ``exit_code`` + ``duration_seconds``.
+    - ``stdout.log`` — subprocess stdout, also teed to operator's
+      terminal in real time.
+    - ``stderr.log`` — subprocess stderr, also teed to terminal.
+
+    Streams use a per-stream daemon-thread tee so a full pipe buffer on
+    one stream can't deadlock the other. The operator sees live output
+    same as before; failures leave a complete trail in the run dir for
+    post-mortem (CI artifact upload, hands-off run review).
     """
     cmd_env = _layer_command(layer, run_dir, options)
     if cmd_env is None:
@@ -429,6 +462,42 @@ def dispatch_layer(
         return LayerResult(layer=layer, exit_code=0, duration_seconds=0.0, skipped=True)
 
     cmd, env_addl = cmd_env
+
+    # Recursion guard: if dispatch_layer is about to spawn a pytest cmd
+    # while we're already running INSIDE pytest AND ``subprocess.Popen``
+    # is the real one (no test mock in effect), the test forgot to
+    # isolate the spawn. Without this guard, the inner pytest re-runs
+    # the full test suite, hits the same dispatch_layer code, and
+    # fan-outs explosively until OS process limits or test timeout
+    # kill it. Fail loud here with a message that names the fix.
+    #
+    # ``isinstance(subprocess.Popen, type)`` is the mock-detector:
+    # real ``Popen`` is a class (a type); ``patch.object(subprocess,
+    # "Popen", side_effect=...)`` replaces it with a ``MagicMock``
+    # instance which isn't a type. Production code never replaces it,
+    # so this check has no runtime cost outside test contexts.
+    if (
+        os.environ.get("PYTEST_CURRENT_TEST")
+        # cast(object, ...) defeats pyright's "Popen is always a type"
+        # narrowing — at RUNTIME, a unittest.mock.patch replaces
+        # subprocess.Popen with a MagicMock instance, which fails the
+        # isinstance(_, type) check. The cast tells the static
+        # checker we know what we're doing.
+        and isinstance(cast(object, subprocess.Popen), type)
+        and cmd
+        and "pytest" in os.path.basename(cmd[0])
+    ):
+        raise RuntimeError(
+            f"dispatch_layer would spawn pytest for layer {layer!r} "
+            f"while already inside pytest "
+            f"(PYTEST_CURRENT_TEST={os.environ['PYTEST_CURRENT_TEST']!r}). "
+            f"This recursive spawn explodes at test runtime. The test "
+            f"must mock either ``subprocess.Popen`` (use the "
+            f"``_fake_popen_factory`` helper in tests/unit/"
+            f"test_runner_skeleton.py) or ``runner._layer_command`` "
+            f"(monkeypatch to return a tiny ``python -c`` cmd) before "
+            f"calling dispatch_layer."
+        )
     # Y.2.gate.b.2.impl — variant_env only applies to layers that
     # actually need a DB. Unit doesn't (in-process tests / pyright);
     # leaking QS_GEN_DEMO_DATABASE_URL into the unit subprocess
@@ -437,11 +506,74 @@ def dispatch_layer(
         variant_env if variant_env and layer in DB_TOUCHING_LAYERS else {}
     )
     env = {**os.environ, **env_addl, **effective_variant_env}
+
+    # Per-layer capture artifacts. Created lazily so a stub-skip
+    # doesn't litter empty dirs.
+    layer_dir = run_dir / layer
+    cmd_path = layer_dir / "cmd.json"
+    stdout_path = layer_dir / "stdout.log"
+    stderr_path = layer_dir / "stderr.log"
+
+    def _ensure_dir() -> None:
+        # Defensive remake: a concurrent ``prune_old_runs`` (from a
+        # parallel runner invocation, or a test fixture mucking with
+        # RUNS_DIR mid-test) can rmtree the run dir between writes.
+        # Cheap call, idempotent — keeps the persisted-artifact
+        # contract intact even under races.
+        layer_dir.mkdir(parents=True, exist_ok=True)
+
+    _ensure_dir()
+
+    # Persist the input (cmd + env deltas) BEFORE running so a hard
+    # crash still leaves a trail of what we tried to invoke.
+    cmd_meta: dict[str, Any] = {
+        "layer": layer,
+        "cmd": list(cmd),
+        "cwd": str(REPO_ROOT),
+        "env_overrides": {**env_addl, **effective_variant_env},
+    }
+    cmd_path.write_text(json.dumps(cmd_meta, indent=2) + "\n")
+
     print(f"runner: dispatch-run [{layer}] {' '.join(cmd)}")
     start = time.monotonic()
-    result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=False)
+    with stdout_path.open("w") as out_f, stderr_path.open("w") as err_f:
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=1, text=True,
+        )
+        # mypy/pyright: Popen with stdout/stderr=PIPE + text=True
+        # narrows both to TextIOWrapper, but the static analysis loses
+        # the narrowing through the with-block branching. assert here.
+        assert proc.stdout is not None and proc.stderr is not None
+        t_out = threading.Thread(
+            target=_tee_stream, args=(proc.stdout, sys.stdout, out_f),
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_tee_stream, args=(proc.stderr, sys.stderr, err_f),
+            daemon=True,
+        )
+        t_out.start()
+        t_err.start()
+        proc.wait()
+        # Drain both pipes before declaring done — wait() doesn't wait
+        # on the reader threads.
+        t_out.join()
+        t_err.join()
     duration = time.monotonic() - start
-    return LayerResult(layer=layer, exit_code=result.returncode, duration_seconds=duration)
+
+    # Re-write cmd.json with the result. Append shape (rather than two
+    # files) keeps the per-layer summary in one place. Defensive
+    # ensure-dir handles the race window (see _ensure_dir comment).
+    cmd_meta["exit_code"] = proc.returncode
+    cmd_meta["duration_seconds"] = duration
+    _ensure_dir()
+    cmd_path.write_text(json.dumps(cmd_meta, indent=2) + "\n")
+
+    return LayerResult(
+        layer=layer, exit_code=proc.returncode, duration_seconds=duration,
+    )
 
 
 def _is_deploy_or_later(layer: str) -> bool:
@@ -743,7 +875,7 @@ def is_layer_cached_green(layer: str, *, variant: str = "default") -> bool:
 # single-non-default-variant case to deliver the keystone value:
 # operator can run db tests against a local container instead of
 # burning Aurora minutes.
-KNOWN_VARIANTS: Final = ("default", "local-pg")
+KNOWN_VARIANTS: Final = ("default", "local-pg", "local-oracle")
 
 # Y.2.gate.b.2.impl — layers whose subprocess needs the variant's
 # DB connection threaded through (QS_GEN_DEMO_DATABASE_URL etc.).
@@ -776,13 +908,15 @@ def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
     env_overrides into the pytest subprocess and passes handle to
     `teardown_variant` after.
 
-    For ``default``: no-op. For ``local-pg``: spins up a Postgres
-    container via testcontainers-python and returns its connection
-    URL as a ``QS_GEN_DEMO_DATABASE_URL`` override.
+    For ``default``: no-op. For ``local-pg`` / ``local-oracle``:
+    spins up a testcontainer and returns its connection URL as a
+    ``QS_GEN_DEMO_DATABASE_URL`` override.
 
-    Postgres container takes ~10-15s to start. Lifetime is the chain
-    (one container reused across all layers in a single ``up_to``
-    invocation), not per-layer.
+    PG container takes ~10-15s to start. Oracle container
+    (``gvenzl/oracle-free:23-faststart``) takes ~20-30s — still
+    fast for a fresh Oracle DB. Lifetime is the chain (one container
+    reused across all layers in a single ``up_to`` invocation), not
+    per-layer.
     """
     if name == "default":
         return {}, None
@@ -797,6 +931,23 @@ def setup_variant(name: str) -> tuple[dict[str, str], object | None]:
         container.start()
         raw_url: str = container.get_connection_url()  # type: ignore[no-untyped-call]: testcontainers method has no type annotations
         return {QS_GEN_DEMO_DATABASE_URL.name: _normalize_pg_url(raw_url)}, container
+    if name == "local-oracle":
+        from testcontainers.oracle import OracleDbContainer  # type: ignore[import-untyped]: third-party library lacks PEP 561 stubs
+
+        # gvenzl/oracle-free:23-faststart — pre-initialized DB starts
+        # in seconds vs. the multi-minute cold-start on :slim. The
+        # image is heavier (~3 GB) but the time savings dominate the
+        # test-loop economics. Service name defaults to FREEPDB1 (the
+        # oracle-free image's pluggable DB).
+        container = OracleDbContainer("gvenzl/oracle-free:23-faststart")
+        container.start()
+        raw_url = container.get_connection_url()
+        # Oracle URL flows through unchanged — ``oracle_dsn()`` in
+        # ``common/db.py`` already accepts the SQLAlchemy-style
+        # ``oracle+oracledb://...`` form the testcontainer returns,
+        # alongside the native ``user/pass@host:port/SVC`` form the
+        # cfg-file uses. No normalization step needed for Oracle.
+        return {QS_GEN_DEMO_DATABASE_URL.name: raw_url}, container
     raise ValueError(f"setup_variant: unknown variant {name!r}")
 
 
@@ -807,6 +958,11 @@ def _normalize_pg_url(raw_url: str) -> str:
     suffix (``missing "=" after "..."`` from libpq's conninfo
     parser). Strip the suffix so the URL is the plain libpq form
     psycopg accepts.
+
+    Oracle has its own URL shape but ``oracle_dsn()`` in
+    ``common/db.py`` accepts both the SQLAlchemy form and the native
+    form, so no Oracle equivalent is needed here — see
+    ``setup_variant``'s ``local-oracle`` arm.
     """
     return raw_url.replace("postgresql+psycopg2://", "postgresql://", 1)
 
@@ -835,18 +991,24 @@ _LOCAL_PG_CFG_CANDIDATES: Final = (
     "run/config.postgres.yaml",
 )
 
+_LOCAL_ORACLE_CFG_CANDIDATES: Final = (
+    "run/config.oracle.yaml",
+)
 
-def _resolve_seed_config_for_local_pg() -> Path | None:
-    """Y.2.gate.b.2.impl.schema — find a postgres-dialect cfg the
-    seed CLI verbs (`schema apply` / `data apply` / `data refresh`)
-    can use against the local-pg container. Returns None if nothing
-    matches; caller surfaces the failure with operator-actionable
-    guidance.
 
-    QS_GEN_CONFIG is read via the typed registry; an explicit
-    operator pin at a non-existent path returns None (matches the
+def _resolve_seed_config(candidates: tuple[str, ...]) -> Path | None:
+    """Y.2.gate.b.2.impl — find a dialect-flavored cfg the seed CLI
+    verbs (`schema apply` / `data apply` / `data refresh`) can use
+    against a variant's container. ``candidates`` is the per-variant
+    fallback list (e.g. ``("run/config.postgres.yaml",)`` for
+    local-pg).
+
+    QS_GEN_CONFIG always wins (operator pin); the candidates list is
+    the per-variant default. Returns None if nothing matches; caller
+    surfaces the failure with operator-actionable guidance. An
+    explicit pin at a non-existent path returns None (matches the
     existing "respect the override; surface the absence" contract)
-    rather than letting the validator raise.
+    rather than letting the registry's must_be_file validator raise.
     """
     # Read the raw value to honor the "non-existent → None" contract
     # (registry's must_be_file validator would otherwise raise on a
@@ -858,11 +1020,21 @@ def _resolve_seed_config_for_local_pg() -> Path | None:
             return candidate if candidate.exists() else None
         resolved = REPO_ROOT / candidate
         return resolved if resolved.exists() else None
-    for relative in _LOCAL_PG_CFG_CANDIDATES:
+    for relative in candidates:
         candidate = REPO_ROOT / relative
         if candidate.exists():
             return candidate
     return None
+
+
+def _resolve_seed_config_for_local_pg() -> Path | None:
+    """Postgres flavor of `_resolve_seed_config`. See its docstring."""
+    return _resolve_seed_config(_LOCAL_PG_CFG_CANDIDATES)
+
+
+def _resolve_seed_config_for_local_oracle() -> Path | None:
+    """Oracle flavor of `_resolve_seed_config`. See its docstring."""
+    return _resolve_seed_config(_LOCAL_ORACLE_CFG_CANDIDATES)
 
 
 def seed_variant(name: str, env_overrides: dict[str, str]) -> None:
@@ -901,17 +1073,26 @@ def seed_variant(name: str, env_overrides: dict[str, str]) -> None:
     """
     if name == "default":
         return
-    if name != "local-pg":
+    if name == "local-pg":
+        cfg_path = _resolve_seed_config_for_local_pg()
+        if cfg_path is None:
+            raise RuntimeError(
+                "local-pg variant: no postgres-dialect cfg found "
+                "(checked QS_GEN_CONFIG env, run/config.postgres.yaml). "
+                "Create run/config.postgres.yaml (dialect: postgres) or "
+                "set QS_GEN_CONFIG to a postgres-dialect cfg path."
+            )
+    elif name == "local-oracle":
+        cfg_path = _resolve_seed_config_for_local_oracle()
+        if cfg_path is None:
+            raise RuntimeError(
+                "local-oracle variant: no oracle-dialect cfg found "
+                "(checked QS_GEN_CONFIG env, run/config.oracle.yaml). "
+                "Create run/config.oracle.yaml (dialect: oracle) or "
+                "set QS_GEN_CONFIG to an oracle-dialect cfg path."
+            )
+    else:
         raise ValueError(f"seed_variant: unknown variant {name!r}")
-
-    cfg_path = _resolve_seed_config_for_local_pg()
-    if cfg_path is None:
-        raise RuntimeError(
-            "local-pg variant: no postgres-dialect cfg found "
-            "(checked QS_GEN_CONFIG env, run/config.postgres.yaml). "
-            "Create run/config.postgres.yaml (dialect: postgres) or "
-            "set QS_GEN_CONFIG to a postgres-dialect cfg path."
-        )
 
     env = {**os.environ, **env_overrides}
     l2_arg: list[str] = []

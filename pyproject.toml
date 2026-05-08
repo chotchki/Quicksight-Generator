@@ -108,12 +108,15 @@ dev = [
     # boto3 client init when developers use AWS SSO / `aws sso login`.
     "botocore[crt]>=1.34",
     "boto3-stubs[quicksight]>=1.34",
-    # Y.2.gate.b.2.impl — Docker-backed local DB containers. Postgres
-    # only for now (the locked variant axis covers PG + Oracle + SQLite,
-    # but Oracle's container is multi-GB and slow to start; pull it in
-    # once we actually need oracle-locally-on-Docker, which today nobody
-    # does — the operator's external Oracle handles that lane).
-    "testcontainers[postgres]>=3.7",
+    # Y.2.gate.b.2.impl — Docker-backed local DB containers.
+    # PG (b.2.impl.schema) + Oracle (b.2.impl.oracle). Oracle's
+    # container is multi-GB and slower to start (~20-30s on
+    # gvenzl/oracle-free:23-faststart vs. ~10s on PG); operator
+    # selects per `--variants=` arg, so a tight inner loop on local-pg
+    # never pays the Oracle pull cost. SQLite intentionally absent:
+    # it's a single-file DB, no testcontainer needed (b.2.impl.sqlite
+    # spec).
+    "testcontainers[postgres,oracle]>=3.7",
     "psycopg[binary,pool]>=3.1",
     "aiosqlite>=0.19",
     # P.9d — oracledb thin client so the e2e harness can connect to
