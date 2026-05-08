@@ -1037,6 +1037,18 @@ def _resolve_seed_config_for_local_oracle() -> Path | None:
     return _resolve_seed_config(_LOCAL_ORACLE_CFG_CANDIDATES)
 
 
+def _resolve_seed_config_for_variant(variant: str) -> Path | None:
+    """Per-variant cfg dispatcher — returns the dialect-flavored cfg
+    for ``local-pg`` / ``local-oracle``, ``None`` for ``default`` (the
+    operator's external DB; cfg is whatever the test discovers on its
+    own, no override needed)."""
+    if variant == "local-pg":
+        return _resolve_seed_config_for_local_pg()
+    if variant == "local-oracle":
+        return _resolve_seed_config_for_local_oracle()
+    return None
+
+
 def seed_variant(name: str, env_overrides: dict[str, str]) -> None:
     """Y.2.gate.b.2.impl.schema — bootstrap the variant's DB so the
     db / deploy / api / browser layers have something to query.
@@ -1262,6 +1274,16 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     if variant != "default":
         print(f"runner: variant={variant} (spinning up container...)")
     variant_env, variant_handle = setup_variant(variant)
+    # Y.2.gate.b.2.impl.oracle — also thread QS_GEN_CONFIG into the
+    # layer subprocess env. Layers that load cfg (e.g.,
+    # tests/e2e/test_dataset_sql_smoke.py reading run/config.yaml by
+    # default) MUST pick up the dialect-matching cfg or the connector
+    # selection (cfg.dialect → psycopg vs oracledb) mismatches the
+    # variant URL (env QS_GEN_DEMO_DATABASE_URL), producing
+    # "invalid connection option oracle+oracledb://" from psycopg.
+    variant_cfg = _resolve_seed_config_for_variant(variant)
+    if variant_cfg is not None:
+        variant_env[QS_GEN_CONFIG.name] = str(variant_cfg)
     if variant_env:
         for key, val in variant_env.items():
             print(f"runner: variant-env [{key}]={val[:60]}..." if len(val) > 60 else f"runner: variant-env [{key}]={val}")
