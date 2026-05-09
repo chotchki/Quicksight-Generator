@@ -66,7 +66,17 @@ def pytest_configure(config: Any) -> None:
     # #741 — redirect runner.RUNS_DIR so in-process runner.main calls
     # land in session tmp instead of the operator's real runs/. Lazy
     # import to avoid circular-import surprises at conftest load time.
-    from quicksight_gen._dev import runner  # noqa: PLC0415 — lazy: only patch when tests are actually running
+    #
+    # The _dev package is excluded from the customer wheel
+    # (pyproject.toml::tool.setuptools.packages.find::exclude). When
+    # this conftest runs against the installed wheel (release.yml's
+    # `Smoke test wheel` job), _dev is absent — and that's fine: no
+    # test reachable from the wheel can call runner.main, so there's
+    # no runs/ pollution to guard against. Swallow the ImportError.
+    try:
+        from quicksight_gen._dev import runner  # noqa: PLC0415 — lazy: only patch when tests are actually running
+    except ImportError:
+        return
     session_runs_tmp = Path(tempfile.mkdtemp(prefix="qs-gen-test-runs-"))  # typing-smell: ignore[qs-gen-prefix]: tempdir disambiguator, not an AWS resource ID
     runner.RUNS_DIR = session_runs_tmp  # type: ignore[misc]: patching module-level Final at session start; the Final mark documents intent for prod, tests legitimately rebind
 

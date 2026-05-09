@@ -1,5 +1,32 @@
 # Release Notes
 
+## v8.8.0a8 — Hotfix: tests/conftest.py imports _dev unconditionally
+
+Eighth alpha. Hotfix re-cut for v8.8.0a7 after the Release workflow
+got past Tests (the playwright fix worked) and Build, then died at
+`Smoke test wheel` with `ModuleNotFoundError: No module named
+'quicksight_gen._dev'`.
+
+The #741 conftest patch from v8.8.0a6 unconditionally
+`from quicksight_gen._dev import runner` to monkeypatch
+`runner.RUNS_DIR` for runs/ isolation. But `_dev` is excluded from
+the customer wheel
+(`pyproject.toml::tool.setuptools.packages.find::exclude`), so the
+smoke test job — which installs the wheel into a fresh venv and runs
+unit tests — crashed at `pytest_configure` before any test ran.
+
+### Fix
+
+- **`tests/conftest.py`** — wrap the `from quicksight_gen._dev import
+  runner` in `try / except ImportError: return`. If `_dev` is absent,
+  no test reachable from the wheel can call `runner.main`, so there's
+  nothing to guard against — the patch is a no-op.
+
+Latent bug: #741 was added in the gate.m close-out tagged as v8.8.0a6,
+but v8.8.0a6's release was already broken on the upstream playwright
+issue and never reached Smoke test wheel. v8.8.0a7 fixed playwright
+and exposed this one.
+
 ## v8.8.0a7 — Hotfix: release.yml missing playwright install
 
 Seventh alpha. Hotfix re-cut for v8.8.0a6 after the Release workflow
