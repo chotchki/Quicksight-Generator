@@ -2307,13 +2307,13 @@ def test_cmd_up_to_skips_seed_when_chain_is_unit_only(
     assert seed_calls == []  # never invoked
 
 
-def test_cmd_up_to_skips_seed_for_aw_target(
+def test_cmd_up_to_seeds_aw_target(
     monkeypatch: Any, tmp_path: Path,
 ) -> None:
-    """target=aw cells use the operator's external Aurora; operator
-    already seeded. Even when the chain includes db, cmd_up_to skips
-    seed_variant — we'd be double-seeding the operator's external DB
-    otherwise."""
+    """m.4.f — aw cells now also run the seed flow (against operator's
+    external Aurora). The seed creates only the per-cell prefixed
+    tables (`<spec.name>_*`) so it never touches operator-managed
+    data under other prefixes."""
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(runner, "RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr(
@@ -2337,7 +2337,8 @@ def test_cmd_up_to_skips_seed_for_aw_target(
     args = parser.parse_args(["up_to", "db", "--variants", "sp_pg_aw"])
     rc = runner.cmd_up_to(args)
     assert rc == runner.EXIT_SUCCESS
-    assert seed_calls == []
+    assert len(seed_calls) == 1
+    assert seed_calls[0].name == "sp_pg_aw"
 
 
 def test_normalize_pg_url_strips_psycopg2_driver() -> None:

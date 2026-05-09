@@ -1955,13 +1955,14 @@ def _run_one_variant(
     final_code = EXIT_SUCCESS
     layer_results: list[LayerResult] = []
     try:
-        # Y.2.gate.b.2.impl.schema — local-target cells spin up empty
-        # containers; seed schema + data + matview refresh before the
-        # first DB-touching layer dispatches. Skipped when the chain
-        # is unit-only (saves ~30s on type-check iteration). Wrapped
-        # inside the try block so a seed failure still hits
+        # Y.2.gate.b.2.impl.schema + m.4.f — both lo and aw cells need
+        # seeding (lo containers start empty; aw operator's external
+        # Aurora needs the per-cell <spec.name>_* tables created so
+        # downstream dataset SQL can find them). Skipped when the
+        # chain is unit-only (saves ~30s on type-check iteration).
+        # Wrapped inside the try block so a seed failure still hits
         # teardown_variant via the finally.
-        if spec.target == "lo" and any(layer in DB_TOUCHING_LAYERS for layer in chain):
+        if any(layer in DB_TOUCHING_LAYERS for layer in chain):
             print(f"{terminal_prefix}runner: variant={spec.name} seeding (schema apply + data apply + data refresh)...")
             try:
                 seed_variant(
