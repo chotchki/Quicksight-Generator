@@ -118,7 +118,10 @@ jobs:
         # `--extra audit` adds pyhanko on top of reportlab + pypdf
         # (already in [dev]) so `audit apply --execute` can land its
         # empty reviewer-signature widgets without ImportError.
-        run: uv sync --frozen --extra dev --extra demo --extra audit
+        # `--extra e2e` adds pytest-xdist which the runner's unit layer
+        # invokes via ``-n auto`` (k.1.proof — without it the runner
+        # fails with ``pytest: error: unrecognized arguments: -n``).
+        run: uv sync --frozen --extra dev --extra demo --extra audit --extra e2e
 
       - name: Generate per-job config.yaml
         # Cfg lives in /tmp so the runner picks it up via QS_GEN_CONFIG.
