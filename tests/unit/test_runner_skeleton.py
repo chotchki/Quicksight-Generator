@@ -618,6 +618,12 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
     with (
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        # m.5 fix-up — `seed_variant` for aw cells now spawns real
+        # `quicksight-gen schema apply` against Aurora (m.4.f dropped
+        # the no-op early-return). Without this patch the test would
+        # silently run real Aurora schema-applies + fail under
+        # parallel matrix load with SSL connection errors.
+        patch.object(runner, "seed_variant"),
     ):
         # Pin to single AW cell — full matrix would dispatch unit
         # 13 times, breaking the dispatch-order assertion.
@@ -638,6 +644,7 @@ def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "_is_dirty", return_value=False),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "seed_variant"),  # m.5 fix-up — see test_cmd_up_to_stops_on_first_failure.
     ):
         # Pin single AW cell so the dispatch order is deterministic.
         code = runner.main(["up_to=browser", "--variants=sp_pg_aw"])
@@ -970,6 +977,7 @@ def test_cmd_up_to_dirty_ok_below_deploy(monkeypatch: Any) -> None:
         patch.object(runner, "_is_dirty", return_value=True),
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "seed_variant"),  # m.5 fix-up — see test_cmd_up_to_stops_on_first_failure.
     ):
         # Pin single AW cell — full matrix would also work but adds
         # noise (13 cells × 2 layers = 26 dispatches). The test only
@@ -989,6 +997,7 @@ def test_cmd_up_to_allow_dirty_deploy_bypasses(monkeypatch: Any) -> None:
         patch.object(runner, "_is_dirty", return_value=True),
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "seed_variant"),  # m.5 fix-up — see test_cmd_up_to_stops_on_first_failure.
     ):
         # Pin single AW cell — see test_cmd_up_to_dirty_ok_below_deploy.
         code = runner.main([
@@ -2153,12 +2162,17 @@ def test_cache_marker_variant_aware(monkeypatch: Any, tmp_path: Any) -> None:
 # with empty containers; seed_variant runs schema apply + data apply +
 # data refresh against the container URL before the db layer dispatches.
 
-def test_seed_variant_aw_target_is_no_op() -> None:
-    """`target=aw` cells use the operator's external Aurora / Oracle —
-    already seeded by the operator. seed_variant must do nothing."""
-    with patch.object(subprocess, "run") as mock_run:
-        runner.seed_variant(_spec_pg_aw(), {})
-    mock_run.assert_not_called()
+# Note: `test_seed_variant_aw_target_is_no_op` was removed in m.5
+# fix-up. Two reasons:
+# (1) Stale invariant — m.4.f intentionally dropped the AW seed early-
+#     return so aw + lo cells run the same 3-step seed flow. The "no-op"
+#     contract no longer holds.
+# (2) Wrong mock — the test patched ``subprocess.run`` but ``seed_variant``
+#     uses ``_spawn_with_tee`` (subprocess.Popen-based). It accidentally
+#     ran *real* ``quicksight-gen schema apply`` against Aurora every test
+#     invocation, which the matrix runner's parallel cells exposed as
+#     "SSL SYSCALL error: Connection reset by peer" under concurrent load.
+# AW seed coverage now lives in the matrix runner's live db layer.
 
 
 def test_seed_variant_pg_lo_runs_three_subprocesses(
