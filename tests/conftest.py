@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Any, Generator
 
@@ -21,9 +22,34 @@ import pytest
 
 from quicksight_gen.common.env_keys import (
     EnvVarInvalid,
+    QS_GEN_FUZZ_SEED,
     QS_GEN_LAYER,
     QS_GEN_RUN_DIR,
 )
+
+
+def pytest_configure(config: Any) -> None:
+    """Pin a session-stable fuzz seed so xdist workers agree on
+    parametrize IDs.
+
+    Without this, modules that materialize a fuzz seed at import time
+    (e.g., ``tests/data/test_l2_seed_contract.py::FUZZ_SEED``) compute
+    a fresh ``secrets.randbits(32)`` PER WORKER PROCESS — each worker
+    then collects ``[fuzz-seed-NNNNN]`` parametrize IDs with a
+    different N, and pytest-xdist refuses to start with "Different
+    tests were collected between gw0 and gwN".
+
+    The fix: have pytest-xdist's *controller* set ``QS_GEN_FUZZ_SEED``
+    once at session start. xdist passes env vars from controller to
+    worker subprocesses via execnet, so workers inherit the same seed.
+    Workers re-running this hook see the env already set and skip.
+
+    Operator-pinned seeds (``QS_GEN_FUZZ_SEED=12345 pytest ...``) flow
+    through unchanged — the ``setdefault``-style check honors any
+    explicit value.
+    """
+    if QS_GEN_FUZZ_SEED.get_or_none() is None:
+        os.environ[QS_GEN_FUZZ_SEED.name] = str(secrets.randbits(32))
 
 
 @pytest.hookimpl(hookwrapper=True)
