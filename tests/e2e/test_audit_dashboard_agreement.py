@@ -90,7 +90,27 @@ def _env_demo_url_dialect() -> str | None:
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
-_SPEC_EXAMPLE = _FIXTURES / "spec_example.yaml"
+_SPEC_EXAMPLE_BUNDLED = _FIXTURES / "spec_example.yaml"
+
+
+def _l2_yaml_for_test() -> Path:
+    """m.4.f — honor the runner's per-cell synthesized yaml when set.
+
+    The Y.2.gate.m runner sets ``QS_GEN_TEST_L2_INSTANCE`` to a
+    per-cell synthesized yaml whose ``instance`` field is the cell
+    code (e.g., ``sp_pg_aw``). DB tables seeded under that prefix.
+    Computed dashboard ID also derives from that instance via
+    ``cfg.with_l2_instance_prefix(instance.instance)``.
+
+    Outside the runner (operator running pytest directly), the env
+    var is unset; fall back to the bundled spec_example fixture
+    (the historical operator-driven shape).
+    """
+    from quicksight_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
+    env_val = QS_GEN_TEST_L2_INSTANCE.get_or_none()
+    if env_val:
+        return Path(env_val)
+    return _SPEC_EXAMPLE_BUNDLED
 
 # Anchor on real today so the stuck_* matviews' CURRENT_TIMESTAMP
 # filter sees plants in the past. days_ago offsets stay deterministic;
@@ -216,7 +236,7 @@ def per_dialect_l1_dashboard_id(per_dialect_cfg) -> str:
     ``spec_example`` (the default L2 instance) since this test is
     pinned to that instance.
     """
-    instance = load_instance(_SPEC_EXAMPLE)
+    instance = load_instance(_l2_yaml_for_test())
     cfg_with_prefix = (
         per_dialect_cfg
         if per_dialect_cfg.l2_instance_prefix is not None
@@ -238,7 +258,7 @@ def seeded_audit(dialect_cfg, tmp_path_factory):
 
     cfg, cfg_path, dialect = dialect_cfg
 
-    instance = load_instance(_SPEC_EXAMPLE)
+    instance = load_instance(_l2_yaml_for_test())
     conn = connect_demo_db(cfg)
     try:
         scenario = apply_db_seed(
@@ -258,7 +278,7 @@ def seeded_audit(dialect_cfg, tmp_path_factory):
         [
             "audit", "apply",
             "-c", str(cfg_path),
-            "--l2", str(_SPEC_EXAMPLE),
+            "--l2", str(_l2_yaml_for_test()),
             "--from", _PERIOD[0].isoformat(),
             "--to", _PERIOD[1].isoformat(),
             "-o", str(out),

@@ -2268,7 +2268,9 @@ def test_cmd_up_to_seeds_variant_when_db_layer_in_chain(
     # (m.2.b) and possibly QS_GEN_CONFIG (dialect cfg) before calling
     # seed_variant — assert the URL passes through, not equality.
     assert seed_calls[0][1].get("QS_GEN_DEMO_DATABASE_URL") == "x"
-    assert seed_calls[0][1].get(QS_GEN_TEST_L2_INSTANCE.name, "").endswith("spec_example.yaml")
+    # m.4.f — the L2 path is now the per-cell synthesized yaml (always),
+    # not the bundled spec_example.yaml. Ends with `_synth_l2.yaml`.
+    assert seed_calls[0][1].get(QS_GEN_TEST_L2_INSTANCE.name, "").endswith("_synth_l2.yaml")
 
 
 def test_cmd_up_to_skips_seed_when_chain_is_unit_only(
@@ -2757,43 +2759,63 @@ def test_derive_qs_user_arn_boto3_errors_propagate(monkeypatch: Any) -> None:
 # failed fuzz cell with `--variants=f<seed>_<di>_<ta>`.
 
 
-def test_resolve_l2_yaml_for_spec_named_returns_bundled_fixture(tmp_path: Path) -> None:
-    """`sp` / `sq` map to the package's bundled L2 fixtures — no
-    synthesis, no run_dir write. run_dir is unused on this path."""
-    sp_path = runner._resolve_l2_yaml_for_spec(_spec_pg_aw(), tmp_path)
-    assert sp_path.name == "spec_example.yaml"
-    assert "_l2_fixtures" in str(sp_path)
-    # Synthesis didn't happen — no _synth_l2.yaml under run_dir.
-    assert not (tmp_path / "_synth_l2.yaml").exists()
+def test_resolve_l2_yaml_for_spec_named_synthesizes_with_spec_name(
+    tmp_path: Path,
+) -> None:
+    """m.4.f — sp/sq cells synthesize a per-cell yaml that's the bundled
+    fixture with the ``instance`` field overridden to ``spec.name``.
+    DB schema prefix downstream becomes ``<spec.name>_*`` so sister cells
+    deploying to shared external Aurora don't collide."""
+    spec = _spec_pg_aw()  # sp_pg_aw
+    resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
+    assert resolved == tmp_path / "_synth_l2.yaml"
+    text = resolved.read_text()
+    assert "instance: sp_pg_aw" in text
 
 
-def test_resolve_l2_yaml_for_spec_us_returns_user_yaml(tmp_path: Path) -> None:
-    """`us` returns the operator-supplied yaml verbatim."""
+def test_resolve_l2_yaml_for_spec_us_synthesizes_with_spec_name(
+    tmp_path: Path,
+) -> None:
+    """`us` cells: load the operator's yaml, override instance to
+    spec.name, write to run_dir/_synth_l2.yaml. Operator-supplied
+    content (accounts/rails/etc.) is preserved; only `instance` shifts."""
     user_yaml = tmp_path / "my_custom.yaml"
-    user_yaml.write_text("instance: custom\nprefix: x\n")
+    user_yaml.write_text(
+        "instance: custom_name\n"
+        "description: my custom L2\n"
+        "accounts:\n"
+        "  - id: a1\n"
+        "    name: A\n"
+        "    role: GLControl\n"
+    )
     spec = VariantSpec(
         ScenarioCode("us"), "pg", "lo", user_yaml=user_yaml,
     )
     resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
-    assert resolved == user_yaml
+    assert resolved == tmp_path / "_synth_l2.yaml"
+    text = resolved.read_text()
+    assert "instance: us_pg_lo" in text
+    # Operator content preserved.
+    assert "description: my custom L2" in text
+    assert "GLControl" in text
 
 
-def test_resolve_l2_yaml_for_spec_fuzz_synthesizes_to_run_dir(
+def test_resolve_l2_yaml_for_spec_fuzz_synthesizes_with_spec_name(
     tmp_path: Path,
 ) -> None:
-    """m.3.a — fuzz scenario synthesizes via random_l2_yaml(seed) and
-    writes to run_dir/_synth_l2.yaml. Path returned points there."""
+    """m.3.a + m.4.f — fuzz cells synthesize via random_l2_yaml(seed) AND
+    rewrite the instance field to spec.name. Spec name encodes the seed,
+    so two cells with the same seed get the same instance — by design."""
     spec = VariantSpec(
         ScenarioCode("f42"), "pg", "lo", fuzz_seed=42,
     )
     resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
     assert resolved == tmp_path / "_synth_l2.yaml"
-    # Synthesized YAML is non-empty + carries the fuzz_seed_ instance
-    # marker (random_l2_yaml's contract — see test_l2_fuzz.py).
-    # The fuzzer zero-pads the suffix; check the prefix only.
     text = resolved.read_text()
     assert text.strip(), "synthesized yaml is empty"
-    assert "fuzz_seed_" in text
+    # Per-cell instance override; the fuzzer's default `fuzz_seed_<n>` is gone.
+    assert "instance: f42_pg_lo" in text
+    assert "fuzz_seed_" not in text
 
 
 def test_resolve_l2_yaml_for_spec_fuzz_is_byte_deterministic(

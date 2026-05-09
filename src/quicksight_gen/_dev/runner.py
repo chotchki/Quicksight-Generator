@@ -52,7 +52,6 @@ from quicksight_gen.common.env_keys import (
     QS_GEN_DEMO_DATABASE_URL,
     QS_GEN_E2E,
     QS_GEN_FUZZ_SEED,
-    QS_GEN_L2_INSTANCE_PREFIX,
     QS_GEN_LAYER,
     QS_GEN_RUN_DIR,
     QS_GEN_RUNNER_YES,
@@ -1482,10 +1481,14 @@ def seed_variant(
     """Y.2.gate.b.2.impl.schema — bootstrap the variant cell's DB so
     the db / deploy / api / browser layers have something to query.
 
-    For ``target=aw``: no-op (the operator's external Aurora / Oracle
-    is presumed already seeded; we don't reseed shared external
-    infrastructure under a runner invocation). For ``target=lo``:
-    spawns three CLI subprocesses in dependency order against the
+    Both ``target=aw`` and ``target=lo`` cells run the same 3-step
+    seed flow. For aw, the cfg's ``demo_database_url`` (operator's
+    external Aurora) is the target; the runner-driven seed creates
+    only the L2-prefixed tables (``<spec.name>_*``) so it never
+    touches operator-managed data under other prefixes. For lo,
+    the env-overridden URL points at the per-cell container.
+
+    Spawns three CLI subprocesses in dependency order against the
     cell's URL:
 
         1. ``quicksight-gen schema apply --execute -c <cfg> [--l2 <yaml>]``
@@ -1513,10 +1516,10 @@ def seed_variant(
     EXIT_NEEDS_OPERATOR; teardown still runs via the surrounding
     try/finally.
     """
-    if spec.target == "aw":
-        return
-    # target == "lo" — discover dialect-flavored cfg or fall through
-    # to the per-invocation sqlite cfg threaded via env_overrides.
+    # Discover dialect-flavored cfg — same lookup path for both aw + lo
+    # cells. For aw, the cfg's `demo_database_url` is the operator's
+    # Aurora/Oracle (cfg-driven). For lo, the env-overridden URL flows
+    # through `load_config` and points at the per-cell container.
     if spec.dialect == "pg":
         cfg_path = _resolve_seed_config_for_dialect("pg")
         if cfg_path is None:
@@ -1754,28 +1757,54 @@ def _resolve_l2_yaml_for_spec(spec: VariantSpec, run_dir: Path) -> Path:
     each variant's subprocess env via ``QS_GEN_TEST_L2_INSTANCE``
     so the seed CLI + downstream e2e tests pick the right instance.
 
-    Fuzz scenarios (``f<n>``) synthesize a yaml via
-    ``random_l2_yaml(spec.fuzz_seed)`` and write it to
-    ``run_dir / "_synth_l2.yaml"``. Determinism: same seed → same
-    yaml byte-for-byte (locked by ``test_fuzzer_is_byte_deterministic``).
-    Operators reproduce a failed fuzz cell with ``--variants=f<seed>_<di>_<ta>``.
+    m.4.f — ALL cells get a per-cell synthesized yaml under
+    ``run_dir / "_synth_l2.yaml"``. The synthesis loads the source
+    yaml (bundled fixture for sp/sq, operator-supplied for us, fuzz
+    output for f<n>), overrides the ``instance`` field to ``spec.name``,
+    and writes the result. This means:
+
+    - DB schema prefix becomes ``<spec.name>_*`` (e.g.,
+      ``sp_pg_aw_transactions``) instead of ``spec_example_transactions``.
+      Sister cells (sp_pg_aw + sp_or_aw + sq_pg_aw + ...) deploy to
+      non-colliding tables on shared external Aurora.
+    - cfg.l2_instance_prefix derives from the synthesized instance
+      via the existing ``cfg.with_l2_instance_prefix(instance.instance)``
+      chain — no env override needed.
+    - Fuzz determinism preserved: same seed → same fuzzer output →
+      same synthesized yaml (the instance-rename is the only
+      per-cell mutation, derivable from spec.name).
+
+    Operators reproduce a failed fuzz cell with
+    ``--variants=f<seed>_<di>_<ta>`` — same spec.name → same instance
+    rename → byte-identical synthesized yaml.
     """
+    import yaml  # noqa: PLC0415 — lazy: only needed for synthesis path
+    synth_path = run_dir / "_synth_l2.yaml"
+    synth_path.parent.mkdir(parents=True, exist_ok=True)
+
     if spec.scenario in _NAMED_L2_FIXTURES:
-        return _BUNDLED_L2_DIR / _NAMED_L2_FIXTURES[spec.scenario]
-    if spec.scenario == "us":
+        source_text = (_BUNDLED_L2_DIR / _NAMED_L2_FIXTURES[spec.scenario]).read_text()
+    elif spec.scenario == "us":
         # __post_init__ guarantees user_yaml is set for us scenarios.
         assert spec.user_yaml is not None
-        return spec.user_yaml
-    if spec.scenario.startswith("f"):
+        source_text = spec.user_yaml.read_text()
+    elif spec.scenario.startswith("f"):
         # __post_init__ guarantees fuzz_seed is set + matches scenario.
         assert spec.fuzz_seed is not None
         random_l2_yaml = _load_random_l2_yaml()
-        synth_yaml_text = random_l2_yaml(spec.fuzz_seed)
-        synth_path = run_dir / "_synth_l2.yaml"
-        synth_path.parent.mkdir(parents=True, exist_ok=True)
-        synth_path.write_text(synth_yaml_text)
-        return synth_path
-    raise ValueError(f"unknown scenario code {spec.scenario!r}")
+        source_text = random_l2_yaml(spec.fuzz_seed)
+    else:
+        raise ValueError(f"unknown scenario code {spec.scenario!r}")
+
+    # Override the instance field. yaml.safe_dump preserves insertion
+    # order with sort_keys=False (matches the fuzzer output convention).
+    parsed = cast("dict[str, Any]", yaml.safe_load(source_text))
+    parsed["instance"] = spec.name
+    synth_text = yaml.safe_dump(
+        parsed, sort_keys=False, default_flow_style=False, width=120,
+    )
+    synth_path.write_text(synth_text)
+    return synth_path
 
 
 def _write_cell_manifest(spec: VariantSpec, run_dir: Path) -> None:
@@ -1911,17 +1940,12 @@ def _run_one_variant(
     # happened to default to.
     l2_yaml = _resolve_l2_yaml_for_spec(spec, run_dir)
     variant_env[QS_GEN_TEST_L2_INSTANCE.name] = str(l2_yaml)
-
-    # m.4.f (B) — aw cells deploy QS resources for real. Sister cells
-    # (e.g., sp_pg_aw + sp_or_aw) share the same L2 instance prefix
-    # by default and would collide on resource IDs at deploy time.
-    # Override cfg.l2_instance_prefix to spec.name so each aw cell
-    # gets a unique QS resource namespace (e.g., qs-gen-sp_pg_aw-...).
-    # All in-tree callers of `with_l2_instance_prefix` already guard
-    # `if cfg.l2_instance_prefix is None`, so the env-baked prefix
-    # survives downstream cfg threading.
-    if spec.target == "aw":
-        variant_env[QS_GEN_L2_INSTANCE_PREFIX.name] = spec.name
+    # m.4.f — the synthesized yaml's `instance` field IS spec.name,
+    # so cfg.with_l2_instance_prefix(instance.instance) downstream
+    # produces per-cell-unique QS resource IDs naturally. The
+    # explicit QS_GEN_L2_INSTANCE_PREFIX env override is no longer
+    # set by the runner (the env var stays in env_keys/cfg as a
+    # general-purpose escape hatch, just no longer needed here).
 
     if variant_env:
         for key, val in variant_env.items():
