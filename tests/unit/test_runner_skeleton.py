@@ -1644,6 +1644,69 @@ def test_skippable_layers_are_unit_and_db_only() -> None:
     assert runner.SKIPPABLE_LAYERS == ("unit", "db")
 
 
+def test_cmd_up_to_skip_cheap_short_circuits_cached_layer(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """j.8 — `--skip-cheap` + cached green for current SHA → dispatch_layer
+    is NOT called for the cached layer. This is the integration test for
+    j.8: the helpers (write/is_cached) have unit coverage above; this proves
+    the chain actually consumes the cache."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "abc1234")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
+    monkeypatch.delenv(QS_GEN_RUNNER_YES.name, raising=False)
+
+    runner.write_cache_marker("unit", duration_seconds=1.0, variant="sp_pg_lo")
+
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "setup_variant", return_value=({}, None)),
+        patch.object(runner, "seed_variant"),
+        patch.object(runner, "teardown_variant"),
+    ):
+        code = runner.main(["up_to=db", "--variants=sp_pg_lo", "--skip-cheap"])
+    assert code == runner.EXIT_SUCCESS
+    # unit was cached → not dispatched. db was not cached → dispatched.
+    assert "unit" not in dispatched
+    assert "db" in dispatched
+
+
+def test_cmd_up_to_skip_cheap_no_cache_runs_all_layers(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """j.8 — `--skip-cheap` without a cache marker still runs the layer
+    (degraded gracefully to "no cache → run normally")."""
+    monkeypatch.setattr(runner, "_short_sha", lambda: "abc1234")
+    monkeypatch.setattr(runner, "_is_dirty", lambda: False)
+    monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache_empty")
+    monkeypatch.delenv(QS_GEN_RUNNER_YES.name, raising=False)
+
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "setup_variant", return_value=({}, None)),
+        patch.object(runner, "seed_variant"),
+        patch.object(runner, "teardown_variant"),
+    ):
+        code = runner.main(["up_to=db", "--variants=sp_pg_lo", "--skip-cheap"])
+    assert code == runner.EXIT_SUCCESS
+    assert "unit" in dispatched
+    assert "db" in dispatched
+
+
 # Y.2.gate.m.2 — variant axis (3-axis matrix: scenario × dialect × target).
 
 
