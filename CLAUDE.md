@@ -80,7 +80,8 @@ quicksight-gen audit verify report.pdf -c config.yaml   # recompute + compare pr
 ./run_tests.sh up_to=db --scenarios=fuzz:5 --dialects=pg --targets=lo    # 5 random fuzz seeds × pg × lo
 ./run_tests.sh up_to=app2 --variants=sp_pg_lo              # triage: pin a single cell (mutex w/ sub-flags)
 ./run_tests.sh up_to=db --variants=f12345_pg_lo            # repro a fuzz failure by seed (m.3)
-./run_tests.sh up_to=db --parallel=4                       # pytest-xdist within layer
+./run_tests.sh up_to=db --parallel=4                       # pytest-xdist N=4 (default = -n auto)
+./run_tests.sh up_to=browser --only=test_drift             # narrow every layer's pytest -k <expr>; chain still runs through deploy
 ./run_tests.sh up_to=db --skip-cheap                       # skip unit if cached green for current SHA
 ./run_tests.sh sweep                                       # dry-run cleanup of orphan AWS resources
 ./run_tests.sh sweep --yes                                 # actual cleanup

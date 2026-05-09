@@ -2490,7 +2490,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         metavar="N",
-        help="within-variant pytest-xdist worker count (default 1 = serial). Mirrors ./run_e2e.sh --parallel.",
+        help="within-variant pytest-xdist worker count. Default = `-n auto` (= cpu_count); pin via `--parallel=N` to override.",
     )
     # m.2.a — 3-axis matrix sub-flags. All None → compose_matrix returns full
     # 13-cell default. Any specified → cross-product narrowing (variant.compose_matrix).
