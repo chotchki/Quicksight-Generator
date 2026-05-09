@@ -461,8 +461,10 @@ def _layer_command(
         ]
         if opts.only:
             cmd += ["-k", opts.only]
-        if opts.parallel > 1:
-            cmd += ["-n", str(opts.parallel)]
+        # j.6 — within-layer pytest-xdist defaults to "auto" (= cpu_count
+        # workers). Operator can pin via --parallel=N (e.g., --parallel=1
+        # for serial debug). Same pattern as api/browser layers.
+        cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "auto"]
         return (cmd, env_addl)
     if layer == "db":
         # 3a — DB SQL smoke (parametrized over 37 datasets). Behind QS_GEN_E2E=1.
@@ -471,8 +473,8 @@ def _layer_command(
         cmd = [str(_VENV_BIN / "pytest"), "tests/e2e/test_dataset_sql_smoke.py", "-q"]
         if opts.only:
             cmd += ["-k", opts.only]
-        if opts.parallel > 1:
-            cmd += ["-n", str(opts.parallel)]
+        # j.6 — see unit layer comment.
+        cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "auto"]
         return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
     if layer == "app2":
         # b.3.impl.layer — App2 e2e (HTMX dialect, Playwright WebKit
@@ -493,8 +495,8 @@ def _layer_command(
         ]
         if opts.only:
             cmd += ["-k", opts.only]
-        if opts.parallel > 1:
-            cmd += ["-n", str(opts.parallel)]
+        # j.6 — see unit layer comment.
+        cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "auto"]
         return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
     if layer == "deploy":
         # Y.2.gate.c.5.deploy — `quicksight-gen json apply --execute` against

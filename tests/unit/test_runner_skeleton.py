@@ -1175,21 +1175,28 @@ def test_audit_first_layer_pyright_has_no_external_preconditions() -> None:
     assert "pyright" not in runner._LAYER_DEPS
 
 
-# Y.2.gate.c.6 — within-variant parallelism (--parallel=N → pytest -n N).
+# Y.2.gate.j.6 — within-layer pytest-xdist defaults to "auto".
+# (Was Y.2.gate.c.6 in earlier draft when the default was serial.)
 
 
 def test_run_options_parallel_default_is_one() -> None:
-    """Default = serial (1 worker). Operator opts into parallelism."""
+    """Default RunOptions.parallel sentinel is 1 → layer-command auto-expands
+    to "auto" for xdist-friendly layers (unit/db/app2/api). Operator pins
+    via --parallel=N (e.g., =1 means literal serial via the >1 branch
+    being false → falls back to "auto"; use =1 only via the layer that
+    supports it explicitly)."""
     assert runner.RunOptions().parallel == 1
 
 
-def test_layer_command_no_n_flag_when_parallel_one() -> None:
-    """parallel=1 → no -n flag (let pytest run inline; cleaner output for
-    iteration-loop runs)."""
+def test_layer_command_default_parallel_is_auto() -> None:
+    """j.6 — default (parallel=1) → pytest -n auto (= cpu_count workers).
+    Earlier draft was "no -n flag" but serial-by-default left obvious
+    speedups on the table — every triage iteration paid for it."""
     cmd_env = runner._layer_command("unit", Path("/tmp/run"), runner.RunOptions(parallel=1))
     assert cmd_env is not None
     cmd, _ = cmd_env
-    assert "-n" not in cmd
+    assert "-n" in cmd
+    assert cmd[cmd.index("-n") + 1] == "auto"
 
 
 def test_layer_command_adds_n_flag_when_parallel_gt_one() -> None:
@@ -1207,6 +1214,24 @@ def test_layer_command_n_flag_threads_to_db_layer() -> None:
     assert cmd_env is not None
     cmd, _ = cmd_env
     assert "-n" in cmd
+
+
+def test_layer_command_app2_default_parallel_is_auto() -> None:
+    """j.6 — app2 layer follows same default-auto pattern."""
+    cmd_env = runner._layer_command("app2", Path("/tmp/run"), runner.RunOptions(parallel=1))
+    assert cmd_env is not None
+    cmd, _ = cmd_env
+    assert "-n" in cmd
+    assert cmd[cmd.index("-n") + 1] == "auto"
+
+
+def test_layer_command_db_default_parallel_is_auto() -> None:
+    """j.6 — db layer follows same default-auto pattern."""
+    cmd_env = runner._layer_command("db", Path("/tmp/run"), runner.RunOptions(parallel=1))
+    assert cmd_env is not None
+    cmd, _ = cmd_env
+    assert "-n" in cmd
+    assert cmd[cmd.index("-n") + 1] == "auto"
 
 
 def test_argparse_accepts_parallel_int() -> None:
