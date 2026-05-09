@@ -2703,3 +2703,128 @@ def test_derive_qs_user_arn_boto3_errors_propagate(monkeypatch: Any) -> None:
     # Operator-facing surface: the original boto3 message must survive
     # the propagation so `_run_one_variant`'s log-line shows what failed.
     assert "ExpiredToken" in str(exc_info.value)
+
+
+# Y.2.gate.m.3 — fuzz scenario wiring tests. random_l2_yaml lives in
+# tests/l2/fuzz.py and is byte-deterministic per seed (see
+# test_l2_fuzz.py::test_fuzzer_is_byte_deterministic). The runner uses
+# it to synthesize per-cell L2 yaml under runs/<id>/<variant>/_synth_l2.yaml
+# and writes a per-cell manifest.json so operators can reproduce a
+# failed fuzz cell with `--variants=f<seed>_<di>_<ta>`.
+
+
+def test_resolve_l2_yaml_for_spec_named_returns_bundled_fixture(tmp_path: Path) -> None:
+    """`sp` / `sq` map to the package's bundled L2 fixtures — no
+    synthesis, no run_dir write. run_dir is unused on this path."""
+    sp_path = runner._resolve_l2_yaml_for_spec(_spec_pg_aw(), tmp_path)
+    assert sp_path.name == "spec_example.yaml"
+    assert "_l2_fixtures" in str(sp_path)
+    # Synthesis didn't happen — no _synth_l2.yaml under run_dir.
+    assert not (tmp_path / "_synth_l2.yaml").exists()
+
+
+def test_resolve_l2_yaml_for_spec_us_returns_user_yaml(tmp_path: Path) -> None:
+    """`us` returns the operator-supplied yaml verbatim."""
+    user_yaml = tmp_path / "my_custom.yaml"
+    user_yaml.write_text("instance: custom\nprefix: x\n")
+    spec = VariantSpec(
+        ScenarioCode("us"), "pg", "lo", user_yaml=user_yaml,
+    )
+    resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
+    assert resolved == user_yaml
+
+
+def test_resolve_l2_yaml_for_spec_fuzz_synthesizes_to_run_dir(
+    tmp_path: Path,
+) -> None:
+    """m.3.a — fuzz scenario synthesizes via random_l2_yaml(seed) and
+    writes to run_dir/_synth_l2.yaml. Path returned points there."""
+    spec = VariantSpec(
+        ScenarioCode("f42"), "pg", "lo", fuzz_seed=42,
+    )
+    resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
+    assert resolved == tmp_path / "_synth_l2.yaml"
+    # Synthesized YAML is non-empty + carries the fuzz_seed_ instance
+    # marker (random_l2_yaml's contract — see test_l2_fuzz.py).
+    # The fuzzer zero-pads the suffix; check the prefix only.
+    text = resolved.read_text()
+    assert text.strip(), "synthesized yaml is empty"
+    assert "fuzz_seed_" in text
+
+
+def test_resolve_l2_yaml_for_spec_fuzz_is_byte_deterministic(
+    tmp_path: Path,
+) -> None:
+    """m.3.d pinned-seed determinism — same seed via the runner path
+    produces byte-identical synthesized yaml across two calls. Locks
+    the contract that `--variants=f<seed>_<di>_<ta>` is a real one-line
+    repro of a failed fuzz cell."""
+    spec = VariantSpec(
+        ScenarioCode("f12345"), "pg", "lo", fuzz_seed=12345,
+    )
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+    path_a = runner._resolve_l2_yaml_for_spec(spec, dir_a)
+    path_b = runner._resolve_l2_yaml_for_spec(spec, dir_b)
+    assert path_a.read_bytes() == path_b.read_bytes()
+
+
+def test_write_cell_manifest_includes_repro_hint_for_fuzz(
+    tmp_path: Path,
+) -> None:
+    """m.3.c — fuzz cells get a repro_hint in their manifest so the
+    operator can pin the failing cell with one CLI invocation."""
+    spec = VariantSpec(
+        ScenarioCode("f7"), "pg", "lo", fuzz_seed=7,
+    )
+    runner._write_cell_manifest(spec, tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["name"] == "f7_pg_lo"
+    assert manifest["scenario"] == "f7"
+    assert manifest["dialect"] == "pg"
+    assert manifest["target"] == "lo"
+    assert manifest["fuzz_seed"] == 7
+    assert manifest["repro_hint"] == "--variants=f7_pg_lo"
+
+
+def test_write_cell_manifest_named_scenario_no_repro_hint(
+    tmp_path: Path,
+) -> None:
+    """Named scenarios (sp/sq) don't carry a repro_hint — the manifest
+    is still written for shape consistency, but only fuzz cells benefit
+    from the explicit `--variants=` pointer."""
+    runner._write_cell_manifest(_spec_pg_aw(), tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["name"] == "sp_pg_aw"
+    assert manifest["fuzz_seed"] is None
+    assert "repro_hint" not in manifest
+
+
+def test_full_matrix_includes_three_fuzz_cells_with_shared_seed() -> None:
+    """m.3.b — `expand_full()` produces 3 fuzz cells (one per local
+    dialect) that share a single seed for cross-dialect coverage on
+    identical synthesized L2 topology."""
+    from quicksight_gen.common.variant import expand_full
+    cells = expand_full()
+    fuzz_cells = [c for c in cells if c.scenario.startswith("f")]
+    assert len(fuzz_cells) == 3
+    # All three share the same seed.
+    seeds = {c.fuzz_seed for c in fuzz_cells}
+    assert len(seeds) == 1
+    # And they cover all 3 local dialects.
+    dialects = {c.dialect for c in fuzz_cells}
+    assert dialects == {"pg", "or", "sl"}
+    assert all(c.target == "lo" for c in fuzz_cells)
+
+
+def test_full_matrix_fuzz_seed_is_random_across_calls() -> None:
+    """m.3.b random-by-default — two `expand_full()` calls produce
+    different fuzz seeds with overwhelming probability (collision
+    probability is ~1/2^32). Locks the contract that ``full`` doesn't
+    repeat the same cell-set across runs."""
+    from quicksight_gen.common.variant import expand_full
+    cells_a = expand_full()
+    cells_b = expand_full()
+    seed_a = next(c.fuzz_seed for c in cells_a if c.scenario.startswith("f"))
+    seed_b = next(c.fuzz_seed for c in cells_b if c.scenario.startswith("f"))
+    assert seed_a != seed_b

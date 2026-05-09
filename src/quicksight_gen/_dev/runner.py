@@ -1613,15 +1613,37 @@ def prune_old_runs(retain: int = RUNS_RETAIN_N, runs_dir: Path | None = None) ->
 
     Returns the list of deleted paths (for tests / future telemetry).
     Idempotent: missing runs_dir → no-op; <retain runs → no-op.
+
+    Concurrency-safe: when multi-cell fan-out runs the unit suite in
+    parallel and each unit subprocess itself calls `runner.main(...)`
+    (e.g., `test_up_to_creates_run_dir`), sibling workers can race on
+    the same `runs/` dir. ``shutil.rmtree(old)`` could see a path the
+    sibling already deleted; FileNotFoundError is benign — the work
+    is done. ``stat()`` failures during the listing pass are similarly
+    benign (entry vanished mid-iter); skip and move on.
     """
     target = runs_dir if runs_dir is not None else RUNS_DIR
     if not target.exists():
         return []
-    candidates = [p for p in target.iterdir() if p.is_dir() and _RUN_ID_PATTERN.match(p.name)]
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates: list[Path] = []
+    for p in target.iterdir():
+        if not (p.is_dir() and _RUN_ID_PATTERN.match(p.name)):
+            continue
+        try:
+            p.stat()
+        except FileNotFoundError:
+            continue  # sibling worker deleted it between iterdir() and stat()
+        candidates.append(p)
+    candidates.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
     to_delete = candidates[retain:]
     for old in to_delete:
-        shutil.rmtree(old)
+        # ignore_errors=True: best-effort cleanup. With multi-cell
+        # parallel fan-out (and unit tests like test_up_to_creates_run_dir
+        # that themselves call runner.main), sibling workers can race
+        # on the same runs/ dir — `os.rmdir`/`os.unlink` inside rmtree
+        # will see paths another worker just deleted. Any partial leftovers
+        # get picked up by the next prune call.
+        shutil.rmtree(old, ignore_errors=True)
     return to_delete
 
 
@@ -1665,18 +1687,49 @@ def _options_from_args(args: argparse.Namespace) -> RunOptions:
 # m.2.b — bundled L2 fixture lookup. ``sp`` / ``sq`` resolve to the
 # package's bundled YAMLs (the same files ``docs apply --portable``
 # uses); operators don't need ``tests/`` checked out. ``us`` carries
-# ``spec.user_yaml`` directly. ``f<n>`` is m.3 territory — fail loud.
+# ``spec.user_yaml`` directly. ``f<n>`` is m.3 territory — synthesized
+# at runtime via ``random_l2_yaml(seed)`` and written to the per-cell
+# ``run_dir`` for inspection + reproduction.
 _BUNDLED_L2_DIR: Final = REPO_ROOT / "src" / "quicksight_gen" / "_l2_fixtures"
 _NAMED_L2_FIXTURES: Final[dict[str, str]] = {
     "sp": "spec_example.yaml",
     "sq": "sasquatch_pr.yaml",
 }
 
+# m.3.a — fuzz module lives under tests/l2/. The runner imports it via
+# sys.path injection (matches the cmd_sweep pattern for tests/e2e/
+# helpers). Lifting random_l2_yaml into common/l2/ is a follow-up; for
+# now the runner only ever runs from a source tree, not from a wheel.
+_FUZZ_MODULE_DIR: Final = REPO_ROOT / "tests" / "l2"
 
-def _resolve_l2_yaml_for_spec(spec: VariantSpec) -> Path:
+
+def _load_random_l2_yaml() -> Callable[[int], str]:
+    """Lazy-import ``random_l2_yaml`` from ``tests/l2/fuzz.py``.
+
+    Lazy because importing ``tests.l2.fuzz`` pulls in PyYAML + the
+    L2 primitives module — keeps the runner's cold-start light when
+    no fuzz cells are in the matrix. Same sys.path injection shape
+    as ``cmd_sweep``'s ``_harness_cleanup`` import.
+    """
+    import importlib  # noqa: PLC0415 — lazy
+    sys.path.insert(0, str(_FUZZ_MODULE_DIR.parent))
+    try:
+        fuzz_mod = importlib.import_module("l2.fuzz")
+    finally:
+        sys.path.pop(0)
+    return cast("Callable[[int], str]", fuzz_mod.random_l2_yaml)
+
+
+def _resolve_l2_yaml_for_spec(spec: VariantSpec, run_dir: Path) -> Path:
     """Map ``spec.scenario`` → on-disk L2 YAML path. Threaded into
     each variant's subprocess env via ``QS_GEN_TEST_L2_INSTANCE``
     so the seed CLI + downstream e2e tests pick the right instance.
+
+    Fuzz scenarios (``f<n>``) synthesize a yaml via
+    ``random_l2_yaml(spec.fuzz_seed)`` and write it to
+    ``run_dir / "_synth_l2.yaml"``. Determinism: same seed → same
+    yaml byte-for-byte (locked by ``test_fuzzer_is_byte_deterministic``).
+    Operators reproduce a failed fuzz cell with ``--variants=f<seed>_<di>_<ta>``.
     """
     if spec.scenario in _NAMED_L2_FIXTURES:
         return _BUNDLED_L2_DIR / _NAMED_L2_FIXTURES[spec.scenario]
@@ -1685,12 +1738,39 @@ def _resolve_l2_yaml_for_spec(spec: VariantSpec) -> Path:
         assert spec.user_yaml is not None
         return spec.user_yaml
     if spec.scenario.startswith("f"):
-        raise NotImplementedError(
-            f"Fuzz scenario {spec.scenario!r} not yet wired — Y.2.gate.m.3 "
-            f"will land random_l2_yaml(seed) synthesis. For now operators "
-            f"can pin sp/sq via --scenarios=sp,sq."
-        )
+        # __post_init__ guarantees fuzz_seed is set + matches scenario.
+        assert spec.fuzz_seed is not None
+        random_l2_yaml = _load_random_l2_yaml()
+        synth_yaml_text = random_l2_yaml(spec.fuzz_seed)
+        synth_path = run_dir / "_synth_l2.yaml"
+        synth_path.parent.mkdir(parents=True, exist_ok=True)
+        synth_path.write_text(synth_yaml_text)
+        return synth_path
     raise ValueError(f"unknown scenario code {spec.scenario!r}")
+
+
+def _write_cell_manifest(spec: VariantSpec, run_dir: Path) -> None:
+    """m.3.c — write per-cell manifest.json with spec details + repro hint.
+
+    Captures the seed value for fuzz cells so the operator can pin a
+    failing run with ``--variants=f<seed>_<di>_<ta>`` for byte-identical
+    reproduction. Written for ALL cells (not just fuzz) so the run dir's
+    shape is consistent + future tooling can rely on the file existing.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, Any] = {
+        "name": spec.name,
+        "scenario": spec.scenario,
+        "dialect": spec.dialect,
+        "target": spec.target,
+        "fuzz_seed": spec.fuzz_seed,
+        "user_yaml": str(spec.user_yaml) if spec.user_yaml is not None else None,
+    }
+    if spec.fuzz_seed is not None:
+        manifest["repro_hint"] = f"--variants={spec.name}"
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+    )
 
 
 def _run_one_variant(
@@ -1776,15 +1856,18 @@ def _run_one_variant(
                     )
                     return spec, [], EXIT_NEEDS_OPERATOR
 
-    # m.2.b — per-spec L2 instance injection. Scenario code (sp/sq/us)
-    # determines which YAML the seed CLI + downstream e2e tests use.
-    # Overrides cfg.default_l2_instance — the matrix axis is the
-    # source of truth, not whatever the cfg happened to default to.
-    try:
-        l2_yaml = _resolve_l2_yaml_for_spec(spec)
-    except NotImplementedError as exc:
-        print(f"{terminal_prefix}runner: {exc}", file=sys.stderr)
-        return spec, [], EXIT_NEEDS_OPERATOR
+    # m.3.c — per-cell manifest for one-line repro of fuzz failures.
+    # Written before any subprocess fires so even a fast-fail cell
+    # leaves a manifest behind for triage.
+    _write_cell_manifest(spec, run_dir)
+
+    # m.2.b + m.3.a — per-spec L2 instance injection. Scenario code
+    # (sp/sq/us) determines which YAML the seed CLI + downstream e2e
+    # tests use; fuzz scenarios (f<n>) synthesize per-cell into
+    # run_dir/_synth_l2.yaml. Overrides cfg.default_l2_instance —
+    # the matrix axis is the source of truth, not whatever the cfg
+    # happened to default to.
+    l2_yaml = _resolve_l2_yaml_for_spec(spec, run_dir)
     variant_env[QS_GEN_TEST_L2_INSTANCE.name] = str(l2_yaml)
 
     if variant_env:
