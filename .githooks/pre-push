@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Y.2.gate.k.5 — pre-push hook: catch obvious breakage before push.
+#
+# Runs the fast chain (~30s on local-pg) so a typo / pyright violation /
+# unit-test regression / dataset-SQL bug surfaces locally before
+# burning a CI cycle. Operator opts in once via:
+#
+#     git config core.hooksPath .githooks
+#
+# Skippable per-push via `git push --no-verify` (CLAUDE.md discourages
+# this — investigate the failure rather than bypass).
+#
+# Why local-pg only: PR-quick mode (gate.k.3). The full matrix runs
+# in CI; the hook is a "didn't I forget to commit something" check,
+# not a release gate.
+
+set -euo pipefail
+
+# Skip on branches the runner itself can't act on (detached HEAD,
+# initial empty repo, etc). git rev-parse fails loud → skip.
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RUN_TESTS="${REPO_ROOT}/run_tests.sh"
+
+# If the runner shim isn't in this branch (e.g. operator pushing a
+# legacy branch), no-op rather than failing.
+if [ ! -x "${RUN_TESTS}" ]; then
+    exit 0
+fi
+
+echo "[pre-push] Running fast chain (up_to=db --dialects=pg --targets=lo)..."
+echo "[pre-push] Skip with 'git push --no-verify' (discouraged — fix the failure)."
+echo ""
+
+cd "${REPO_ROOT}"
+exec "${RUN_TESTS}" up_to=db --dialects=pg --targets=lo

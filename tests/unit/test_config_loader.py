@@ -15,6 +15,12 @@ import pytest
 import yaml
 
 from quicksight_gen.common.config import load_config
+from quicksight_gen.common.env_keys import (
+    QS_GEN_AWS_ACCOUNT_ID,
+    QS_GEN_AWS_REGION,
+    QS_GEN_DATASOURCE_ARN,
+    QS_GEN_DEMO_DATABASE_URL,
+)
 
 
 def _write_yaml(tmp_path: Path, body: dict) -> Path:
@@ -201,9 +207,9 @@ def test_missing_aws_account_id_fails_loud_with_env_var_hint(
     Clear the env vars so the loader's env-fallback path can't quietly
     fill them — we're testing the missing-everything case.
     """
-    monkeypatch.delenv("QS_GEN_AWS_ACCOUNT_ID", raising=False)
-    monkeypatch.delenv("QS_GEN_AWS_REGION", raising=False)
-    monkeypatch.delenv("QS_GEN_DATASOURCE_ARN", raising=False)
+    monkeypatch.delenv(QS_GEN_AWS_ACCOUNT_ID.name, raising=False)
+    monkeypatch.delenv(QS_GEN_AWS_REGION.name, raising=False)
+    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
 
     p = _write_yaml(tmp_path, {
         # aws_account_id deliberately absent — also missing from env.
@@ -232,8 +238,8 @@ def test_missing_datasource_arn_without_demo_url_fails_loud(
     """gate.h.5 — datasource_arn is required UNLESS demo_database_url
     is set (the latter auto-derives the former). Without either, fail
     loud with the missing key + env-var fallback."""
-    monkeypatch.delenv("QS_GEN_DATASOURCE_ARN", raising=False)
-    monkeypatch.delenv("QS_GEN_DEMO_DATABASE_URL", raising=False)
+    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
+    monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
 
     p = _write_yaml(tmp_path, {
         "aws_account_id": "111122223333",
@@ -254,7 +260,7 @@ def test_demo_database_url_satisfies_datasource_arn_requirement(
     is auto-derived from it — no loud-fail. Locks the contract that
     the missing-cfg check is necessity-aware, not just a blanket key
     list."""
-    monkeypatch.delenv("QS_GEN_DATASOURCE_ARN", raising=False)
+    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
     p = _write_yaml(tmp_path, {
         "aws_account_id": "111122223333",
         "aws_region": "us-east-1",

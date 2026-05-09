@@ -1,5 +1,39 @@
 # Release Notes
 
+## v8.8.0a14 — Y.2.gate.h hotfix + Y.2.gate.k.5/k.7
+
+Fourteenth alpha. **Re-publishes a13's gate.h closeout** (a13 + a12 both
+failed to publish to PyPI: a12's pipeline was concurrency-cancelled
+when a13's tag pushed; a13 itself failed at the `test_typing_smells`
+lint gate because the new h.5 tests in `tests/unit/test_config_loader.py`
+called `monkeypatch.delenv("QS_GEN_AWS_ACCOUNT_ID", ...)` with bare
+string literals instead of going through the typed EnvVar registry).
+
+### Hotfix
+
+- `tests/unit/test_config_loader.py`: 6 `monkeypatch.delenv()` calls
+  now reference `QS_GEN_AWS_ACCOUNT_ID.name` etc. via imports from
+  `quicksight_gen.common.env_keys` — satisfies the AST lint that
+  catches EnvVar-registry bypass.
+
+### Y.2.gate.k.5 — pre-push git hook
+
+`.githooks/pre-push` runs `./run_tests.sh up_to=db --dialects=pg
+--targets=lo` (~30s on local-pg) before any push goes through.
+Operator opts in once via `git config core.hooksPath .githooks`;
+skippable per-push via `git push --no-verify` (discouraged). Hook
+no-ops on detached HEAD or branches missing the runner so it
+doesn't break legacy-branch pushes.
+
+### Y.2.gate.k.7 — failure surface parity (documentation)
+
+CLAUDE.md gains a `Test sequencing + git hooks` section locking
+the contract that CI's failure shape matches the local runner's:
+same `runs/<run-id>/<variant>/<layer>/{cmd,stdout,stderr,timings}`
+artifact paths, same exit codes (`EXIT_NEEDS_OPERATOR=2` / `EXIT_FAILURE=1`),
+same per-layer perf dump (`db-perf/top-queries.md`). No "decode the
+GH log" step — the artifact set IS the local triage shape.
+
 ## v8.8.0a13 — Y.2.gate.h: cred auto-discovery audit + close-out
 
 Thirteenth alpha. **Closes Y.2.gate.h.** Audit found h.2-h.5 implementations

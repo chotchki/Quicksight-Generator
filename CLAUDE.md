@@ -141,6 +141,28 @@ When `aws_profile` is set:
 
 **Loud failure on missing config (h.5):** `load_config` raises `ValueError("Missing required configuration: ...")` with the missing field names AND the env-var fallbacks (`QS_GEN_AWS_ACCOUNT_ID`, etc.). `connect_demo_db` raises with "set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL." Runner catches both → `EXIT_NEEDS_OPERATOR=2` with the message bubbled to stderr. Probes (`probe_dependencies` for AWS / Docker / cfg-load) fire pre-dispatch and short-circuit the chain with the same exit code. No silent skips.
 
+### Test sequencing + git hooks (`Y.2.gate.k.5`+`k.7`)
+
+**Always invoke `./run_tests.sh up_to=<layer>`** for the layer you care about. The chain runner enforces `unit → db → app2 → deploy → api → browser` ordering — invoking `pytest tests/e2e/` directly skips earlier gates and leaves layer-1 / layer-2 violations to surface at deploy time. The runner is the canonical entry point.
+
+**Pre-push git hook (`k.5`).** Operator opts in once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Then every `git push` runs `./run_tests.sh up_to=db --dialects=pg --targets=lo` (~30s on local-pg) before the push goes through. Skippable per-push via `git push --no-verify` — discouraged; investigate the failure rather than bypass. The hook no-ops on detached HEAD or branches missing `run_tests.sh` so it doesn't break legacy-branch pushes.
+
+**Failure surface parity (`k.7`).** When CI fails, the message + artifact set matches the runner's local output shape:
+
+- **Per-layer artifacts:** `runs/<run-id>/<variant>/<layer>/{cmd.json,stdout.log,stderr.log,timings.json}` — same paths locally and in CI (the runner uses `RUNS_DIR=runs/` regardless of context).
+- **Top-queries dump:** `runs/<run-id>/<variant>/db-perf/top-queries.md` per cell, auto-emitted by the runner (gate.f.4). CI uploads `runs/` as a workflow artifact for triage.
+- **Coverage:** `.coverage.<py-version>` per matrix entry, combined into `coverage.md` GHA Step Summary (W.8b).
+- **Timings:** `timings.json` uploaded as workflow artifact (gate.k.4); cross-CI-run drift comparable.
+- **Failure shape:** `RuntimeError` / `ValueError` from cfg / probe / boto3 paths surface as `EXIT_NEEDS_OPERATOR=2` with the actionable message bubbled to stderr; pytest failures surface as `EXIT_FAILURE=1` with the failed test names + traceback. Same exit codes locally and in CI.
+
+No "decode the GH log" step — the artifact set IS the local triage shape, just packaged in GH artifacts.
+
 ## Project Structure
 
 ```
