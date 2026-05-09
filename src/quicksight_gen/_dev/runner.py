@@ -1111,20 +1111,28 @@ DB_TOUCHING_LAYERS: Final = ("db", "app2", "deploy", "api", "browser")
 # `app2` (the local-Docker terminal, locked by audit §7.10).
 AWS_TOUCHING_LAYERS: Final = ("deploy", "api", "browser")
 
-# Y.2.gate.j.5 — Oracle container reuse. Stable name + stable password
-# so the adopt path can reconstruct the URL without inspecting the
-# container's randomized testcontainers env. The container is left
-# running across `./run_tests.sh` invocations; operator stops via
-# `docker stop quicksight-test-oracle` (or future `./run_tests.sh down`,
-# Y.2.gate.l.2). PG containers stay ephemeral — their cold-start is
-# ~5s and the cleanup hygiene wins outweigh the reuse savings there.
-ORACLE_REUSE_CONTAINER_NAME: Final = "quicksight-test-oracle"
+# Y.2.gate.j.5 — Oracle container reuse. **Per-cell** name (not single
+# shared) so two Oracle cells (e.g., sp_or_lo + sq_or_lo) running in
+# parallel don't collide on `containers.create(name=...)` with a 409
+# Conflict. Each cell's container persists across `./run_tests.sh`
+# invocations under its own name; operator stops via
+# `docker stop $(docker ps -q --filter name=quicksight-test-oracle-)`
+# (or future `./run_tests.sh down`, Y.2.gate.l.2). PG containers stay
+# ephemeral — their ~5s cold-start doesn't justify the cleanup-hygiene
+# cost, and per-cell naming would just litter the daemon.
+ORACLE_REUSE_CONTAINER_PREFIX: Final = "quicksight-test-oracle-"
 # Pinned password matches the testcontainers `OracleDbContainer`
-# default in the gvenzl/oracle-free image when `oracle_password` is
-# explicitly set. Without pinning, testcontainers randomizes per
-# invocation (`hex(randbits(24))`) and the adopt path can't predict
-# the URL on subsequent runs.
+# behavior when `oracle_password` is explicitly set. Without pinning,
+# testcontainers randomizes per invocation (`hex(randbits(24))`) and
+# the adopt path can't predict the URL on subsequent runs.
 ORACLE_REUSE_PASSWORD: Final = "qs-gen-test-pwd-2026"
+
+
+def _oracle_container_name_for(spec: VariantSpec) -> str:
+    """j.5 — per-cell Oracle container name. The cell suffix prevents
+    sibling Oracle cells from racing on docker `create(name=...)`.
+    Same cell across runs → same name → adopt path hits."""
+    return f"{ORACLE_REUSE_CONTAINER_PREFIX}{spec.name}"
 
 
 def cell_chain(spec: VariantSpec, requested_chain: list[str]) -> list[str]:
@@ -1415,7 +1423,7 @@ def setup_variant(spec: VariantSpec) -> tuple[dict[str, str], object | None]:
         # ``common/db.py`` already accepts the SQLAlchemy-style
         # ``oracle+oracledb://...`` form.
         url, handle = _get_or_start_oracle_container(
-            ORACLE_REUSE_CONTAINER_NAME, ORACLE_REUSE_PASSWORD,
+            _oracle_container_name_for(spec), ORACLE_REUSE_PASSWORD,
         )
         return {QS_GEN_DEMO_DATABASE_URL.name: url}, handle
     if spec.dialect == "sl":
@@ -2294,7 +2302,28 @@ def cmd_up_to(args: argparse.Namespace) -> int:
                 )
                 for s in specs
             ]
-            return await asyncio.gather(*tasks)
+            # m.5.c.fix — `return_exceptions=True` so a setup_variant /
+            # teardown_variant raise in one cell doesn't cancel sibling
+            # cells (m.4 "soft fast-fail per cell" promise). Caller
+            # converts exceptions to a failed `LayerResult` entry below.
+            raw = await asyncio.gather(*tasks, return_exceptions=True)
+            results: list[tuple[VariantSpec, list[LayerResult], int]] = []
+            for spec, item in zip(specs, raw, strict=True):
+                if isinstance(item, BaseException):
+                    print(
+                        f"[{spec.name}] runner: cell crashed before any layer ran "
+                        f"({type(item).__name__}: {item})",
+                        file=sys.stderr,
+                    )
+                    crash = LayerResult(
+                        layer="setup",
+                        exit_code=EXIT_FAILURE,
+                        duration_seconds=0.0,
+                    )
+                    results.append((spec, [crash], EXIT_FAILURE))
+                else:
+                    results.append(item)
+            return results
 
         per_variant_results = asyncio.run(_gather())
 

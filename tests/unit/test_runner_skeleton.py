@@ -1660,13 +1660,25 @@ def test_persistent_container_handle_stop_is_no_op() -> None:
 def test_oracle_reuse_constants_are_stable() -> None:
     """j.5 — adopt path reconstructs the URL from the container's host
     port + these constants. If they change, every operator's existing
-    `quicksight-test-oracle` container becomes unadoptable (would
-    surface as auth failure on next run). The names are part of the
-    operator-facing contract — pin them."""
-    assert runner.ORACLE_REUSE_CONTAINER_NAME == "quicksight-test-oracle"
+    `quicksight-test-oracle-<cell>` container becomes unadoptable
+    (would surface as auth failure on next run). The names are part of
+    the operator-facing contract — pin them."""
+    assert runner.ORACLE_REUSE_CONTAINER_PREFIX == "quicksight-test-oracle-"
     # Password value isn't sensitive (local-only test fixture) but its
     # stability matters — see class docstring above.
     assert runner.ORACLE_REUSE_PASSWORD == "qs-gen-test-pwd-2026"
+
+
+def test_oracle_container_name_is_per_cell() -> None:
+    """j.5.fix — distinct cells get distinct container names. Two
+    Oracle cells (e.g., sp_or_lo + sq_or_lo) would collide on
+    `containers.create(name=...)` with a 409 Conflict if they shared
+    the same name. Per-cell suffix solves the parallel-create race."""
+    sp_spec = VariantSpec(scenario="sp", dialect="or", target="lo")
+    sq_spec = VariantSpec(scenario="sq", dialect="or", target="lo")
+    assert runner._oracle_container_name_for(sp_spec) == "quicksight-test-oracle-sp_or_lo"
+    assert runner._oracle_container_name_for(sq_spec) == "quicksight-test-oracle-sq_or_lo"
+    assert runner._oracle_container_name_for(sp_spec) != runner._oracle_container_name_for(sq_spec)
 
 
 def _install_fake_docker(
