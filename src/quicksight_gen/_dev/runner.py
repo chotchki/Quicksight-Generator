@@ -52,6 +52,7 @@ from quicksight_gen.common.env_keys import (
     QS_GEN_DEMO_DATABASE_URL,
     QS_GEN_E2E,
     QS_GEN_FUZZ_SEED,
+    QS_GEN_L2_INSTANCE_PREFIX,
     QS_GEN_LAYER,
     QS_GEN_RUN_DIR,
     QS_GEN_RUNNER_YES,
@@ -1101,6 +1102,34 @@ def is_layer_cached_green(layer: str, *, variant: str = "default") -> bool:
 # (`make_tree_db_fetcher`), so it lives here.
 DB_TOUCHING_LAYERS: Final = ("db", "app2", "deploy", "api", "browser")
 
+# m.4.f — layers that need an AWS-reachable datasource. Lo-target
+# cells seed a localhost container that QuickSight in AWS can't reach;
+# running deploy → api → browser against a localhost-pointed datasource
+# is a guaranteed dead pointer (deploy succeeds, but every dashboard
+# render times out because QS can't query localhost). Cap lo cells at
+# `app2` (the local-Docker terminal, locked by audit §7.10).
+AWS_TOUCHING_LAYERS: Final = ("deploy", "api", "browser")
+
+
+def cell_chain(spec: VariantSpec, requested_chain: list[str]) -> list[str]:
+    """m.4.f — filter the requested chain to layers this cell can run.
+
+    - ``target=aw`` cells run every layer the operator asked for;
+      passes ``requested_chain`` through unchanged.
+    - ``target=lo`` cells drop ``deploy`` / ``api`` / ``browser`` —
+      QuickSight can't reach the localhost container that backs the
+      cell's seeded data, so those layers would deploy a dead-pointer
+      dashboard. The natural lo terminal is ``app2`` (b.3.impl.layer
+      LOCKED that as the local-Docker fast-feedback layer).
+
+    The operator's ``up_to=<layer>`` is the *upper* cap; this function
+    further trims based on what the cell can physically support. Both
+    caps compose: ``up_to=db`` for any cell already excludes app2+.
+    """
+    if spec.target == "aw":
+        return requested_chain
+    return [layer for layer in requested_chain if layer not in AWS_TOUCHING_LAYERS]
+
 
 # m.2.a hard-cut hint — operator's old `--variants=local-pg` shape no
 # longer accepted. Map to the new sub-flag form.
@@ -1802,6 +1831,19 @@ def _run_one_variant(
     cell's return regardless of pass/fail (no exception propagation
     kills sibling cells).
     """
+    # m.4.f — per-cell layer cap. Lo cells naturally terminate at app2
+    # because the deploy/api/browser layers need an AWS-reachable
+    # datasource and lo cells point at localhost containers QS can't
+    # see. Aw cells run whatever the operator asked for.
+    chain = cell_chain(spec, chain)
+    if not chain:
+        print(
+            f"{terminal_prefix}runner: variant={spec.name} skipped — "
+            f"no layers run for this cell (target={spec.target} can't reach "
+            f"the requested chain)",
+        )
+        return spec, [], EXIT_SUCCESS
+
     if spec.target == "lo":
         print(f"{terminal_prefix}runner: variant={spec.name} (spinning up container...)")
     variant_env, variant_handle = setup_variant(spec)
@@ -1869,6 +1911,17 @@ def _run_one_variant(
     # happened to default to.
     l2_yaml = _resolve_l2_yaml_for_spec(spec, run_dir)
     variant_env[QS_GEN_TEST_L2_INSTANCE.name] = str(l2_yaml)
+
+    # m.4.f (B) — aw cells deploy QS resources for real. Sister cells
+    # (e.g., sp_pg_aw + sp_or_aw) share the same L2 instance prefix
+    # by default and would collide on resource IDs at deploy time.
+    # Override cfg.l2_instance_prefix to spec.name so each aw cell
+    # gets a unique QS resource namespace (e.g., qs-gen-sp_pg_aw-...).
+    # All in-tree callers of `with_l2_instance_prefix` already guard
+    # `if cfg.l2_instance_prefix is None`, so the env-baked prefix
+    # survives downstream cfg threading.
+    if spec.target == "aw":
+        variant_env[QS_GEN_L2_INSTANCE_PREFIX.name] = spec.name
 
     if variant_env:
         for key, val in variant_env.items():

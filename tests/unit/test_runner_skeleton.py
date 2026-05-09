@@ -1690,6 +1690,33 @@ def test_setup_variant_aw_target_is_no_op() -> None:
     assert handle is None
 
 
+# Y.2.gate.m.4.f — per-cell layer cap (A) tests.
+
+
+def test_cell_chain_lo_caps_at_app2() -> None:
+    """m.4.f — lo cells drop deploy/api/browser. The local container
+    isn't reachable from QuickSight so dispatching those layers would
+    deploy a dead-pointer dashboard."""
+    chain = ["unit", "db", "app2", "deploy", "api", "browser"]
+    capped = runner.cell_chain(_spec_pg_lo(), chain)
+    assert capped == ["unit", "db", "app2"]
+
+
+def test_cell_chain_aw_passes_through() -> None:
+    """aw cells run every layer the operator asked for — they hit
+    the operator's external Aurora which QS can reach."""
+    chain = ["unit", "db", "app2", "deploy", "api", "browser"]
+    assert runner.cell_chain(_spec_pg_aw(), chain) == chain
+
+
+def test_cell_chain_lo_with_db_only_chain_unaffected() -> None:
+    """When the operator already asked for a chain that doesn't
+    include any AWS-touching layers, the cap is a no-op."""
+    chain = ["unit", "db"]
+    assert runner.cell_chain(_spec_pg_lo(), chain) == ["unit", "db"]
+    assert runner.cell_chain(_spec_sl_lo(), chain) == ["unit", "db"]
+
+
 def test_teardown_variant_no_op_for_none() -> None:
     """Teardown is no-op when handle is None (default variant)."""
     runner.teardown_variant(None)  # must not raise
