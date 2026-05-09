@@ -733,6 +733,7 @@ Calc fields exist in the QS analysis layer because QS could evaluate them in its
     - [ ] **Y.3.f.7 — Live verify locally:** `./run_tests.sh up_to=app2 --variants=sp_or_lo,sq_or_lo,fuzz_or_lo` all green through app2 layer.
     - [ ] **Y.3.f.8 — Aurora verify:** `./run_tests.sh up_to=db --variants=sp_or_aw,sq_or_aw` (m.5.d AW chain unblock signal).
     - [ ] **Y.3.f.9 — Tick PLAN, commit per-substep history kept, cut next alpha if releasing.**
+- [ ] **Y.3.g — SQL builder library spike (post-Y.3.f).** Surface area is starting to argue for one: ~5,500 lines of dataset SQL × 3 dialects, ~40 hand-branched helpers in `common/sql/dialect.py`, hash-locked seeds per dialect, every new feature pays a cross-dialect tax. Y.3.f's case fix is one symptom; Y.3.a-e's calc-field-pushdown will multiply CTE/window-function dialect divergence. **Spike:** pick the gnarliest dataset (Account Network — has CTE + 3 calc fields + JSON path concat) and port via SQLAlchemy Core (and/or sqlglot — compare). Measure: lines emitted, helpers eliminated, hash-lock byte stability across builder-version bumps, integration with App2's `:bindparam` fetcher and QS's `<<$paramName>>` substitution syntax (the QS half is the hard part — no builder targets `<<$>>` natively, would need a post-emit string rewrite layer). **Decide after data:** migrate the rest, stay on strings + helpers, or hybrid (builder for new dataset SQL, leave existing alone). Don't pivot mid-Y.3.f.
 
 ### Y.4 — Test sweep
 
