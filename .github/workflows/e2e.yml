@@ -52,6 +52,10 @@ on:
 permissions:
   id-token: write
   contents: read
+  # gate.l.8 — `cleanup-pg`'s "last one stops the cluster" guard runs
+  # `gh run list`, which needs `actions: read`. Workflow-wide is fine —
+  # it's read-only and the other jobs don't mind.
+  actions: read
 
 jobs:
   # W.1 — auth smoke. First job in the workflow: assume the OIDC role,
@@ -552,12 +556,15 @@ jobs:
   # e2e job succeeded, failed, or was cancelled — but only after, so it
   # never races a still-deploying job.
   #
-  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api``
-  # so cleanup never interleaves with another run's deploy. Schema
-  # objects on the user's Aurora are scoped by the L2 instance prefix
-  # (default: ``spec_example``) which is shared across runs — the
-  # concurrency lock is the only thing keeping run A's cleanup from
-  # dropping tables run B is mid-INSERT into.
+  # Concurrency shares the ``e2e-pg`` group with ``e2e-pg-api`` /
+  # ``e2e-pg-browser`` so cleanup never interleaves with *this
+  # workflow's* deploys. (release.yml's ``e2e-against-testpypi`` is NOT
+  # in this group anymore — gate.l.8 gave it its own — so it can overlap
+  # with this cleanup; safe because it uses a disjoint table prefix
+  # (``rel_<tag>_*``) and QS ``resource_prefix``, and the Stop step
+  # below won't yank the cluster from under it. The within-e2e.yml lock
+  # still keeps run A's ``schema clean`` from dropping ``spec_example_*``
+  # tables run B is mid-INSERT into.)
   #
   # Idempotent with the per-job cleanup: ``json clean`` and
   # ``schema clean`` both no-op when the targets don't exist, so the
@@ -637,18 +644,33 @@ jobs:
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
 
-      # gate.l.7 — sole cluster teardown. `cleanup-pg` `needs:` both
-      # e2e-pg-api + e2e-pg-browser and is `if: always()`, so it runs
-      # last regardless of how the PG jobs ended (or whether
-      # e2e-pg-browser was skipped). Storage cost is the only ongoing
-      # charge between runs; `|| true` swallows the already-stopped
-      # case. Async on the RDS side — leaves the cluster `stopping`,
-      # which the next run's `ensure-rds-available` waits out.
-      - name: Stop PG cluster (gate.l.7)
+      # gate.l.8 — cluster teardown, BUT only if no other E2E / Release
+      # run is still using it ("last one stops the cluster"). gate.l.8
+      # moved release.yml's `e2e-against-testpypi` out of the shared
+      # `e2e-pg` group, so it can now overlap this cleanup on the same
+      # Aurora — stopping the cluster mid-deploy would kill its
+      # connections. Whoever finishes alone stops it; the operator's
+      # `./run_tests.sh down aws` is the backstop. `|| true` swallows
+      # the already-stopped case; async on the RDS side — leaves the
+      # cluster `stopping`, which `ensure-rds-available` waits out.
+      # No-op when the secret is unset (pre-gate.l shape).
+      - name: Stop PG cluster (gate.l.8)
         env:
           PG_CLUSTER_ID: ${{ secrets.QS_GEN_AWS_PG_CLUSTER_ID }}
-        if: env.PG_CLUSTER_ID != ''
-        run: aws rds stop-db-cluster --db-cluster-identifier "$PG_CLUSTER_ID" || true
+          GH_TOKEN: ${{ github.token }}
+        if: always() && env.PG_CLUSTER_ID != ''
+        run: |
+          # `|| echo 1`: if `gh run list` fails, assume others might be
+          # running → DON'T stop the cluster (prefer a cost leak the
+          # operator's `down aws` mops up over killing a sibling run).
+          others=$(gh run list --limit 50 --json status,workflowName,databaseId \
+            --jq '[.[] | select((.status=="in_progress" or .status=="queued") and (.workflowName=="E2E" or .workflowName=="Release") and (.databaseId != ${{ github.run_id }}))] | length' || echo 1)
+          if [ "${others:-0}" -gt 0 ]; then
+            echo "::notice::${others} other E2E/Release run(s) in progress — leaving the PG cluster up (last one stops it)."
+            exit 0
+          fi
+          echo "No other E2E/Release runs in progress — stopping PG cluster ${PG_CLUSTER_ID}."
+          aws rds stop-db-cluster --db-cluster-identifier "$PG_CLUSTER_ID" || true
 
   # W.5b — Oracle parity for the W.7 belt-and-suspenders cleanup.
   # Same pattern as ``cleanup-pg`` but pointed at the Oracle leg's

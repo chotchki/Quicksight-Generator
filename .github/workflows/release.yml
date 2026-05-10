@@ -282,12 +282,34 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    # Share the e2e-pg concurrency group so a release-driven e2e
-    # never interleaves with a standalone push:main e2e on the same
-    # Aurora schema. Releases queue behind any in-flight e2e and
-    # vice versa.
+      # gate.l.8 — `gh run list` (the "last one stops the cluster" guard
+      # on the Stop step below) needs `actions: read`.
+      actions: read
+    # gate.l.8 — OWN concurrency group, NOT the shared `e2e-pg`.
+    #
+    # The bug this fixes: `e2e-pg` is shared by e2e.yml's push:main PG
+    # jobs (`e2e-pg-api` etc.). When you cut a release you push the
+    # merge-to-main and the tag at nearly the same time, so this job
+    # (pending behind whatever e2e.yml job grabbed `e2e-pg` first) and a
+    # *second* push's `e2e-pg-api` both become pending in `e2e-pg` — and
+    # GitHub keeps only the LATEST pending run per group, evicting the
+    # older one. The older one is usually this release-e2e gate → it gets
+    # cancelled → `publish-pypi` (which `needs:` it) is skipped → the
+    # release never reaches PyPI. (v8.8.0a18 and v8.8.0a19 both died this
+    # way.) `cancel-in-progress: false` does NOT prevent this — it only
+    # protects the *in-progress* run, not pending ones.
+    #
+    # With its own group, this job is never the evictable pending run.
+    # Trade-off: it can now run concurrently with e2e.yml's `e2e-pg-api`
+    # / `cleanup-pg`. Safe because (a) it deploys to a unique table
+    # prefix (the synthesized per-release L2 instance below — disjoint
+    # from e2e.yml's `sp_pg_aw_*` and `cleanup-pg`'s `spec_example_*`)
+    # and a unique QS `resource_prefix` (`qs-release-<tag>`); (b) the
+    # only shared resource left is the Aurora cluster's running state,
+    # which the "last one stops the cluster" guard on the Stop step
+    # handles (a residual few-second TOCTOU window remains — acceptable).
     concurrency:
-      group: e2e-pg
+      group: e2e-pg-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
@@ -323,17 +345,32 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # gate.l.7 — resilient cluster bring-up. Shares the `e2e-pg`
-      # concurrency group with e2e.yml's PG jobs (so this never deploys
-      # concurrently with a standalone e2e run), but e2e.yml's
-      # `cleanup-pg` stop leaves the cluster `stopping` — so this step
-      # must tolerate that (the old `start || true; wait available`
-      # deadlocked there: it hit v8.8.0a18's release). No-op when the
-      # secret is unset (pre-gate.l shape).
+      # gate.l.7 — resilient cluster bring-up. Tolerates a sibling job's
+      # in-flight `stopping` (the old `start || true; wait available`
+      # deadlocked there: it hit v8.8.0a18's release). Since gate.l.8 put
+      # this job in its own concurrency group, a concurrent e2e.yml run's
+      # `cleanup-pg::Stop PG cluster` could `stop` the cluster mid-run —
+      # the "last one stops the cluster" guard on both Stop steps + this
+      # tolerant bring-up keep that from biting. No-op when the secret is
+      # unset (pre-gate.l shape).
       - name: Ensure PG cluster available (gate.l.7)
         uses: ./.github/actions/ensure-rds-available
         with:
           cluster-id: ${{ secrets.QS_GEN_AWS_PG_CLUSTER_ID }}
+
+      - name: Synthesize a per-release L2 instance (gate.l.8 — unique table prefix)
+        # gate.l.8 — this job is in its own concurrency group now, so it
+        # can run alongside e2e.yml's `e2e-pg-api` (tables `sp_pg_aw_*`)
+        # and `cleanup-pg::schema clean` (drops `spec_example_*`). Rename
+        # the bundled `spec_example` instance to `rel_<safe-tag>` so this
+        # release's tables (`rel_<safe-tag>_*`) are disjoint from both —
+        # nothing else creates or drops them. (Same L2 *shape* as what CI
+        # already exercises; only the instance name changes.)
+        run: |
+          SAFE_TAG="${GITHUB_REF_NAME//[.\/-]/_}"   # v8.8.0a20 -> v8_8_0a20
+          sed "s/^instance:.*/instance: rel_${SAFE_TAG}/" tests/l2/spec_example.yaml > /tmp/release-l2.yaml
+          echo "release L2 instance: rel_${SAFE_TAG}"
+          head -3 /tmp/release-l2.yaml
 
       - name: Generate per-run config.yaml
         # ``resource_prefix`` carries the release tag for traceability;
@@ -354,16 +391,16 @@ jobs:
           EOF
 
       - name: Apply schema (DDL)
-        run: /tmp/qs-release-e2e/bin/quicksight-gen schema apply -c /tmp/release-e2e.yaml --execute
+        run: /tmp/qs-release-e2e/bin/quicksight-gen schema apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Apply seed data
-        run: /tmp/qs-release-e2e/bin/quicksight-gen data apply -c /tmp/release-e2e.yaml --execute
+        run: /tmp/qs-release-e2e/bin/quicksight-gen data apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Refresh matviews
-        run: /tmp/qs-release-e2e/bin/quicksight-gen data refresh -c /tmp/release-e2e.yaml --execute
+        run: /tmp/qs-release-e2e/bin/quicksight-gen data refresh -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Deploy QS resources
-        run: /tmp/qs-release-e2e/bin/quicksight-gen json apply -c /tmp/release-e2e.yaml -o /tmp/release-e2e-out --execute
+        run: /tmp/qs-release-e2e/bin/quicksight-gen json apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/release-e2e-out --execute
 
       - name: Run API e2e against TestPyPI wheel
         # Same 3 apps as the standalone e2e-pg-api job. Browser-tier
@@ -389,17 +426,35 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/empty-out
-          /tmp/qs-release-e2e/bin/quicksight-gen json clean -c /tmp/release-e2e.yaml -o /tmp/empty-out --execute || true
-          /tmp/qs-release-e2e/bin/quicksight-gen schema clean -c /tmp/release-e2e.yaml --execute || true
+          /tmp/qs-release-e2e/bin/quicksight-gen json clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/empty-out --execute || true
+          /tmp/qs-release-e2e/bin/quicksight-gen schema clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute || true
 
-      # gate.l.7 — stop the cluster after release-e2e cleanup. Async on
-      # the RDS side; e2e.yml's PG jobs use `ensure-rds-available` which
-      # tolerates the resulting `stopping` state.
-      - name: Stop PG cluster (gate.l.7)
+      # gate.l.8 — stop the cluster after release-e2e cleanup, BUT only
+      # if no other E2E / Release run is still using it ("last one stops
+      # the cluster"). Since gate.l.8 gave this job its own concurrency
+      # group, a concurrent e2e.yml run could be mid-deploy on the same
+      # Aurora; stopping it would kill those connections. Whoever
+      # finishes alone stops it; the operator's `./run_tests.sh down aws`
+      # is the backstop. Async on the RDS side; `ensure-rds-available`
+      # tolerates the resulting `stopping` state. No-op when the secret
+      # is unset (pre-gate.l shape).
+      - name: Stop PG cluster (gate.l.8)
         env:
           PG_CLUSTER_ID: ${{ secrets.QS_GEN_AWS_PG_CLUSTER_ID }}
+          GH_TOKEN: ${{ github.token }}
         if: always() && env.PG_CLUSTER_ID != ''
-        run: aws rds stop-db-cluster --db-cluster-identifier "$PG_CLUSTER_ID" || true
+        run: |
+          # `|| echo 1`: if `gh run list` fails, assume others might be
+          # running → DON'T stop the cluster (prefer a cost leak the
+          # operator's `down aws` mops up over killing a sibling run).
+          others=$(gh run list --limit 50 --json status,workflowName,databaseId \
+            --jq '[.[] | select((.status=="in_progress" or .status=="queued") and (.workflowName=="E2E" or .workflowName=="Release") and (.databaseId != ${{ github.run_id }}))] | length' || echo 1)
+          if [ "${others:-0}" -gt 0 ]; then
+            echo "::notice::${others} other E2E/Release run(s) in progress — leaving the PG cluster up (last one stops it)."
+            exit 0
+          fi
+          echo "No other E2E/Release runs in progress — stopping PG cluster ${PG_CLUSTER_ID}."
+          aws rds stop-db-cluster --db-cluster-identifier "$PG_CLUSTER_ID" || true
 
   # ---------------------------------------------------------------------------
   # Publish to PyPI (gated on TestPyPI install verify + e2e gate +
