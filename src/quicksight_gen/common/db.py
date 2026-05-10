@@ -20,6 +20,8 @@ config — see PLAN.md P.9d). X.3 added the SQLite arm using the stdlib
 
 from __future__ import annotations
 
+import sys
+import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Protocol
@@ -242,13 +244,69 @@ def execute_script(
         )
     for i, stmt in enumerate(statements):
         try:
-            cur.execute(stmt)
+            _execute_oracle_stmt_with_lock_retry(cur, stmt)
         except Exception as e:
             preview = stmt.strip()[:1500]
             raise RuntimeError(
                 f"Oracle stmt #{i} failed ({type(e).__name__}: {e})\n"
                 f"  Preview: {preview}"
             ) from e
+
+
+# Oracle lock-timeout error codes worth retrying. Both surface when a
+# concurrent session holds a lock on the object we're about to modify:
+#   ORA-00054 — "resource busy and acquire with NOWAIT specified or
+#               timeout expired" (e.g. DROP/ALTER against a table
+#               another session is touching).
+#   ORA-04021 — "timeout occurred while waiting to lock object" — the
+#               data-dictionary lock. DDL serializes on the dictionary,
+#               so two sessions running `schema apply` in parallel (e.g.
+#               two matrix cells against the same multi-tenant Oracle)
+#               deadlock here.
+# Both are transient: the holding session releases when its statement
+# finishes. Retry with exponential backoff before giving up.
+_ORACLE_LOCK_TIMEOUT_CODES: tuple[str, ...] = ("ORA-00054", "ORA-04021")
+# Pre-retry sleeps (seconds). len = number of retries; total = 5
+# attempts (1 initial + 4 retries), max ~75s of waiting. Sized to
+# outlast a sibling cell's full `schema apply` against the same
+# multi-tenant Oracle (~30-90s of DDL when the matrix fans out) —
+# a short backoff would just exhaust retries while the holder is
+# still mid-run.
+_ORACLE_LOCK_RETRY_BACKOFF_S: tuple[float, ...] = (5.0, 10.0, 20.0, 40.0)
+
+
+def _execute_oracle_stmt_with_lock_retry(cur: Any, stmt: str) -> None:  # typing-smell: ignore[explicit-any]: oracledb cursor — see execute_script's same suppression
+    """Run one Oracle statement, retrying on ORA-00054 / ORA-04021.
+
+    The lock-timeout error codes (see ``_ORACLE_LOCK_TIMEOUT_CODES``)
+    are transient — a sibling session is mid-DDL on the same object
+    (or the data dictionary). Retry with exponential backoff. Any
+    other error propagates immediately (no point retrying a syntax
+    error). Each retry logs to stderr so a stalling matrix cell is
+    visible rather than looking hung.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(len(_ORACLE_LOCK_RETRY_BACKOFF_S) + 1):
+        try:
+            cur.execute(stmt)
+            return
+        except Exception as exc:  # noqa: BLE001 — re-raised below unless it's a lock timeout
+            if not any(code in str(exc) for code in _ORACLE_LOCK_TIMEOUT_CODES):
+                raise
+            last_exc = exc
+            if attempt < len(_ORACLE_LOCK_RETRY_BACKOFF_S):
+                sleep_s = _ORACLE_LOCK_RETRY_BACKOFF_S[attempt]
+                sys.stderr.write(
+                    f"db: Oracle lock timeout ({type(exc).__name__}) — "
+                    f"retry {attempt + 1}/{len(_ORACLE_LOCK_RETRY_BACKOFF_S)} "
+                    f"in {sleep_s:.0f}s\n"
+                )
+                sys.stderr.flush()
+                time.sleep(sleep_s)
+    # Exhausted retries — re-raise the last lock-timeout error so the
+    # caller's `Oracle stmt #N failed` wrapper carries the real cause.
+    assert last_exc is not None  # loop body sets it before the last iteration
+    raise last_exc
 
 
 def split_oracle_script(sql: str) -> list[str]:

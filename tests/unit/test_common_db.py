@@ -269,6 +269,94 @@ class TestExecuteScriptSqlite:
             conn.close()
 
 
+# -- Oracle DDL lock-timeout retry ------------------------------------------
+
+
+class _FakeOracleLockError(Exception):
+    """Stand-in for oracledb.DatabaseError carrying an ORA-NNNNN code."""
+
+
+class _RaiseThenSucceedCursor:
+    """Mock cursor whose ``execute`` raises ``exc`` the first ``n`` calls
+    then succeeds. Records the call count for assertions."""
+
+    def __init__(self, *, fail_times: int, exc: Exception) -> None:
+        self._fail_times = fail_times
+        self._exc = exc
+        self.calls = 0
+
+    def execute(self, _stmt: str) -> None:
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise self._exc
+
+
+class TestExecuteOracleStmtLockRetry:
+    """Y.2.gate-l follow-up — DDL retry on ORA-00054 / ORA-04021.
+
+    Surfaced by the full-matrix run: sibling Oracle cells running
+    ``schema apply`` against the same multi-tenant instance deadlock on
+    the data-dictionary lock. The retry-with-backoff makes the
+    transient case self-heal. ``time.sleep`` is patched out so the
+    tests don't actually wait the 2s/4s/8s backoff.
+    """
+
+    def test_retries_then_succeeds_on_ora_04021(self, monkeypatch) -> None:
+        from quicksight_gen.common import db as db_mod
+
+        monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
+        cur = _RaiseThenSucceedCursor(
+            fail_times=2,
+            exc=_FakeOracleLockError(
+                "ORA-04021: timeout occurred while waiting to lock object"
+            ),
+        )
+        # Should NOT raise — third attempt succeeds.
+        db_mod._execute_oracle_stmt_with_lock_retry(cur, "DROP TABLE foo")
+        assert cur.calls == 3  # 1 initial + 2 retries
+
+    def test_retries_then_succeeds_on_ora_00054(self, monkeypatch) -> None:
+        from quicksight_gen.common import db as db_mod
+
+        monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
+        cur = _RaiseThenSucceedCursor(
+            fail_times=1,
+            exc=_FakeOracleLockError(
+                "ORA-00054: resource busy and acquire with NOWAIT specified"
+            ),
+        )
+        db_mod._execute_oracle_stmt_with_lock_retry(cur, "ALTER TABLE foo ADD x INT")
+        assert cur.calls == 2
+
+    def test_exhausts_retries_then_reraises_lock_error(self, monkeypatch) -> None:
+        from quicksight_gen.common import db as db_mod
+
+        monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
+        cur = _RaiseThenSucceedCursor(
+            fail_times=99,  # never recovers
+            exc=_FakeOracleLockError("ORA-04021: timeout"),
+        )
+        with pytest.raises(_FakeOracleLockError, match="ORA-04021"):
+            db_mod._execute_oracle_stmt_with_lock_retry(cur, "DROP TABLE foo")
+        # 1 initial + one retry per backoff entry. Derived from the
+        # tuple so it stays correct if the backoff schedule changes.
+        assert cur.calls == len(db_mod._ORACLE_LOCK_RETRY_BACKOFF_S) + 1
+
+    def test_non_lock_error_propagates_immediately(self, monkeypatch) -> None:
+        from quicksight_gen.common import db as db_mod
+
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(db_mod.time, "sleep", lambda s: sleep_calls.append(s))
+        cur = _RaiseThenSucceedCursor(
+            fail_times=99,
+            exc=_FakeOracleLockError("ORA-00942: table or view does not exist"),
+        )
+        with pytest.raises(_FakeOracleLockError, match="ORA-00942"):
+            db_mod._execute_oracle_stmt_with_lock_retry(cur, "DROP TABLE bogus")
+        assert cur.calls == 1  # no retry
+        assert sleep_calls == []  # never slept
+
+
 # ---------------------------------------------------------------------------
 # X.2.n.2 — AsyncConnectionPool (SQLite path; PG/Oracle covered via live e2e)
 # ---------------------------------------------------------------------------
