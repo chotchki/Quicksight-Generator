@@ -469,21 +469,29 @@ def _layer_command(
         cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "auto"]
         return (cmd, env_addl)
     if layer == "db":
-        # 3a — DB-touching pytest (behind QS_GEN_E2E=1). Two test files:
+        # 3a — DB-touching pytest (behind QS_GEN_E2E=1). Three test files:
         #   - test_dataset_sql_smoke.py: parametrized over 37 datasets;
         #     substitutes QS `<<$param>>` placeholders with declared
         #     defaults, wraps in `WHERE 1=0`, runs against live DB.
         #   - test_demo_apply_row_counts.py: asserts ≥1 row in every
         #     named matview the seed populates (k.1.absorb — Phase 2 of
-        #     Y.2.gate.k.1+k.6 spike, lifted from ci.yml workflow steps
-        #     so the variant's synthesized prefix flows naturally to
-        #     QS_GEN_TEST_L2_INSTANCE-aware test resolution).
+        #     Y.2.gate.k.1+k.6 spike).
+        #   - test_audit_pdf_render_verify.py: invokes
+        #     `quicksight-gen audit apply --execute` + `audit verify`
+        #     against the variant's seeded DB (k.1.absorb-audit —
+        #     Phase 2.5). Reads QS_GEN_TEST_L2_INSTANCE so the audit
+        #     CLI picks the variant's synthesized yaml and finds the
+        #     `<spec.name>_*` prefixed tables the seed populated.
+        # All three flow through the same QS_GEN_TEST_L2_INSTANCE-aware
+        # test resolution, so the variant's synthesized prefix is the
+        # one source of truth for which tables to query / render from.
         # Real DB connection comes from cfg; until cfg loading lands the test
         # itself fails fast if cfg is missing. That's the expected shape.
         cmd = [
             str(_VENV_BIN / "pytest"),
             "tests/e2e/test_dataset_sql_smoke.py",
             "tests/e2e/test_demo_apply_row_counts.py",
+            "tests/e2e/test_audit_pdf_render_verify.py",
             "-q",
         ]
         if opts.only:
