@@ -172,13 +172,11 @@ jobs:
           QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
         run: ./run_tests.sh up_to=db --dialects=pg --targets=lo
 
-      # Note: audit PDF render+verify dropped from this job — it was
-      # querying `spec_example_*` directly via cfg's L2 default, but
-      # the runner now creates tables under per-variant prefixes
-      # (`sp_pg_lo_*`, `sq_pg_lo_*`). k.1.absorb-audit (Phase 2.5)
-      # queues moving audit-PDF render+verify into the runner's `db`
-      # layer (probably wrap as a pytest first; audit isn't pytest yet).
-      # Local audit coverage: `tests/audit/`, `tests/e2e/test_audit_*`.
+      # Note: audit PDF render+verify is now runner-internal — handled
+      # by tests/e2e/test_audit_pdf_render_verify.py in the runner's
+      # db layer dispatch (k.1.absorb-audit, Phase 2.5). The variant's
+      # synthesized prefix flows through QS_GEN_TEST_L2_INSTANCE so
+      # audit finds the `<spec.name>_*` tables the seed populated.
 
   # P.7 — containerized integration job (Oracle leg).
   #
@@ -226,9 +224,11 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies (V.2 — uv sync from uv.lock)
-        run: uv sync --frozen --extra dev --extra demo-oracle --extra audit
+        # `--extra e2e` brings in pytest-xdist which the runner's unit
+        # layer invokes via `-n auto`.
+        run: uv sync --frozen --extra dev --extra demo-oracle --extra audit --extra e2e
 
-      - name: Apply demo against Oracle Free
+      - name: Generate per-job config.yaml
         run: |
           cat > /tmp/ci-oracle.yaml <<'EOF'
           aws_account_id: "000000000000"
@@ -238,48 +238,27 @@ jobs:
           dialect: "oracle"
           demo_database_url: "system/ci_ora_password@localhost:1521/FREEPDB1"
           EOF
-          # Q.3.a (v8.0.0): chain the four artifact groups explicitly
-          # in place of the legacy bundled `demo apply --all`.
-          .venv/bin/quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
-          .venv/bin/quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
-          .venv/bin/quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
-          .venv/bin/quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
 
-      # Note: row-count smoke for Oracle is NOT yet absorbed into a
-       # runner invocation (Oracle leg still uses the legacy direct CLI
-       # path; Phase 1 wedge migration queued for a follow-up commit so
-       # we can verify the PG path stabilizes first).
-      - name: Verify Oracle row counts
-        # Same rationale as the Postgres row-count verify above.
+      # Y.2.gate.k.1.thin-wrapper (Phase 4): runner drives the entire
+      # apply + smoke + audit chain. `--dialects=or --targets=lo`
+      # narrows the matrix to Oracle local-container cells. CI mode
+      # tells setup_variant to skip Docker spin-up (the GHA Oracle
+      # service container above is the DB).
+      #
+      # The runner's db layer dispatches:
+      #   - test_dataset_sql_smoke.py (the Oracle leg matters most —
+      #     dialect divergences like JSON path concat, ORA-00923
+      #     SELECT-without-FROM, ORA-00911 underscore identifier,
+      #     ORA-25154 USING qualifier surface here, not against PG).
+      #   - test_demo_apply_row_counts.py — ≥1 row per named matview.
+      #   - test_audit_pdf_render_verify.py — render + verify cycle.
+      - name: Run runner db layer (CI-mode, no Docker spin-up)
         env:
-          QS_GEN_E2E: "1"
+          QS_GEN_RUNNER_CI: "1"
+          QS_GEN_DEMO_DATABASE_URL: "system/ci_ora_password@localhost:1521/FREEPDB1"
           QS_GEN_CONFIG: /tmp/ci-oracle.yaml
           QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
-        run: |
-          .venv/bin/pytest tests/e2e/test_demo_apply_row_counts.py -v
-
-      - name: Smoke every dataset's CustomSQL against Oracle
-        # Same rationale as the Postgres dataset smoke above. The
-        # Oracle leg matters more — most dialect divergences (JSON
-        # path concat, ORA-00923 SELECT-without-FROM, ORA-00911
-        # underscore identifier, ORA-25154 USING qualifier) only
-        # break here, not against PG.
-        env:
-          QS_GEN_E2E: "1"
-          QS_GEN_CONFIG: /tmp/ci-oracle.yaml
-          QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
-        run: |
-          .venv/bin/pytest tests/e2e/test_dataset_sql_smoke.py -v
-
-      - name: Render + verify the audit PDF against Oracle
-        # Same rationale as the Postgres audit PDF step above. Catches
-        # Oracle-only PDF render breakage (e.g. SQL/JSON path syntax
-        # divergence in the matview queries that audit reads).
-        run: |
-          .venv/bin/quicksight-gen audit apply \
-            -c /tmp/ci-oracle.yaml --execute -o /tmp/ci-oracle-report.pdf
-          .venv/bin/quicksight-gen audit verify \
-            /tmp/ci-oracle-report.pdf -c /tmp/ci-oracle.yaml
+        run: ./run_tests.sh up_to=db --dialects=or --targets=lo
 
   # W.8b — combine the matrix entries' coverage data, render a
   # markdown summary into the GitHub Actions Step Summary (so the
