@@ -3057,10 +3057,17 @@ def _status_aws(*, show_cost: bool) -> int:
             continue
         line = f"  {resource.kind} {resource.identifier}: {status}"
         if show_cost:
+            # Only the literal `stopped` state gets storage-only billing;
+            # everything else (available, starting, upgrading, backing-up,
+            # …) bills compute. The runner's pricing is rough by
+            # definition (no Pricing API call) but conflating
+            # transitional states with stopped underreports cost during
+            # multi-hour boots — meaningful when Oracle takes 30+ min.
+            running = status != "stopped"
             cost_key = (
-                f"aurora-cluster-{'running' if status == 'available' else 'stopped'}"
+                f"aurora-cluster-{'running' if running else 'stopped'}"
                 if resource.kind == "cluster"
-                else f"oracle-instance-{'running' if status == 'available' else 'stopped'}"
+                else f"oracle-instance-{'running' if running else 'stopped'}"
             )
             cost = _ROUGH_HOURLY_COSTS.get(cost_key, 0.0)
             total_hourly += cost

@@ -21,7 +21,7 @@ network) propagates — those are operator-actionable.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 # boto3-stubs[rds] gives RDSClient typing. We mark it as
 # TYPE_CHECKING-only so the runtime path doesn't depend on the stub
@@ -32,18 +32,45 @@ else:
     RDSClient = object
 
 
-# Resource lifecycle states from RDS docs. We don't enumerate every state
-# (RDS has ~25), only the ones the runner branches on. Anything else
-# falls through as "unknown" and the operator triages.
+# Resource lifecycle states from RDS docs. We surface the common ones
+# verbatim so the operator sees the real state instead of an opaque
+# "unknown". The runner only branches on `available` (green) vs
+# everything else (not ready); the enum exists for display + lint
+# narrowing, not branching logic. Truly novel states still bucket as
+# "unknown" — RDS adds new transitional states occasionally.
 RdsStatus = Literal[
     "available", "starting", "stopped", "stopping",
-    "creating", "modifying", "rebooting", "unknown",
+    "creating", "modifying", "rebooting",
+    # Maintenance / lifecycle transitions surfaced 2026-05-09 (Oracle
+    # in 'upgrading' was showing as 'unknown' in `status --cost`):
+    "upgrading", "backing-up", "maintenance", "renaming",
+    "configuring-enhanced-monitoring", "configuring-iam-database-auth",
+    "configuring-log-exports", "resetting-master-credentials",
+    # Failure / inaccessible states — operator triages these manually.
+    "failed", "incompatible-network", "incompatible-option-group",
+    "incompatible-parameters", "incompatible-restore",
+    "inaccessible-encryption-credentials", "storage-full",
+    "unknown",
 ]
 
 # Terminal states for our purposes — the resource is in a stable state
 # we can act on. "starting"/"stopping" are transient; the runner polls
 # until they resolve.
 TERMINAL_STATES: frozenset[str] = frozenset({"available", "stopped"})
+
+# All states the RDS API may return, used by `get_status` to narrow
+# the str → Literal cast. Kept in sync with `RdsStatus` (sans "unknown"
+# which is our catch-all sentinel).
+_KNOWN_RDS_STATES: frozenset[str] = frozenset({
+    "available", "starting", "stopped", "stopping",
+    "creating", "modifying", "rebooting",
+    "upgrading", "backing-up", "maintenance", "renaming",
+    "configuring-enhanced-monitoring", "configuring-iam-database-auth",
+    "configuring-log-exports", "resetting-master-credentials",
+    "failed", "incompatible-network", "incompatible-option-group",
+    "incompatible-parameters", "incompatible-restore",
+    "inaccessible-encryption-credentials", "storage-full",
+})
 
 
 @dataclass(frozen=True)
@@ -105,11 +132,8 @@ def get_status(resource: RdsResource) -> RdsStatus:
             )
         raw = instances[0].get("DBInstanceStatus", "unknown")
     # Narrow to the Literal union; "unknown" is the catch-all so we
-    # never lose triage info on a state we don't enumerate.
-    return raw if raw in (
-        "available", "starting", "stopped", "stopping",
-        "creating", "modifying", "rebooting",
-    ) else "unknown"
+    # never lose triage info on a state RDS adds in the future.
+    return cast("RdsStatus", raw) if raw in _KNOWN_RDS_STATES else "unknown"
 
 
 def start(resource: RdsResource) -> RdsStatus:
