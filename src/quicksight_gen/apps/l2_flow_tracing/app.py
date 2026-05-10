@@ -801,24 +801,22 @@ def _populate_chains_sheet(
     sheet.add_parameter_datetime_picker(parameter=date_start, title="Date From")
     sheet.add_parameter_datetime_picker(parameter=date_end, title="Date To")
 
-    # 3+4. Chain + Completion — X.1.g — parameter-bound CategoryFilters
-    # (was FilterDropdown(empty)+FILTER_ALL_VALUES, which forced QS to
-    # lazy-fetch dropdown options at render time).
-    _populate_param_filter_dropdown(
+    # 3+4. Chain + Completion — Y.2.d — pushed into the chain-instances
+    # dataset SQL (`<<$pL2ftChainsChain>>` / `<<$pL2ftChainsCompletion>>`),
+    # no analysis-level CategoryFilter / FilterGroup. (X.1.g predecessor
+    # was a parameter-bound CategoryFilter; before that an empty
+    # FilterDropdown that forced QS's lazy dropdown-options fetch.)
+    _populate_pushdown_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_chain_instances,
-        fg_id=FilterGroupId("fg-l2ft-chains-chain"),
-        filter_id="filter-l2ft-chains-chain",
         param_name=ParameterName("pL2ftChainsChain"),
-        col="parent_chain_name", title="Chain",
-        all_values=declared_chain_parents(l2_instance),
+        dataset_param="pL2ftChainsChain",
+        title="Chain", all_values=declared_chain_parents(l2_instance),
     )
-    _populate_param_filter_dropdown(
+    _populate_pushdown_dropdown(
         sheet=sheet, analysis=analysis, dataset=ds_chain_instances,
-        fg_id=FilterGroupId("fg-l2ft-chains-completion"),
-        filter_id="filter-l2ft-chains-completion",
         param_name=ParameterName("pL2ftChainsCompletion"),
-        col="completion_status", title="Completion",
-        all_values=chain_completion_status_values(),
+        dataset_param="pL2ftChainsCompletion",
+        title="Completion", all_values=chain_completion_status_values(),
     )
 
     # 5+6. Metadata cascade — same mechanism as Rails (M.3.10c memory):

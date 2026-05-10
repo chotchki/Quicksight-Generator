@@ -564,6 +564,81 @@ def test_chains_metadata_params_are_chain_scoped() -> None:
     assert "pL2ftChainsDateEnd" in param_names
 
 
+def test_chain_instances_dataset_declares_cascade_and_pushdown_parameters() -> None:
+    """Y.2.d — four dataset params: the metadata cascade pair (pKey /
+    pValues) plus the chain / completion pushdown pair (pL2ftChainsChain
+    / pL2ftChainsCompletion, MULTI_VALUED). For an instance with chains
+    declared the chain default is the declared list; for one without
+    (spec_example), it falls back to the no-match sentinel so the SQL
+    stays `IN ('__no_match__')` (valid, zero-row), not `IN ()`."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        PUSHDOWN_NO_MATCH_SENTINEL, build_chain_instances_dataset,
+        chain_completion_status_values, declared_chain_parents,
+    )
+    # Instance WITH chains.
+    inst = load_instance(SASQUATCH_PR_YAML)
+    params = build_chain_instances_dataset(_CFG, inst).DatasetParameters
+    assert params is not None and len(params) == 4
+    by_name = {p.StringDatasetParameter.Name: p.StringDatasetParameter for p in params}
+    assert by_name["pKey"].ValueType == "SINGLE_VALUED"
+    assert by_name["pValues"].ValueType == "SINGLE_VALUED"
+    assert by_name["pL2ftChainsChain"].ValueType == "MULTI_VALUED"
+    assert by_name["pL2ftChainsChain"].DefaultValues.StaticValues == (
+        declared_chain_parents(inst)
+    )
+    assert by_name["pL2ftChainsCompletion"].ValueType == "MULTI_VALUED"
+    assert by_name["pL2ftChainsCompletion"].DefaultValues.StaticValues == (
+        chain_completion_status_values()
+    )
+    # Instance WITHOUT chains → sentinel fallback (not an empty list).
+    sp = load_instance(Path(__file__).parent.parent / "l2" / "spec_example.yaml")
+    assert not declared_chain_parents(sp)
+    sp_params = build_chain_instances_dataset(_CFG, sp).DatasetParameters
+    assert sp_params is not None
+    sp_by_name = {
+        p.StringDatasetParameter.Name: p.StringDatasetParameter for p in sp_params
+    }
+    assert sp_by_name["pL2ftChainsChain"].DefaultValues.StaticValues == [
+        PUSHDOWN_NO_MATCH_SENTINEL,
+    ]
+
+
+def test_chain_instances_dataset_pushes_chain_completion_into_sql() -> None:
+    """Y.2.d — chain + completion narrow inside the chain-instances
+    dataset SQL via multi-valued `<<$param>>` substitution; the
+    projection wraps in a subquery so the CASE-aliased
+    `completion_status` is visible to the outer WHERE. Metadata cascade
+    on `parent_metadata` stays inner."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chain_instances_dataset,
+    )
+    sql = list(
+        build_chain_instances_dataset(_CFG, load_instance(SASQUATCH_PR_YAML))
+        .PhysicalTableMap.values()
+    )[0].CustomSql.SqlQuery
+    assert "parent_chain_name IN (<<$pL2ftChainsChain>>)" in sql
+    assert "completion_status IN (<<$pL2ftChainsCompletion>>)" in sql
+    assert ") chain_instances\nWHERE parent_chain_name IN" in sql
+    # Metadata cascade still present on parent_metadata, inside the subquery.
+    assert "JSON_VALUE(parent_metadata," in sql
+
+
+def test_chains_pushdown_params_bridge_to_chain_instances_dataset() -> None:
+    """Y.2.d — the Chain / Completion analysis params each bridge to
+    their namesake dataset parameter on the chain-instances dataset
+    (and nothing else); no `fg-l2ft-chains-{chain,completion}`
+    FilterGroups remain."""
+    app = build_l2_flow_tracing_app(_CFG)
+    for pname in ("pL2ftChainsChain", "pL2ftChainsCompletion"):
+        p = next(p for p in app.analysis.parameters if str(p.name) == pname)
+        assert p.mapped_dataset_params is not None
+        assert {
+            (ds.identifier, name) for ds, name in p.mapped_dataset_params
+        } == {("l2ft-chain-instances-ds", pname)}
+    fg_ids = {str(fg.filter_group_id) for fg in app.analysis.filter_groups}
+    assert not (fg_ids & {"fg-l2ft-chains-chain", "fg-l2ft-chains-completion"})
+
+
 def test_metadata_value_control_is_text_field() -> None:
     """X.1.b regression guard — the Metadata Value control MUST be a
     ``ParameterTextField``, NOT a ``ParameterDropdown``.

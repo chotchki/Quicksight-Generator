@@ -119,6 +119,15 @@ META_KEY_ALL_SENTINEL = "__ALL__"
 # anything the SQL accepts).
 META_VALUE_PLACEHOLDER_SENTINEL = "__placeholder__"
 
+# Y.2.c/d — fallback value for a multi-valued pushdown parameter whose
+# declared-value list is empty for this L2 instance (e.g. an instance
+# with no Chains declared → ``declared_chain_parents`` returns ``[]``).
+# An empty ``StaticValues`` default would substitute as ``IN ()`` —
+# invalid SQL on every dialect. This sentinel matches no real value, so
+# ``col IN ('__no_match__')`` is valid SQL that returns zero rows — the
+# correct outcome (nothing to show) without a syntax error.
+PUSHDOWN_NO_MATCH_SENTINEL = "__no_match__"
+
 # Dataset-parameter IDs are stable UUIDs so re-deploying produces
 # byte-identical DatasetParameters JSON. QS-issued IDs would re-rotate
 # on every regenerate.
@@ -129,6 +138,9 @@ _DSP_ID_PVALUES = "22222222-2222-4222-8222-222222222222"
 _DSP_ID_PRAIL = "33333333-3333-4333-8333-333333333333"
 _DSP_ID_PSTATUS = "44444444-4444-4444-8444-444444444444"
 _DSP_ID_PBUNDLE = "55555555-5555-4555-8555-555555555555"
+# Y.2.d — chain-instances-dataset pushdown params (chain / completion).
+_DSP_ID_PCHAINSCHAIN = "66666666-6666-4666-8666-666666666666"
+_DSP_ID_PCHAINSCOMPLETION = "77777777-7777-4777-8777-777777777777"
 
 
 # Per-ChainEntry edge — declared parent→child relationship + runtime
@@ -948,22 +960,34 @@ def build_chain_instances_dataset(
         f"    ) AS xor_violations\n"
         f"  FROM parent_firings pf\n"
         f")\n"
-        f"SELECT\n"
-        f"  parent_chain_name,\n"
-        f"  parent_transfer_id,\n"
-        f"  parent_posting,\n"
-        f"  parent_status,\n"
-        f"  parent_amount_money,\n"
-        f"  required_total,\n"
-        f"  required_fired,\n"
-        f"  CASE\n"
-        f"    WHEN required_fired >= required_total "
+        # Y.2.d — wrap the projection in a subquery so the CASE-aliased
+        # `completion_status` is visible to the outer WHERE; `parent_chain_name`
+        # joins it there. Metadata cascade on `parent_metadata` stays inner
+        # (the column isn't projected, so the WHERE that reads it must be).
+        f"SELECT * FROM (\n"
+        f"  SELECT\n"
+        f"    parent_chain_name,\n"
+        f"    parent_transfer_id,\n"
+        f"    parent_posting,\n"
+        f"    parent_status,\n"
+        f"    parent_amount_money,\n"
+        f"    required_total,\n"
+        f"    required_fired,\n"
+        f"    CASE\n"
+        f"      WHEN required_fired >= required_total "
         f"AND xor_violations = 0 THEN 'Completed'\n"
-        f"    ELSE 'Incomplete'\n"
-        f"  END AS completion_status\n"
-        f"FROM firing_completion\n"
-        f"WHERE\n"
+        f"      ELSE 'Incomplete'\n"
+        f"    END AS completion_status\n"
+        f"  FROM firing_completion\n"
+        f"  WHERE\n"
         f"{metadata_filter_clause(l2_instance, 'parent_metadata', cfg.dialect)}\n"
+        f") chain_instances\n"
+        # Y.2.d — chain / completion pushed into SQL via multi-valued dataset
+        # params. Defaults span all declared values so the freshly-loaded
+        # dashboard matches every row; emptying a dropdown reverts to the
+        # default (QS does not emit `IN ()`).
+        f"WHERE parent_chain_name IN (<<$pL2ftChainsChain>>)\n"
+        f"  AND completion_status IN (<<$pL2ftChainsCompletion>>)\n"
         f"ORDER BY parent_posting DESC"
     )
     return build_dataset(
@@ -990,6 +1014,29 @@ def build_chain_instances_dataset(
                 ValueType="SINGLE_VALUED",
                 DefaultValues=StringDatasetParameterDefaultValues(
                     StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
+                ),
+            )),
+            # Y.2.d — chain / completion multi-valued pushdown.
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_PCHAINSCHAIN,
+                Name="pL2ftChainsChain",
+                ValueType="MULTI_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    # An instance with no Chains declared → empty list →
+                    # `IN ()` (invalid). Sentinel keeps the SQL valid /
+                    # zero-row. See PUSHDOWN_NO_MATCH_SENTINEL.
+                    StaticValues=(
+                        declared_chain_parents(l2_instance)
+                        or [PUSHDOWN_NO_MATCH_SENTINEL]
+                    ),
+                ),
+            )),
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_PCHAINSCOMPLETION,
+                Name="pL2ftChainsCompletion",
+                ValueType="MULTI_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=chain_completion_status_values(),
                 ),
             )),
         ],
