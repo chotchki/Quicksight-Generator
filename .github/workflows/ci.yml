@@ -151,12 +151,23 @@ jobs:
       # Per-cell artifacts land at runs/<run-id>/sp_pg_lo/db/{cmd,stdout,stderr}.log
       # for triage parity with local invocations.
       - name: Run runner db layer (CI-mode, no Docker spin-up)
+        # Scoped to `sp_pg_lo` (single variant): without `--variants=`,
+        # the runner fans out to all named scenarios on the chosen
+        # dialect/target axes (sp + sq for pg/lo). Both variants would
+        # then call `schema apply --execute` against the SAME GHA
+        # postgres service container in parallel — the second to run
+        # drops the first's tables, breaking the downstream row-count
+        # check (which hardcodes `spec_example_` prefix).
+        #
+        # CI mode + shared DB = single variant per invocation. The
+        # workflow's whole point is verifying one scenario per CI cell;
+        # the variant matrix is a local-iteration concern.
         env:
           QS_GEN_RUNNER_CI: "1"
           QS_GEN_DEMO_DATABASE_URL: "postgresql://postgres:ci_pg_password@localhost:5432/postgres"
           QS_GEN_CONFIG: /tmp/ci-pg.yaml
           QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
-        run: ./run_tests.sh up_to=db --dialects=pg --targets=lo
+        run: ./run_tests.sh up_to=db --variants=sp_pg_lo
 
       - name: Verify Postgres row counts
         # Asserts ≥1 row in every named matview without exact counts.
