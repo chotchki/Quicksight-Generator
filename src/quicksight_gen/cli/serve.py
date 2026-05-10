@@ -78,7 +78,9 @@ def app2() -> None:
 @click.option(
     "--app",
     "app_name",
-    type=click.Choice(["smoke", "executives", "investigation"]),
+    type=click.Choice(
+        ["smoke", "executives", "investigation", "l2_flow_tracing"],
+    ),
     default="smoke",
     show_default=True,
     help=(
@@ -141,7 +143,7 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
                 f"data: DB-backed ({cfg.dialect.value}) → "
                 f"{cfg.l2_instance_prefix or instance.instance}_inv_money_trail_edges"
             )
-    elif app_name in ("executives", "investigation"):
+    elif app_name in ("executives", "investigation", "l2_flow_tracing"):
         # X.2.g.{1,2} — real tree app via the generic tree fetcher.
         # build_all_datasets(cfg, ...) populates the SQL registry (via
         # build_dataset → register_sql); make_tree_db_fetcher reads
@@ -167,7 +169,7 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
             # the per-app build_app_fn does, via the kwarg below.
             build_app_datasets(cfg)
             tree_app = build_executives_app(cfg, l2_instance=instance)
-        else:  # investigation
+        elif app_name == "investigation":
             from quicksight_gen.apps.investigation.app import (  # noqa: PLC0415
                 build_investigation_app,
             )
@@ -179,6 +181,18 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
             # L2FT signature.
             build_inv_datasets(cfg, instance)
             tree_app = build_investigation_app(cfg, l2_instance=instance)
+        else:  # l2_flow_tracing (Y.2.app2.cde.l2ft-wiring)
+            from quicksight_gen.apps.l2_flow_tracing.app import (  # noqa: PLC0415
+                build_l2_flow_tracing_app,
+            )
+            from quicksight_gen.apps.l2_flow_tracing.datasets import (  # noqa: PLC0415
+                build_all_l2_flow_tracing_datasets,
+            )
+            # L2FT's dataset builder requires l2_instance (App Info
+            # matview names + the Rails/Chains/Templates pushdown
+            # params' declared-value defaults are all L2-derived).
+            build_all_l2_flow_tracing_datasets(cfg, instance)
+            tree_app = build_l2_flow_tracing_app(cfg, l2_instance=instance)
 
         if tree_app.analysis is None or not tree_app.analysis.sheets:
             raise click.UsageError(
