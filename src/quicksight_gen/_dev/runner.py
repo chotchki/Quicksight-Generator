@@ -607,19 +607,22 @@ def _layer_command(
         return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
     if layer == "app2":
         # b.3.impl.layer — App2 e2e (HTMX dialect, Playwright WebKit
-        # against the App2 Starlette server). Three test files today:
-        # `test_html2_executives.py` + `test_html2_money_trail.py`
-        # use stub fetchers (renderer correctness); `test_html2_executives_live.py`
-        # uses `make_tree_db_fetcher(tree_app, cfg)` against the variant
-        # DB — `connect_demo_db(cfg)` reads `QS_GEN_DEMO_DATABASE_URL`
-        # env override (config.py:364), so the variant URL flows
-        # through naturally. Behind `QS_GEN_E2E=1` like every other
-        # tests/e2e/ file. NO AWS contact (audit §7.10 LOCKED).
+        # against the App2 Starlette server). Stub-fetcher renderer tests:
+        # `test_html2_executives.py`, `test_html2_money_trail.py`, and
+        # `test_html2_l2ft.py` (Y.2.app2.cde.l2ft-wiring.c — proves the
+        # auto-derived MULTI_SELECT pushdown dropdowns render + the
+        # repeated-key `?param_<name>=A&param_<name>=B` refetch wire).
+        # `test_html2_executives_live.py` uses `make_tree_db_fetcher(
+        # tree_app, cfg)` against the variant DB — `connect_demo_db(cfg)`
+        # reads `QS_GEN_DEMO_DATABASE_URL` env override (config.py:364),
+        # so the variant URL flows through naturally. Behind `QS_GEN_E2E=1`
+        # like every other tests/e2e/ file. NO AWS contact (audit §7.10 LOCKED).
         cmd = [
             str(_VENV_BIN / "pytest"),
             "tests/e2e/test_html2_executives.py",
             "tests/e2e/test_html2_executives_live.py",
             "tests/e2e/test_html2_money_trail.py",
+            "tests/e2e/test_html2_l2ft.py",
             "-q",
         ]
         if opts.only:

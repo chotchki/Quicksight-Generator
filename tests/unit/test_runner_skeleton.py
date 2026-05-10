@@ -479,6 +479,7 @@ def test_layer_command_app2_dispatches_html2_tests() -> None:
     assert "test_html2_executives.py" in cmd_str
     assert "test_html2_executives_live.py" in cmd_str
     assert "test_html2_money_trail.py" in cmd_str
+    assert "test_html2_l2ft.py" in cmd_str  # Y.2.app2.cde.l2ft-wiring.c
     # Behind QS_GEN_E2E=1 like every other tests/e2e/ file.
     assert env_addl["QS_GEN_E2E"] == "1"
     assert env_addl["QS_GEN_LAYER"] == "app2"
