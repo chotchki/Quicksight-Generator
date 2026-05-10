@@ -100,6 +100,9 @@ from starlette.staticfiles import StaticFiles
 _DEVLOG = logging.getLogger("quicksight_gen.app2.devlog")
 
 
+from quicksight_gen.common.html._tree_filter_specs import (
+    make_filter_specs_for_sheet,
+)
 from quicksight_gen.common.html.render import (
     FilterSpec,
     emit_dashboards_list,
@@ -165,6 +168,13 @@ class ServedDashboard:
     title: str
     data_fetcher: DataFetcher
     theme: ThemePreset | None = None
+    # Explicit filter-form specs. ``()`` (the common case for tree-built
+    # apps) means the routes auto-derive per-sheet from the tree's
+    # parameter-control nodes via ``make_filter_specs_for_sheet`` —
+    # currently one ``ParameterMultiSelectSpec`` per MULTI_SELECT
+    # ``ParameterDropdown`` (Y.2.app2.cde.l2ft-wiring.b). Supply a
+    # non-empty tuple to override (the smoke app does this for its
+    # hand-crafted demo filters).
     filter_specs: tuple[FilterSpec, ...] = ()
 
 
@@ -267,12 +277,17 @@ def make_app(
         # Single-sheet dashboards get an empty tab strip (suppressed
         # by ``_render_sheet_tabs``).
         sheets = tuple(all_sheets[dash_id].values())
+        # Y.2.app2.cde.l2ft-wiring.b — auto-derive per-sheet filter specs
+        # from the tree when the dashboard didn't supply explicit ones.
+        filter_specs = served.filter_specs or tuple(
+            make_filter_specs_for_sheet(served.sheet),
+        )
         return HTMLResponse(emit_html(
             served.tree_app, served.sheet,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
-            filter_specs=served.filter_specs,
+            filter_specs=filter_specs,
         ))
 
     async def sheet_view(request: Request) -> Response:
@@ -292,12 +307,16 @@ def make_app(
         if sheet_for_dash is None:
             raise HTTPException(status_code=404)
         sheets = tuple(all_sheets[dash_id].values())
+        # Y.2.app2.cde.l2ft-wiring.b — per-sheet auto-derive (see dashboard_view).
+        filter_specs = served.filter_specs or tuple(
+            make_filter_specs_for_sheet(sheet_for_dash),
+        )
         return HTMLResponse(emit_html(
             served.tree_app, sheet_for_dash,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
-            filter_specs=served.filter_specs,
+            filter_specs=filter_specs,
         ))
 
     async def visual_data(request: Request) -> Response:

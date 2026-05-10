@@ -132,7 +132,34 @@ class NumericRangeSpec:
     label: str
 
 
-FilterSpec = ParameterDropdownSpec | CategoryFilterSpec | NumericRangeSpec
+@dataclass(frozen=True)
+class ParameterMultiSelectSpec:
+    """Multi-select dropdown for a MULTI_VALUED named parameter
+    (Y.2.app2.cde.l2ft-wiring.b).
+
+    Renders as a ``<select multiple name="param_<name>">`` — each
+    selected ``<option>`` serializes as its own ``param_<name>=<value>``
+    pair, so HTMX submits ``?param_<name>=A&param_<name>=B`` (repeated
+    key, NOT comma-joined — that's the shape ``_sql_executor``'s
+    multi-valued dataset-param expansion consumes). Nothing selected →
+    no ``param_<name>`` key at all → the executor falls back to the
+    dataset param's declared-value default (= no narrowing), matching
+    QuickSight's "empty the dropdown reverts to default" behaviour
+    (Y.2.c.0). This is the App2 counterpart of a tree ``ParameterDropdown(
+    type="MULTI_SELECT", selectable_values=StaticValues(...))`` node —
+    derived from the tree by ``make_filter_specs_for_sheet``.
+    """
+    name: str
+    label: str
+    options: tuple[str, ...]
+
+
+FilterSpec = (
+    ParameterDropdownSpec
+    | CategoryFilterSpec
+    | NumericRangeSpec
+    | ParameterMultiSelectSpec
+)
 
 
 _HTMX_SRC = "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
@@ -287,6 +314,31 @@ def _render_category_filter(spec: CategoryFilterSpec) -> str:
     return "".join(parts)
 
 
+def _render_parameter_multiselect(spec: ParameterMultiSelectSpec) -> str:
+    """Multi-select ``<select multiple name="param_<name>">``.
+
+    No blank leading option — for a multi-select, "nothing selected"
+    already means "all" (the executor's static-default fallback). The
+    ``size`` caps the visible rows so a long option list doesn't dominate
+    the filter bar. ``change`` events bubble to the form, which
+    ``wireFilterAutoRefresh`` debounces into a ``refresh`` broadcast.
+    """
+    name = html.escape(spec.name)
+    size = min(max(len(spec.options), 2), 6)
+    select_class = _FORM_INPUT_CLASS + " min-w-40"
+    parts = [
+        f'    <label class="{_FORM_LABEL_CLASS} items-start">'
+        f'{html.escape(spec.label)} '
+        f'<select name="param_{name}" multiple size="{size}" '
+        f'class="{select_class}">'
+    ]
+    for opt in spec.options:
+        esc = html.escape(opt)
+        parts.append(f'<option value="{esc}">{esc}</option>')
+    parts.append('</select></label>')
+    return "".join(parts)
+
+
 def _render_numeric_range(spec: NumericRangeSpec) -> str:
     """Two ``<input type="number">`` named min_<col> + max_<col>."""
     col = html.escape(spec.column)
@@ -340,6 +392,8 @@ def _render_filter_form(
             parts.append(_render_category_filter(spec))
         elif isinstance(spec, NumericRangeSpec):
             parts.append(_render_numeric_range(spec))
+        elif isinstance(spec, ParameterMultiSelectSpec):
+            parts.append(_render_parameter_multiselect(spec))
     parts.append('  </form>')
     return "\n".join(parts)
 

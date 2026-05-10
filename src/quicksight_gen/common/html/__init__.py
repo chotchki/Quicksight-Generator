@@ -28,11 +28,15 @@ embedding, server-side caching (Cache-Control headers in X.2.b.4
 push caching to edge / browser).
 """
 
+from quicksight_gen.common.html._tree_filter_specs import (
+    make_filter_specs_for_sheet,
+)
 from quicksight_gen.common.html.render import (
     CategoryFilterSpec,
     FilterSpec,
     NumericRangeSpec,
     ParameterDropdownSpec,
+    ParameterMultiSelectSpec,
     emit_dashboards_list,
     emit_error_page,
     emit_html,
@@ -44,8 +48,10 @@ __all__ = [
     "FilterSpec",
     "NumericRangeSpec",
     "ParameterDropdownSpec",
+    "ParameterMultiSelectSpec",
     "emit_dashboards_list",
     "emit_error_page",
     "emit_html",
     "emit_visual_data_fragment",
+    "make_filter_specs_for_sheet",
 ]
