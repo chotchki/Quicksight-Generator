@@ -96,11 +96,11 @@ jobs:
   e2e-pg-api:
     needs: auth-smoke
     runs-on: ubuntu-latest
-    # Serialize PG e2e jobs across runs. ``schema apply --execute``
-    # drops + recreates the L2 instance's tables; concurrent runs
-    # would race on the same ``spec_example_*`` table set against
-    # the user's external Aurora. ``cancel-in-progress: false`` lets
-    # the in-flight run finish (and clean up) before the next starts.
+    # Serialize PG e2e jobs across runs. The runner's seed step
+    # drops + recreates the variant's tables; concurrent runs would
+    # race on the same `<variant>_*` table set against the user's
+    # external Aurora. ``cancel-in-progress: false`` lets the in-
+    # flight run finish (and clean up) before the next starts.
     concurrency:
       group: e2e-pg
       cancel-in-progress: false
@@ -119,10 +119,10 @@ jobs:
 
       - name: Install dependencies
         # Extras: ``deploy`` for boto3+botocore[crt], ``demo`` for
-        # psycopg2, ``audit`` for the seed pipeline (data apply pulls
-        # in the audit-generated baseline plants), ``e2e`` for pytest +
-        # pytest-xdist + boto3-stubs. Skip ``[docs]``. Skip
-        # ``playwright install`` — API tests don't render anything.
+        # psycopg2, ``audit`` for the seed pipeline + audit-PDF
+        # render+verify in the runner's db layer, ``e2e`` for pytest +
+        # pytest-xdist + boto3-stubs. Skip ``playwright install`` —
+        # API tests don't render anything.
         run: uv sync --frozen --extra deploy --extra demo --extra audit --extra e2e
 
       - name: Configure AWS credentials via OIDC
@@ -134,9 +134,8 @@ jobs:
       - name: Generate per-run config.yaml
         # ``resource_prefix`` carries the unique GHA run ID so CI runs
         # don't trample each other's QS resources. ``principal_arns``
-        # includes the ci-bot ARN so embed-URL generation in W.6 has a
-        # user with permission to view the dashboards (Path A — bot's
-        # access is per-deploy, not account-wide ADMIN).
+        # includes the ci-bot ARN so embed-URL generation in the
+        # browser tier has a user with permission to view dashboards.
         run: |
           cat > /tmp/ci-pg.yaml <<EOF
           aws_account_id: "470656905821"
@@ -148,77 +147,39 @@ jobs:
             - "${{ secrets.QS_E2E_USER_ARN }}"
           EOF
 
-      - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
-
-      - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
-
-      - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
-
-      - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
-
-      - name: Run API e2e (L1 + Investigation + Executives)
-        # ``-n auto`` lets xdist spread the 3 apps' test files across
-        # the runner's vCPU count (typically 2 on the standard
-        # ubuntu-latest tier). ``-m api`` filters out browser-marked
-        # tests that may be co-located in the same files. Failure of
-        # any one app's tests fails the job, but other apps still run
-        # under xdist's per-worker isolation so the failure manifest
-        # captures every problem in one go.
+      # Y.2.gate.k.1.thin-wrapper (Phase 4). Runner drives the entire
+      # chain: unit → db → app2 → deploy → api. Pinned to
+      # `--variants=sp_pg_aw` (single named scenario × pg dialect ×
+      # aw target) so we deploy ONE dashboard set per run and the
+      # cleanup-pg sweep keys cleanly on ResourcePrefix tag.
+      #
+      # Per-cell artifacts (cmd/stdout/stderr/timings + db-perf top-
+      # queries + manifest) land at runs/<run-id>/sp_pg_aw/<layer>/
+      # — uploaded as workflow artifact below for triage parity with
+      # local invocations.
+      #
+      # No QS_GEN_RUNNER_CI here: aw target is always cfg-driven, no
+      # Docker spin-up to skip. CI mode only matters for lo target.
+      - name: Run runner up_to=api (deploy + API e2e against Aurora)
         env:
-          QS_GEN_E2E: "1"
           QS_GEN_CONFIG: /tmp/ci-pg.yaml
+          QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
           QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
-        run: |
-          .venv/bin/pytest \
-            tests/e2e/test_l1_deployed_resources.py \
-            tests/e2e/test_l1_dashboard_structure.py \
-            tests/e2e/test_inv_deployed_resources.py \
-            tests/e2e/test_inv_dashboard_structure.py \
-            tests/e2e/test_exec_deployed_resources.py \
-            tests/e2e/test_exec_dashboard_structure.py \
-            -m api -v -n auto
+        run: ./run_tests.sh up_to=api --variants=sp_pg_aw
 
-      # W.8a — perf snapshot. Dump pg_stat_statements top-N queries
-      # touching our test schema BEFORE cleanup drops the schema —
-      # the script tolerates the missing extension / permission case
-      # by writing a "skipped" marker, so this step never fails the
-      # job.
-      - name: Dump top expensive queries
-        if: always()
-        run: |
-          .venv/bin/python scripts/dump_top_queries.py \
-            -c /tmp/ci-pg.yaml \
-            -o /tmp/top-queries-pg-api.md \
-            --top 50 \
-            --title "Top expensive PG queries — e2e-pg-api"
-
-      - name: Upload top-queries artifact
+      - name: Upload runner artifacts (per-cell logs + db-perf + manifest)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-pg-api-top-queries-${{ github.run_id }}
-          path: /tmp/top-queries-pg-api.md
+          name: e2e-pg-api-runner-${{ github.run_id }}
+          path: runs/
           if-no-files-found: ignore
           retention-days: 14
 
-      # ``if: always()`` runs even if any prior step (or the test
-      # itself) failed. The ``|| true`` on each clean call prevents a
-      # cleanup failure (e.g. a partially-deployed resource that
-      # doesn't exist yet) from masking the real test failure.
-      # ``-o /tmp/empty-out`` (a directory we never write to) makes
-      # ``json clean`` sweep every ``ManagedBy:quicksight-gen``
-      # resource (scoped by ResourcePrefix=qs-ci-${run_id}-pg post
-      # v8.4.0) since none are "in" the empty out dir.
-      #
-      # This per-job cleanup catches the common path (test failed,
-      # step failed). It does NOT catch the runner being killed
-      # mid-job (GHA hard timeout, OOM, manual cancel). The W.7
-      # ``cleanup-pg`` job below is the belt-and-suspenders for
-      # those cases.
+      # Per-job cleanup catches the common path (test failed, step
+      # failed). It does NOT catch the runner being killed mid-job
+      # (GHA hard timeout, OOM, manual cancel). The W.7 ``cleanup-pg``
+      # job below is the belt-and-suspenders for those cases.
       - name: Cleanup (always)
         if: always()
         run: |
@@ -284,9 +245,7 @@ jobs:
         # ``apt-get install`` for the WebKit system libs (libsoup3,
         # libwebkitgtk-6.0, etc.) — without it, Ubuntu 24.04
         # runners launch Playwright but fail every page open with
-        # ``Host system is missing dependencies to run browsers``,
-        # cascading every browser e2e test to FAIL (seen in the
-        # 2026-05-04 nightly).
+        # ``Host system is missing dependencies to run browsers``.
         run: .venv/bin/playwright install --with-deps webkit
 
       - name: Configure AWS credentials via OIDC
@@ -307,43 +266,24 @@ jobs:
             - "${{ secrets.QS_E2E_USER_ARN }}"
           EOF
 
-      - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg-browser.yaml --execute
-
-      - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg-browser.yaml --execute
-
-      - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg-browser.yaml --execute
-
-      - name: Deploy QS resources
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg-browser.yaml -o /tmp/ci-pg-browser-out --execute
-
-      - name: Run browser e2e (renders + sheet visuals + filters + drilldown)
-        # ``-n 2`` because the standard 2-vCPU GHA runner can't sustain
-        # ``-n 4`` for browser tests without flake (verified empirically
-        # — Playwright timeouts climb under contention). Bumped page
-        # timeout to 60s so the slower browser-tier waits don't trip
-        # on cold-start visual loads.
+      # Y.2.gate.k.1.thin-wrapper. Runner drives unit → db → app2 →
+      # deploy → api → browser chain in one invocation. Note:
+      # `up_to=browser` re-runs the api layer too (chain enforced) —
+      # historically that was a separate job to deploy under a
+      # `-browser` resource_prefix tag. Now: one deploy + both api +
+      # browser tests against it. ResourcePrefix tag still distinct
+      # via the `-browser` cfg suffix so cleanup-pg's two-config
+      # sweep still works.
+      #
+      # `QS_E2E_PAGE_TIMEOUT=60000`: browser tier flake-mitigation —
+      # 2-vCPU runners need slack on cold-start visual loads.
+      - name: Run runner up_to=browser (deploy + browser e2e against Aurora)
         env:
-          QS_GEN_E2E: "1"
           QS_GEN_CONFIG: /tmp/ci-pg-browser.yaml
+          QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
           QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
           QS_E2E_PAGE_TIMEOUT: "60000"
-        run: |
-          .venv/bin/pytest \
-            tests/e2e/test_l1_dashboard_renders.py \
-            tests/e2e/test_l1_sheet_visuals.py \
-            tests/e2e/test_l1_filters.py \
-            tests/e2e/test_inv_dashboard_renders.py \
-            tests/e2e/test_inv_sheet_visuals.py \
-            tests/e2e/test_inv_filters.py \
-            tests/e2e/test_inv_drilldown.py \
-            tests/e2e/test_exec_dashboard_renders.py \
-            tests/e2e/test_exec_sheet_visuals.py \
-            tests/e2e/test_l1_cross_sheet_drill_date_widening.py \
-            tests/e2e/test_l2ft_metadata_cascade.py \
-            -m browser -v -n 2
+        run: ./run_tests.sh up_to=browser --variants=sp_pg_aw
 
       - name: Upload failure screenshots
         if: failure()
@@ -354,23 +294,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # W.8a — perf snapshot. Browser tier exercises every visual,
-      # so this dump is the highest-value of the three.
-      - name: Dump top expensive queries
-        if: always()
-        run: |
-          .venv/bin/python scripts/dump_top_queries.py \
-            -c /tmp/ci-pg-browser.yaml \
-            -o /tmp/top-queries-pg-browser.md \
-            --top 50 \
-            --title "Top expensive PG queries — e2e-pg-browser"
-
-      - name: Upload top-queries artifact
+      - name: Upload runner artifacts (per-cell logs + db-perf + manifest)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-pg-browser-top-queries-${{ github.run_id }}
-          path: /tmp/top-queries-pg-browser.md
+          name: e2e-pg-browser-runner-${{ github.run_id }}
+          path: runs/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -442,50 +371,23 @@ jobs:
             - "${{ secrets.QS_E2E_USER_ARN }}"
           EOF
 
-      - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
-
-      - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
-
-      - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
-
-      - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out --execute
-
-      - name: Run API e2e (L1 + Investigation + Executives)
+      # Y.2.gate.k.1.thin-wrapper. Runner drives unit → db → app2 →
+      # deploy → api against the operator's external Oracle.
+      # `--variants=sp_or_aw` pins to a single named scenario × oracle
+      # dialect × aw target so we deploy ONE dashboard set per run.
+      - name: Run runner up_to=api (deploy + API e2e against external Oracle)
         env:
-          QS_GEN_E2E: "1"
           QS_GEN_CONFIG: /tmp/ci-oracle.yaml
+          QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
           QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
-        run: |
-          .venv/bin/pytest \
-            tests/e2e/test_l1_deployed_resources.py \
-            tests/e2e/test_l1_dashboard_structure.py \
-            tests/e2e/test_inv_deployed_resources.py \
-            tests/e2e/test_inv_dashboard_structure.py \
-            tests/e2e/test_exec_deployed_resources.py \
-            tests/e2e/test_exec_dashboard_structure.py \
-            -m api -v -n auto
+        run: ./run_tests.sh up_to=api --variants=sp_or_aw
 
-      # W.8a — perf snapshot via v$sqlstats. The script tolerates
-      # the no-permission case by writing a "skipped" marker.
-      - name: Dump top expensive queries
-        if: always()
-        run: |
-          .venv/bin/python scripts/dump_top_queries.py \
-            -c /tmp/ci-oracle.yaml \
-            -o /tmp/top-queries-oracle-api.md \
-            --top 50 \
-            --title "Top expensive Oracle queries — e2e-oracle-api"
-
-      - name: Upload top-queries artifact
+      - name: Upload runner artifacts (per-cell logs + db-perf + manifest)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-oracle-api-top-queries-${{ github.run_id }}
-          path: /tmp/top-queries-oracle-api.md
+          name: e2e-oracle-api-runner-${{ github.run_id }}
+          path: runs/
           if-no-files-found: ignore
           retention-days: 14
 
