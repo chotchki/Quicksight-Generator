@@ -54,10 +54,15 @@ quicksight-gen data refresh -c config.yaml --execute
 quicksight-gen audit apply -c config.yaml --execute -o report.pdf
 quicksight-gen audit verify report.pdf -c config.yaml   # recompute + compare provenance
 
-# Tests — canonical entry is the layered chain runner (Y.2.gate.b/c/m).
+# Tests — canonical entry is the layered chain runner (Y.2.gate.b/c/m/n).
 # Layers: unit → db → app2 → deploy → api → browser. Stops on first
 # failure; per-layer artifacts (cmd.json, stdout.log, stderr.log) land
-# under runs/<utc-ts>-<short-sha>/<variant>/<layer>/.
+# under runs/<utc-ts>-<short-sha>/<variant>/<layer>/. The `unit` layer
+# is variant-independent so it runs ONCE per invocation as a prelude
+# (artifacts → runs/<id>/_prelude/unit/), not once per matrix cell
+# (Y.2.gate.n). `up_to=unit` runs just the prelude; `>= db` runs the
+# prelude first, then fans the matrix out starting at `db`; a prelude
+# failure aborts before any cell dispatches.
 #
 # Variant matrix (Y.2.gate.m): 3-axis cells `scenario × dialect × target`.
 # - Scenarios: sp (spec_example), sq (sasquatch_pr), fuzz / fuzz:N (random
@@ -72,8 +77,8 @@ quicksight-gen audit verify report.pdf -c config.yaml   # recompute + compare pr
 # Hard-cut from the legacy `local-pg` / `local-oracle` / `local-sqlite` /
 # `default` variant names (Y.2.gate.m.2, 2026-05-08). Pass legacy names →
 # error with the new sub-flag form to use instead.
-./run_tests.sh up_to=unit                                  # ~20s, no DB / no AWS
-./run_tests.sh up_to=db                                    # full matrix (13 cells, parallel via asyncio.gather)
+./run_tests.sh up_to=unit                                  # ~165s, no DB / no AWS — the variant-independent prelude only
+./run_tests.sh up_to=db                                    # unit prelude once, then full 13-cell matrix (parallel via asyncio.gather)
 ./run_tests.sh up_to=db --dialects=pg --targets=lo         # pg-container only (4 cells: sp/sq × pg × lo)
 ./run_tests.sh up_to=db --scenarios=sp --dialects=pg,or,sl --targets=lo  # 3-dialect spec_example local
 ./run_tests.sh up_to=db --scenarios=sp --targets=aw        # AW-target only (operator's external Aurora + Oracle)
@@ -141,7 +146,7 @@ When `aws_profile` is set:
 
 ### Test sequencing + git hooks (`Y.2.gate.d`+`k.5`+`k.7`)
 
-**Always invoke `./run_tests.sh up_to=<layer>`** for the layer you care about. The chain runner enforces `unit → db → app2 → deploy → api → browser` ordering: invoking layer N runs layers 1..N-1 first.
+**Always invoke `./run_tests.sh up_to=<layer>`** for the layer you care about. The chain runner enforces `unit → db → app2 → deploy → api → browser` ordering: invoking layer N runs layers 1..N-1 first. `unit` is variant-independent, so it runs ONCE per invocation as a prelude before the matrix fans out (Y.2.gate.n) — not once per cell; a prelude failure aborts before any cell dispatches.
 
 **Never invoke `pytest tests/e2e/` (or any direct `pytest`) for layered work.** Bare pytest skips the earlier gates entirely — a SQL bug becomes "the API e2e passed but the deployed dashboard is empty" 15 minutes after a clean test run, instead of a 30-second smoke failure. Y.2.b's SELECT-alias-in-WHERE bug shipped to a deployed dashboard for exactly this reason. Direct pytest is fine for one-off iteration on a single test you're actively writing; treat it as a smell when the chain hasn't run since.
 

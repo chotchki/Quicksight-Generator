@@ -27,6 +27,7 @@ from quicksight_gen.common.html import (
     CategoryFilterSpec,
     NumericRangeSpec,
     ParameterDropdownSpec,
+    ParameterMultiSelectSpec,
     emit_html,
 )
 from quicksight_gen.common.html.server import ServedDashboard, make_app
@@ -198,6 +199,63 @@ def test_numeric_range_label_appears_in_output() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ParameterMultiSelect (Y.2.app2.cde.l2ft-wiring.b)
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_multiselect_emits_select_multiple_with_param_prefix() -> None:
+    """``<select multiple name="param_<name>">`` — the ``param_`` prefix
+    is the URL-key contract the multi-valued dataset-param expander reads."""
+    app, sheet = _build_app()
+    spec = ParameterMultiSelectSpec(
+        name="pL2ftRail", label="Rail",
+        options=("ach", "wire", "check"),
+    )
+    out = emit_html(app, sheet, dashboard_id="x", filter_specs=[spec])
+    assert '<select name="param_pL2ftRail" multiple' in out
+    assert '<option value="ach">ach</option>' in out
+    assert '<option value="wire">wire</option>' in out
+    assert '<option value="check">check</option>' in out
+
+
+def test_parameter_multiselect_has_no_blank_leading_option() -> None:
+    """For a multi-select, "nothing selected" already means "all" (the
+    executor's static-default fallback) — a blank option would be noise."""
+    app, sheet = _build_app()
+    spec = ParameterMultiSelectSpec(name="pX", label="X", options=("a", "b"))
+    out = emit_html(app, sheet, dashboard_id="x", filter_specs=[spec])
+    select_start = out.index('<select name="param_pX" multiple')
+    select_end = out.index('</select>', select_start)
+    assert '<option value="">' not in out[select_start:select_end]
+
+
+def test_parameter_multiselect_label_appears_in_output() -> None:
+    app, sheet = _build_app()
+    spec = ParameterMultiSelectSpec(name="pX", label="Rail Name", options=("a",))
+    out = emit_html(app, sheet, dashboard_id="x", filter_specs=[spec])
+    assert "Rail Name" in out
+
+
+def test_parameter_multiselect_escapes_options() -> None:
+    app, sheet = _build_app()
+    spec = ParameterMultiSelectSpec(
+        name="pX", label="X", options=("<script>alert(1)</script>",),
+    )
+    out = emit_html(app, sheet, dashboard_id="x", filter_specs=[spec])
+    assert "<script>alert(1)</script>" not in out
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in out
+
+
+def test_parameter_multiselect_lives_inside_filter_form() -> None:
+    app, sheet = _build_app()
+    spec = ParameterMultiSelectSpec(name="pX", label="X", options=("a",))
+    out = emit_html(app, sheet, dashboard_id="x", filter_specs=[spec])
+    form_start = out.index('<form id="filter-form"')
+    form_end = out.index('</form>', form_start)
+    assert 'name="param_pX"' in out[form_start:form_end]
+
+
+# ---------------------------------------------------------------------------
 # Mixed + default
 # ---------------------------------------------------------------------------
 
@@ -276,9 +334,11 @@ def test_server_passes_prefix_keyed_params_to_fetcher() -> None:
     delivers the entire query-param dict to the data fetcher. This is
     the server-side contract X.2.f's real fetcher will consume."""
     app, sheet = _build_app()
-    seen: dict[str, dict[str, str]] = {}
+    seen: dict[str, dict[str, list[str]]] = {}
 
-    def fetcher(visual_id: str, params: dict[str, str]) -> dict[str, list[float]]:
+    def fetcher(
+        visual_id: str, params: dict[str, list[str]],
+    ) -> dict[str, list[float]]:
         seen[visual_id] = dict(params)
         return {"values": []}
 
@@ -295,10 +355,10 @@ def test_server_passes_prefix_keyed_params_to_fetcher() -> None:
         "&min_amount=10&max_amount=100",
     )
     assert seen["v-k"] == {
-        "param_account": "acct-1",
-        "filter_status": "open,closed",
-        "min_amount": "10",
-        "max_amount": "100",
+        "param_account": ["acct-1"],
+        "filter_status": ["open,closed"],
+        "min_amount": ["10"],
+        "max_amount": ["100"],
     }
 
 

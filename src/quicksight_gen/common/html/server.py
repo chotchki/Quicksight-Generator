@@ -50,7 +50,7 @@ Pluggable data fetcher
 Each ``ServedDashboard`` owns a ``DataFetcher`` callable so the
 spike + tests can run without a database:
 
-    def stub(visual_id: VisualId, params: Mapping[str, str]) -> Any:
+    def stub(visual_id: VisualId, params: Mapping[str, list[str]]) -> Any:
         return {"nodes": [...], "links": [...]}
 
     app = make_app(dashboards={
@@ -100,6 +100,9 @@ from starlette.staticfiles import StaticFiles
 _DEVLOG = logging.getLogger("quicksight_gen.app2.devlog")
 
 
+from quicksight_gen.common.html._tree_filter_specs import (
+    make_filter_specs_for_sheet,
+)
 from quicksight_gen.common.html.render import (
     FilterSpec,
     emit_dashboards_list,
@@ -129,8 +132,8 @@ from quicksight_gen.common.tree.structure import App, Sheet
 # ``Callable[[str, ...], ...]`` remain assignable here via Callable
 # parameter contravariance (str is wider than VisualId on input).
 DataFetcher = Union[
-    Callable[[VisualId, Mapping[str, str]], Awaitable[Any]],
-    Callable[[VisualId, Mapping[str, str]], Any],
+    Callable[[VisualId, Mapping[str, list[str]]], Awaitable[Any]],
+    Callable[[VisualId, Mapping[str, list[str]]], Any],
 ]
 
 
@@ -165,6 +168,13 @@ class ServedDashboard:
     title: str
     data_fetcher: DataFetcher
     theme: ThemePreset | None = None
+    # Explicit filter-form specs. ``()`` (the common case for tree-built
+    # apps) means the routes auto-derive per-sheet from the tree's
+    # parameter-control nodes via ``make_filter_specs_for_sheet`` —
+    # currently one ``ParameterMultiSelectSpec`` per MULTI_SELECT
+    # ``ParameterDropdown`` (Y.2.app2.cde.l2ft-wiring.b). Supply a
+    # non-empty tuple to override (the smoke app does this for its
+    # hand-crafted demo filters).
     filter_specs: tuple[FilterSpec, ...] = ()
 
 
@@ -267,12 +277,17 @@ def make_app(
         # Single-sheet dashboards get an empty tab strip (suppressed
         # by ``_render_sheet_tabs``).
         sheets = tuple(all_sheets[dash_id].values())
+        # Y.2.app2.cde.l2ft-wiring.b — auto-derive per-sheet filter specs
+        # from the tree when the dashboard didn't supply explicit ones.
+        filter_specs = served.filter_specs or tuple(
+            make_filter_specs_for_sheet(served.sheet),
+        )
         return HTMLResponse(emit_html(
             served.tree_app, served.sheet,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
-            filter_specs=served.filter_specs,
+            filter_specs=filter_specs,
         ))
 
     async def sheet_view(request: Request) -> Response:
@@ -292,12 +307,16 @@ def make_app(
         if sheet_for_dash is None:
             raise HTTPException(status_code=404)
         sheets = tuple(all_sheets[dash_id].values())
+        # Y.2.app2.cde.l2ft-wiring.b — per-sheet auto-derive (see dashboard_view).
+        filter_specs = served.filter_specs or tuple(
+            make_filter_specs_for_sheet(sheet_for_dash),
+        )
         return HTMLResponse(emit_html(
             served.tree_app, sheet_for_dash,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
-            filter_specs=served.filter_specs,
+            filter_specs=filter_specs,
         ))
 
     async def visual_data(request: Request) -> Response:
@@ -320,12 +339,16 @@ def make_app(
         # as ``Any`` from Starlette; ``str()`` narrows then
         # ``VisualId(...)`` brands.
         visual_id = VisualId(str(request.path_params["visual_id"]))
-        # ``Mapping[str, str]`` interface — built mutable for the
-        # short construction window, then handed to the fetcher
-        # contract that promises read-only access.
-        params: dict[str, str] = {}
-        for key, value in request.query_params.items():
-            params[str(key)] = str(value)
+        # ``Mapping[str, list[str]]`` interface — built mutable for
+        # the short construction window, then handed to the fetcher
+        # contract that promises read-only access. ``multi_items()``
+        # preserves repeated keys (``?param_pRail=A&param_pRail=B`` →
+        # ``{"param_pRail": ["A", "B"]}``) so the SQL executor can
+        # expand a multi-valued ``IN``-list (Y.2.app2.cde.multivalued);
+        # single-valued params land as one-element lists.
+        params: dict[str, list[str]] = {}
+        for key, value in request.query_params.multi_items():
+            params.setdefault(str(key), []).append(str(value))
         # X.2.n.5 — dispatch async fetchers directly so the asyncio
         # loop stays free across the SQL roundtrip; only sync stub
         # fetchers (tests + legacy _db_fetcher) get the threadpool

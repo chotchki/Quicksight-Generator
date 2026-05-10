@@ -40,6 +40,16 @@ from quicksight_gen.common.browser.helpers import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
+@pytest.fixture(autouse=True)
+def _require_templates(l2ft_l2_instance) -> None:
+    # Fast-exit when the deployed L2 declares zero transfer templates —
+    # see `conftest.require_l2ft_feature`. Note spec_example declares one
+    # template but the seed fires no instances of it, so the real guard for
+    # that case is the `before <= 0` "table started empty → skip" below.
+    from tests.e2e.conftest import require_l2ft_feature
+    require_l2ft_feature(l2ft_l2_instance, "templates")
+
+
 @pytest.fixture
 def embed_url(region, account_id, l2ft_dashboard_id) -> str:
     return generate_dashboard_embed_url(
@@ -56,13 +66,22 @@ TALL_VIEWPORT = (1600, 4000)
 
 def _navigate_to_templates(page, page_timeout: int) -> None:
     """Open dashboard, switch to Transfer Templates, wait for the
-    Template Instances table to render its first cells."""
+    Template Instances table to render its first cells (best-effort)."""
     wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
     click_sheet_tab(page, "Transfer Templates", timeout_ms=page_timeout)
     # Templates sheet has 2 visuals — the Sankey + the Table. Asserting
     # min_count >= 2 confirms both rendered at least the chrome.
     wait_for_visuals_present(page, min_count=2, timeout_ms=page_timeout)
-    wait_for_table_cells_present(page, timeout_ms=page_timeout)
+    # The Template Instances matview is empty whenever the seed fires no
+    # template instances — spec_example DECLARES a transfer template but
+    # the baseline/plant seed fires none, so the table renders empty and
+    # `sn-table-cell-0-0` never appears. Bound the wait; the caller's
+    # `before <= 0` skip handles the empty case. (Same pattern as
+    # `test_l2ft_chains_dropdowns._navigate_to_chains`.)
+    try:
+        wait_for_table_cells_present(page, timeout_ms=12_000)
+    except Exception:  # empty matview → caller skips on before<=0; no cells to wait for
+        pass
 
 
 def _pick_each_option_and_assert_table_nonempty(

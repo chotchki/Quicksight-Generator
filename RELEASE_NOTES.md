@@ -1,5 +1,82 @@
 # Release Notes
 
+## v8.8.0a19 — Y.2.d/e + App2 convergence + unit-layer prelude
+
+Nineteenth alpha. Closes out the Y.2 L2FT dataset-SQL pushdown sweep,
+brings L2FT onto the App2 (HTMX) renderer with its filter controls
+auto-derived from the tree, hoists the variant-independent `unit` test
+layer out of the per-matrix-cell chain, and lands the gate.l.1
+cold-RDS-start fix. Supersedes v8.8.0a18 (which reached TestPyPI but
+not PyPI — the same gate.l.1 race this release fixes).
+
+### Y.2.d / Y.2.e — L2FT Chains + Transfer Templates → dataset SQL
+
+Same pattern as Y.2.c (Rails), now for the Chains and Transfer
+Templates sheets:
+
+- **Chains** — `pL2ftChainsChain` / `pL2ftChainsCompletion` multi-valued
+  dataset params push the chain-parent / completion-status filters into
+  the chain-instances dataset CustomSQL (subquery wrap so the
+  CASE-aliased `completion_status` is visible to the outer WHERE);
+  drop the `fg-l2ft-chains-*` FilterGroups; `_populate_pushdown_dropdown`
+  wires the analysis-param → dataset-param bridge + MULTI_SELECT
+  dropdown. `parent_chain_name IN ('__no_match__')` sentinel for the
+  empty-instances fallback.
+- **Transfer Templates** — `pL2ftTtTemplate` / `pL2ftTtCompletion`
+  bridge to BOTH the tt-instances Table and the tt-legs Sankey
+  (replacing the `ALL_DATASETS` CategoryFilter); metadata cascade stays
+  in the inner WHERE.
+
+### Y.2.app2.cde — App2 SQL-executor parity + L2FT on App2
+
+- `_sql_executor` honors a QS dataset parameter's static default when
+  the URL doesn't supply it, so a freshly-loaded App2 page matches QS's
+  initial-load render; multi-valued URL params (`?param_pX=A&param_pX=B`)
+  expand to `IN (:param_pX_0, :param_pX_1, …)` bind expansion (never
+  string-spliced). `DataFetcher` contract is `(VisualId, Mapping[str,
+  list[str]])`.
+- L2FT is the fourth app on the generic tree-fetcher path
+  (`quicksight-gen serve app2 apply --app l2_flow_tracing`). New
+  `make_filter_specs_for_sheet` tree-walk renders each MULTI_SELECT
+  `ParameterDropdown` as a `<select multiple>` whose selected options
+  serialise as the repeated-key wire shape the executor consumes —
+  applied route-level so investigation / executives pick it up too.
+  Browser e2e: `tests/e2e/test_html2_l2ft.py`.
+
+### Y.2.f (parked)
+
+Pushing the L1 universal date-range filter into dataset SQL is parked
+pending feature-parity: dataset-level `DateTimeDatasetParameter`
+defaults only support `StaticValues`, not `RollingDate`, so a pushdown
+would shift the L1 dashboard's opening view from "last 7 days" to "all
+dates" — deferred until that trade-off is worth making.
+
+### Y.2.gate.n — `unit` test layer is now a one-time prelude
+
+The chain runner ran the ~165s `unit` suite once *per matrix cell*
+(13× on the full default). `unit` is variant-independent, so
+`./run_tests.sh up_to=<layer>` now runs it once as a prelude
+(`runs/<id>/_prelude/unit/`) before the matrix fans out; `up_to=unit`
+returns after the prelude with no fan-out; a prelude failure aborts
+before any cell dispatches; drift treats `unit` as a run-level timing.
+
+### gate.l.7 — resilient cold-RDS bring-up in CI
+
+New `.github/actions/ensure-rds-available` composite action only issues
+`start-db-*` when the resource is exactly `stopped` and waits out all
+transitional states (`stopping` / `starting` / `configuring-*` / …),
+fixing the `start || true; wait` deadlock that blocked v8.8.0a18's
+PyPI publish. RDS teardown moves to the final `cleanup-*` jobs.
+
+### Test-infra
+
+- L2FT browser tests that exercise an *optional* L2 feature (chains /
+  transfer templates) `pytest.skip` cleanly when the deployed L2 lacks
+  it (`conftest.require_l2ft_feature` — the only thing a valid L2
+  requires is one rail + one account; chains / templates are optional).
+- `test_audit_dashboard_agreement` skips the cross-dialect param for
+  `aw`-target cells (which seed only one dialect's DB).
+
 ## v8.8.0a18 — Y.2.c: L2FT Rails filter pushdown into dataset SQL
 
 Eighteenth alpha. Resumes the Phase Y SQL-pushdown sweep after the

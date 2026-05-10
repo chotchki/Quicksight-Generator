@@ -6,8 +6,12 @@ Invoked via the ``./run_tests.sh`` bash shim at repo root; the shim
 
 Verbs:
     up_to <layer>     Run the chain up to and including <layer>.
-                      Layers: pyright | unit | db | deploy | api | browser.
-                      Equivalent forms: ``up_to=<layer>`` and ``up_to <layer>``.
+                      Layers: unit | db | app2 | deploy | api | browser
+                      (pyright folds into unit via the conftest sessionstart
+                      gate). ``unit`` is variant-independent — it runs ONCE
+                      as a prelude before the matrix fans out (Y.2.gate.n),
+                      not once per cell. Equivalent forms: ``up_to=<layer>``
+                      and ``up_to <layer>``.
     up [scope]        Boot dependencies. scope = local | aws | all (default).
     down [scope]      Tear down dependencies. scope as above.
     status [--cost]   Show what's currently running.
@@ -117,6 +121,16 @@ RUN_TESTS_CACHE_DIR: Final = REPO_ROOT / ".run_tests_cache"
 # names, AWS-side drift, etc.) — caching their pass-state would be
 # unsound.
 SKIPPABLE_LAYERS: Final = ("unit", "db")
+
+# Y.2.gate.n — the `unit` layer (`pytest tests/unit tests/json …`; pyright
+# folded in via the conftest sessionstart gate) is variant-INDEPENDENT — no
+# DB / scenario / dialect / target dependency, byte-identical result every
+# cell. So it runs ONCE per `up_to` invocation as a prelude (before the
+# matrix fans out), not once per matrix cell. Artifacts land under
+# `runs/<run-id>/_prelude/unit/`; the `--skip-cheap` cache marker uses this
+# sentinel as its variant key (cache is variant-aware per b.8 — `_prelude`
+# is the stable run-level bucket, never a real `<sc>_<di>_<ta>` spec name).
+_PRELUDE_VARIANT: Final = "_prelude"
 
 # Matches `<utc-ts>-<short-sha>[-dirty]` from create_run_id(); used by
 # prune_old_runs to only touch directories we created, never unrelated
@@ -593,19 +607,22 @@ def _layer_command(
         return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
     if layer == "app2":
         # b.3.impl.layer — App2 e2e (HTMX dialect, Playwright WebKit
-        # against the App2 Starlette server). Three test files today:
-        # `test_html2_executives.py` + `test_html2_money_trail.py`
-        # use stub fetchers (renderer correctness); `test_html2_executives_live.py`
-        # uses `make_tree_db_fetcher(tree_app, cfg)` against the variant
-        # DB — `connect_demo_db(cfg)` reads `QS_GEN_DEMO_DATABASE_URL`
-        # env override (config.py:364), so the variant URL flows
-        # through naturally. Behind `QS_GEN_E2E=1` like every other
-        # tests/e2e/ file. NO AWS contact (audit §7.10 LOCKED).
+        # against the App2 Starlette server). Stub-fetcher renderer tests:
+        # `test_html2_executives.py`, `test_html2_money_trail.py`, and
+        # `test_html2_l2ft.py` (Y.2.app2.cde.l2ft-wiring.c — proves the
+        # auto-derived MULTI_SELECT pushdown dropdowns render + the
+        # repeated-key `?param_<name>=A&param_<name>=B` refetch wire).
+        # `test_html2_executives_live.py` uses `make_tree_db_fetcher(
+        # tree_app, cfg)` against the variant DB — `connect_demo_db(cfg)`
+        # reads `QS_GEN_DEMO_DATABASE_URL` env override (config.py:364),
+        # so the variant URL flows through naturally. Behind `QS_GEN_E2E=1`
+        # like every other tests/e2e/ file. NO AWS contact (audit §7.10 LOCKED).
         cmd = [
             str(_VENV_BIN / "pytest"),
             "tests/e2e/test_html2_executives.py",
             "tests/e2e/test_html2_executives_live.py",
             "tests/e2e/test_html2_money_trail.py",
+            "tests/e2e/test_html2_l2ft.py",
             "-q",
         ]
         if opts.only:
@@ -2457,6 +2474,79 @@ def _run_one_variant(
     return spec, layer_results, final_code
 
 
+def _run_unit_prelude(prelude_dir: Path, options: RunOptions) -> LayerResult:
+    """Y.2.gate.n — run the variant-independent ``unit`` layer once, as a
+    prelude before the matrix fans out.
+
+    ``unit`` (``pytest tests/unit tests/json …``; pyright via the conftest
+    sessionstart gate) has no DB / scenario / dialect / target dependency —
+    byte-identical result every cell. Running it per matrix cell was pure
+    waste (a 13-cell default ran the ~165s suite up to 13×; ``--skip-cheap``
+    mitigated cells 2..N but is opt-in). Now it runs once here; the per-cell
+    chain starts at ``db``.
+
+    ``--skip-cheap`` is honored via the ``_PRELUDE_VARIANT`` cache bucket
+    (b.8's cache is variant-aware — this is the stable run-level key).
+    Artifacts land under ``prelude_dir / "unit"`` (= ``runs/<id>/_prelude/unit/``)
+    via the standard ``dispatch_layer`` capture.
+    """
+    if options.skip_cheap and is_layer_cached_green("unit", variant=_PRELUDE_VARIANT):
+        print(
+            "runner: layer-cached [unit] skipped (--skip-cheap, current SHA "
+            "already green — prelude)"
+        )
+        return LayerResult(layer="unit", exit_code=0, duration_seconds=0.0, skipped=True)
+
+    result = dispatch_layer("unit", prelude_dir, options)
+    marker = "skip" if result.skipped else ("ok" if result.passed else "FAIL")
+    print(
+        f"runner: layer-{marker} [unit] rc={result.exit_code} "
+        f"duration={result.duration_seconds:.2f}s (prelude — runs once for all cells)"
+    )
+    if not result.skipped and result.passed:
+        write_cache_marker("unit", duration_seconds=result.duration_seconds, variant=_PRELUDE_VARIANT)
+    if not result.passed:
+        print(
+            "runner: stop-on-first-failure — chain halted at unit (prelude); "
+            "matrix not dispatched",
+            file=sys.stderr,
+        )
+    return result
+
+
+def _finalize_run(
+    run_dir: Path,
+    unit_result: LayerResult,
+    cell_aggregated: Sequence[LayerResult],
+    code: int,
+) -> int:
+    """Y.2.gate.n — write the top-level ``timings.json`` (the ``unit`` prelude
+    as a run-level entry + the matrix cells' ``<spec.name>.<layer>`` durations),
+    run the drift diff against the prior run, prune old runs, return ``code``.
+
+    The prelude's ``unit`` timing is a single run-level key (not per-cell), so
+    ``report_drift`` compares it run-over-run with no special-casing in
+    ``compute_drift``. Used by every ``cmd_up_to`` return path (prelude-fail,
+    unit-only, single-cell, multi-cell) so the run-dir is always self-contained.
+    """
+    top_level: list[LayerResult] = [
+        LayerResult(
+            layer="unit",
+            exit_code=unit_result.exit_code,
+            duration_seconds=unit_result.duration_seconds,
+            skipped=unit_result.skipped,
+        ),
+        *cell_aggregated,
+    ]
+    collect_run_outputs(run_dir, top_level)
+    print(f"runner: wrote {_rel_or_abs(run_dir / 'timings.json')}")
+    report_drift(run_dir)
+    pruned = prune_old_runs()
+    if pruned:
+        print(f"runner: pruned {len(pruned)} old run(s) (retained last {RUNS_RETAIN_N})")
+    return code
+
+
 def cmd_up_to(args: argparse.Namespace) -> int:
     """Run the test chain up to and including the named layer.
 
@@ -2483,6 +2573,12 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     cell runs to completion (or its own first failure). Top-level
     ``timings.json`` aggregates across cells with ``<spec.name>.<layer>``
     keys so ``report_drift`` works unchanged.
+
+    Y.2.gate.n — the ``unit`` layer runs ONCE as a prelude (before the
+    matrix fans out), not per cell — it's variant-independent. ``up_to=unit``
+    runs the prelude and returns with no matrix at all; everything ``>= db``
+    runs the prelude first, then fans the matrix out starting at ``db``.
+    A prelude failure aborts before any cell dispatches (stop-on-first-failure).
     """
     options = _options_from_args(args)
 
@@ -2501,6 +2597,32 @@ def cmd_up_to(args: argparse.Namespace) -> int:
             print(f"runner: probe-fail [{failure.kind}] {failure.message}", file=sys.stderr)
         return EXIT_NEEDS_OPERATOR
 
+    # Compose + validate the matrix BEFORE the (expensive) unit prelude so a
+    # bad --scenarios/--dialects/--targets combo fails in <1s, not after the
+    # ~165s unit suite. ``up_to=unit`` is variant-irrelevant — no matrix at
+    # all (the prelude IS the whole run); skip composition entirely there.
+    specs: list[VariantSpec] = []
+    if args.layer != "unit":
+        try:
+            specs, skipped_specs = _compose_specs_from_options(options)
+        except ValueError as exc:
+            print(f"runner: {exc}", file=sys.stderr)
+            return EXIT_NEEDS_OPERATOR
+        # m.4.b — surface invalid-cell skips so operators see the filter
+        # happen rather than silently dropped cells. The only invalid
+        # combination today is sl × aw (sqlite is file-based; QuickSight
+        # has no remote DataSource for it).
+        for skipped in skipped_specs:
+            reason = (
+                "sl × aw: sqlite is file-based; QuickSight can't reach it remotely"
+                if skipped.dialect == "sl" and skipped.target == "aw"
+                else f"unhandled invalid combination ({skipped.dialect} × {skipped.target})"
+            )
+            print(f"runner: skip [{skipped.name}] ({reason})")
+        if not specs:
+            print("runner: variant matrix narrowed to zero cells (sub-flags filtered everything out)", file=sys.stderr)
+            return EXIT_NEEDS_OPERATOR
+
     run_id = create_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -2510,28 +2632,24 @@ def cmd_up_to(args: argparse.Namespace) -> int:
     if options.fuzz_seed_value is not None:
         print(f"runner: fuzz_seed={options.fuzz_seed_value} (pin via QS_GEN_FUZZ_SEED env to repro)")
 
-    try:
-        specs, skipped_specs = _compose_specs_from_options(options)
-    except ValueError as exc:
-        print(f"runner: {exc}", file=sys.stderr)
-        return EXIT_NEEDS_OPERATOR
-    # m.4.b — surface invalid-cell skips so operators see the filter
-    # happen rather than silently dropped cells. The only invalid
-    # combination today is sl × aw (sqlite is file-based; QuickSight
-    # has no remote DataSource for it).
-    for skipped in skipped_specs:
-        reason = (
-            "sl × aw: sqlite is file-based; QuickSight can't reach it remotely"
-            if skipped.dialect == "sl" and skipped.target == "aw"
-            else f"unhandled invalid combination ({skipped.dialect} × {skipped.target})"
-        )
-        print(f"runner: skip [{skipped.name}] ({reason})")
-    if not specs:
-        print("runner: variant matrix narrowed to zero cells (sub-flags filtered everything out)", file=sys.stderr)
-        return EXIT_NEEDS_OPERATOR
+    # Y.2.gate.n — unit prelude: run the variant-independent layer once,
+    # before any matrix fan-out. Artifacts → runs/<id>/_prelude/unit/.
+    prelude_dir = run_dir / _PRELUDE_VARIANT
+    prelude_dir.mkdir(parents=True, exist_ok=True)
+    unit_result = _run_unit_prelude(prelude_dir, options)
+    collect_run_outputs(prelude_dir, [unit_result])
+    print(f"runner: wrote {_rel_or_abs(prelude_dir / 'timings.json')}")
+    if not unit_result.passed:
+        # Prelude failed → don't fan out the matrix at all.
+        return _finalize_run(run_dir, unit_result, [], EXIT_FAILURE)
+    if args.layer == "unit":
+        # Unit-only invocation: the prelude IS the whole run.
+        return _finalize_run(run_dir, unit_result, [], EXIT_SUCCESS)
 
-    chain = chain_through(args.layer)
-    print(f"runner: chain={chain}")
+    # The per-cell chain starts at ``db`` — ``unit`` is the prelude now.
+    chain_full = chain_through(args.layer)
+    chain = chain_full[1:]
+    print(f"runner: chain={chain_full} (unit ran once as prelude; cells run {chain})")
 
     if len(specs) == 1:
         # Single-cell: stay synchronous; nested run_dir uses spec.name
@@ -2545,7 +2663,8 @@ def cmd_up_to(args: argparse.Namespace) -> int:
         )
         collect_run_outputs(cell_dir, layer_results)
         print(f"runner: wrote {_rel_or_abs(cell_dir / 'timings.json')}")
-        # Aggregate single cell to top-level so report_drift still
+        # Aggregate single cell to top-level (alongside the prelude's
+        # `unit` entry, added by _finalize_run) so report_drift still
         # works on the canonical top-level timings.json.
         aggregated_single: list[LayerResult] = [
             LayerResult(
@@ -2556,9 +2675,7 @@ def cmd_up_to(args: argparse.Namespace) -> int:
             )
             for r in layer_results
         ]
-        collect_run_outputs(run_dir, aggregated_single)
-        print(f"runner: wrote {_rel_or_abs(run_dir / 'timings.json')}")
-        report_drift(run_dir)
+        return _finalize_run(run_dir, unit_result, aggregated_single, final_code)
     else:
         # Multi-cell: fan out via asyncio.gather, each cell in its own
         # nested run_dir + with its own ``[<spec.name>] `` terminal prefix.
@@ -2635,10 +2752,11 @@ def cmd_up_to(args: argparse.Namespace) -> int:
             print(f"runner: wrote {_rel_or_abs(variant_dir / 'timings.json')}")
 
         # Aggregated top-level timings.json with ``<spec.name>.<layer>``
-        # keyed durations. ``report_drift`` reads this against the prior
-        # run's top-level — so when both prior + current ran the same
-        # cells, drift fires per-cell per-layer with no special
-        # casing in ``compute_drift``.
+        # keyed durations (plus the prelude's run-level `unit` entry,
+        # added by _finalize_run). ``report_drift`` reads this against the
+        # prior run's top-level — so when both prior + current ran the same
+        # cells, drift fires per-cell per-layer with no special casing in
+        # ``compute_drift``.
         aggregated_results: list[LayerResult] = []
         for cell_spec, layer_results, _ in per_variant_results:
             for r in layer_results:
@@ -2648,9 +2766,6 @@ def cmd_up_to(args: argparse.Namespace) -> int:
                     duration_seconds=r.duration_seconds,
                     skipped=r.skipped,
                 ))
-        collect_run_outputs(run_dir, aggregated_results)
-        print(f"runner: wrote {_rel_or_abs(run_dir / 'timings.json')}")
-        report_drift(run_dir)
 
         # Final code: any non-zero cell fails the run. EXIT_FAILURE
         # wins over EXIT_NEEDS_OPERATOR (real failures hide config gaps
@@ -2663,10 +2778,7 @@ def cmd_up_to(args: argparse.Namespace) -> int:
         else:
             final_code = EXIT_SUCCESS
 
-    pruned = prune_old_runs()
-    if pruned:
-        print(f"runner: pruned {len(pruned)} old run(s) (retained last {RUNS_RETAIN_N})")
-    return final_code
+        return _finalize_run(run_dir, unit_result, aggregated_results, final_code)
 
 
 def _compose_specs_from_options(
@@ -3244,9 +3356,14 @@ Auth (Y.2.gate.h+i):
       docs/audits/y_2_gate_h_i_combined_spike.md   §6 (runbook), §7 (policy)
       docs/audits/_iam/quicksight-gen-local-policy.json
 
-Layer chain (Y.2.gate.b/c):
+Layer chain (Y.2.gate.b/c/n):
   unit -> db -> app2 -> deploy -> api -> browser
   ./run_tests.sh up_to=<layer>  runs the chain through that layer.
+  `unit` is variant-independent, so it runs ONCE per invocation as a
+  prelude (artifacts → runs/<id>/_prelude/unit/) — not once per matrix
+  cell. `up_to=unit` runs just the prelude; `>= db` runs the prelude
+  first, then fans the matrix out starting at `db`. A prelude failure
+  aborts before any cell dispatches.
 
 Variant matrix (Y.2.gate.m):
   No flags = full 13-cell matrix (sp/sq named scenarios × pg/or/sl × lo/aw,

@@ -1,0 +1,85 @@
+name: Ensure RDS available
+description: >
+  Y.2.gate.l.7 — bring a CI-dedicated RDS cluster (Aurora) or instance to
+  `available`, tolerating in-flight transitions. The naive
+  `start-db-cluster || true; wait db-cluster-available` raced: a sibling
+  job's fire-and-forget `stop` leaves the resource `stopping`, so `start`
+  errors (swallowed) and `wait` then blocks forever on an `available` that
+  never comes. This polls every state and only issues `start-db-*` when the
+  resource is truly `stopped`; transitional states (`stopping` / `starting`
+  / `configuring-*` / `backing-up` / `modifying` / `maintenance` /
+  `upgrading` / `resetting-*`) are waited out. No-op when the identifier
+  input is empty (pre-gate.l shape — secret unset).
+inputs:
+  cluster-id:
+    description: DBClusterIdentifier (Aurora). Mutually exclusive with instance-id.
+    required: false
+    default: ""
+  instance-id:
+    description: DBInstanceIdentifier (single-instance RDS). Mutually exclusive with cluster-id.
+    required: false
+    default: ""
+  timeout-seconds:
+    description: Max wait for `available` before failing the step.
+    required: false
+    default: "1800"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CLUSTER_ID: ${{ inputs.cluster-id }}
+        INSTANCE_ID: ${{ inputs.instance-id }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: |
+        set -euo pipefail
+        if [ -z "$CLUSTER_ID" ] && [ -z "$INSTANCE_ID" ]; then
+          echo "ensure-rds-available: no identifier given — skipping (pre-gate.l shape)"
+          exit 0
+        fi
+        if [ -n "$CLUSTER_ID" ]; then
+          kind=cluster; id="$CLUSTER_ID"
+        else
+          kind=instance; id="$INSTANCE_ID"
+        fi
+        describe() {
+          if [ "$kind" = cluster ]; then
+            aws rds describe-db-clusters --db-cluster-identifier "$id" \
+              --query 'DBClusters[0].Status' --output text 2>/dev/null || echo unknown
+          else
+            aws rds describe-db-instances --db-instance-identifier "$id" \
+              --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo unknown
+          fi
+        }
+        request_start() {
+          if [ "$kind" = cluster ]; then
+            aws rds start-db-cluster --db-cluster-identifier "$id" >/dev/null 2>&1 || true
+          else
+            aws rds start-db-instance --db-instance-identifier "$id" >/dev/null 2>&1 || true
+          fi
+        }
+        deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
+        while :; do
+          status=$(describe)
+          echo "ensure-rds-available: $kind $id → $status"
+          case "$status" in
+            available)
+              echo "ensure-rds-available: $id ready"
+              exit 0
+              ;;
+            stopped)
+              echo "ensure-rds-available: $id stopped — requesting start"
+              request_start
+              ;;
+            *)
+              # starting / stopping / configuring-* / backing-up / modifying /
+              # maintenance / upgrading / resetting-* / unknown — wait it out.
+              :
+              ;;
+          esac
+          if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "::error::ensure-rds-available: $id never reached 'available' within ${TIMEOUT_SECONDS}s (last: $status)"
+            exit 1
+          fi
+          sleep 30
+        done

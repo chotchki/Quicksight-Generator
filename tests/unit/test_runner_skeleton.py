@@ -25,6 +25,19 @@ from quicksight_gen.common.env_keys import (
 from quicksight_gen.common.variant import ScenarioCode, VariantSpec
 
 
+@pytest.fixture(autouse=True)
+def _stub_perf_dump(monkeypatch: Any) -> None:
+    """``_dump_top_queries_for_variant`` connects to the cell's live DB
+    (operator's Aurora/Oracle for ``aw`` cells, the container for ``lo``).
+    Unit tests must never touch a live DB — stub it module-wide so tests
+    that exercise ``_run_one_variant`` don't hang on a stopped Aurora
+    endpoint. The dump itself is exercised by the runner's live verify,
+    not here. (No-op in CI where ``run/config.*.yaml`` is absent and the
+    helper already early-returns, but the stub is the load-bearing thing
+    locally where those cfgs exist.)"""
+    monkeypatch.setattr(runner, "_dump_top_queries_for_variant", lambda *a, **kw: None)
+
+
 # m.2.f — Convenience constructors for tests; variant cells are now
 # 3-tuple <sc>_<di>_<ta> spec objects, not free-form strings.
 def _spec_pg_lo() -> VariantSpec:
@@ -466,6 +479,7 @@ def test_layer_command_app2_dispatches_html2_tests() -> None:
     assert "test_html2_executives.py" in cmd_str
     assert "test_html2_executives_live.py" in cmd_str
     assert "test_html2_money_trail.py" in cmd_str
+    assert "test_html2_l2ft.py" in cmd_str  # Y.2.app2.cde.l2ft-wiring.c
     # Behind QS_GEN_E2E=1 like every other tests/e2e/ file.
     assert env_addl["QS_GEN_E2E"] == "1"
     assert env_addl["QS_GEN_LAYER"] == "app2"
@@ -653,7 +667,107 @@ def test_cmd_up_to_runs_full_chain_when_all_pass() -> None:
         # Pin single AW cell so the dispatch order is deterministic.
         code = runner.main(["up_to=browser", "--variants=sp_pg_aw"])
     assert code == runner.EXIT_SUCCESS
+    # Y.2.gate.n — `unit` is the prelude (dispatched once, before the cell);
+    # the single AW cell then runs db→app2→deploy→api→browser.
     assert dispatched == ["unit", "db", "app2", "deploy", "api", "browser"]
+
+
+# Y.2.gate.n — the `unit` layer runs ONCE as a prelude, not per matrix cell.
+
+
+def test_cmd_up_to_unit_only_runs_prelude_and_skips_matrix() -> None:
+    """``up_to=unit`` runs the prelude once and returns — no matrix fan-out
+    at all (unit is variant-irrelevant). No ``--variants`` needed since the
+    matrix is never composed."""
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "_run_one_variant") as mock_run_one,
+    ):
+        code = runner.main(["up_to=unit"])
+    assert code == runner.EXIT_SUCCESS
+    assert dispatched == ["unit"]
+    mock_run_one.assert_not_called()
+
+
+def test_cmd_up_to_runs_unit_prelude_exactly_once_across_cells() -> None:
+    """With ≥2 matrix cells, the variant-independent ``unit`` layer dispatches
+    exactly once (the prelude), not once per cell — that's the whole point of
+    Y.2.gate.n. Each cell still runs its own ``db`` layer."""
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "_is_dirty", return_value=False),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "seed_variant"),  # m.5 fix-up — see test_cmd_up_to_stops_on_first_failure.
+    ):
+        # Two AW cells: sp_pg_aw + sp_or_aw.
+        code = runner.main(
+            ["up_to=db", "--scenarios=sp", "--dialects=pg,or", "--targets=aw"],
+        )
+    assert code == runner.EXIT_SUCCESS
+    assert dispatched.count("unit") == 1, f"unit ran {dispatched.count('unit')}× — should be once (prelude)"
+    assert dispatched.count("db") == 2, f"each of the 2 cells should run db: {dispatched}"
+
+
+def test_cmd_up_to_prelude_failure_aborts_before_matrix() -> None:
+    """A failing ``unit`` prelude → EXIT_FAILURE and no matrix dispatch at
+    all (stop-on-first-failure applies to the prelude too)."""
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        rc = 1 if layer == "unit" else 0
+        return runner.LayerResult(layer=layer, exit_code=rc, duration_seconds=0.01)
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "_is_dirty", return_value=False),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "_run_one_variant") as mock_run_one,
+    ):
+        code = runner.main(["up_to=db", "--variants=sp_pg_aw"])
+    assert code == runner.EXIT_FAILURE
+    assert dispatched == ["unit"]
+    mock_run_one.assert_not_called()
+
+
+def test_cmd_up_to_skip_cheap_skips_unit_prelude_when_cached() -> None:
+    """``--skip-cheap`` + a green ``unit`` cache marker for the current SHA
+    (keyed by the ``_PRELUDE_VARIANT`` bucket) → the prelude doesn't dispatch.
+    The matrix cells still run (``db`` not cached for the cell's variant)."""
+    dispatched: list[str] = []
+
+    def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        dispatched.append(layer)
+        return runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01)
+
+    def fake_cached(layer: str, *, variant: str = "default") -> bool:
+        # Only the unit prelude (variant=_PRELUDE_VARIANT) is "already green".
+        return layer == "unit" and variant == runner._PRELUDE_VARIANT
+
+    with (
+        patch.object(runner, "probe_dependencies", return_value=[]),
+        patch.object(runner, "_is_dirty", return_value=False),
+        patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
+        patch.object(runner, "is_layer_cached_green", side_effect=fake_cached),
+        patch.object(runner, "seed_variant"),  # m.5 fix-up — see test_cmd_up_to_stops_on_first_failure.
+    ):
+        code = runner.main(["up_to=db", "--variants=sp_pg_aw", "--skip-cheap"])
+    assert code == runner.EXIT_SUCCESS
+    assert "unit" not in dispatched, f"prelude should be cache-skipped: {dispatched}"
+    assert "db" in dispatched, f"the cell's db layer should still run: {dispatched}"
 
 
 def test_prune_runs_pattern_accepts_dirty_suffix() -> None:
@@ -1027,6 +1141,13 @@ def test_cmd_up_to_qs_gen_runner_yes_env_bypasses_dirty(monkeypatch: Any) -> Non
         patch.object(runner, "_is_dirty", return_value=True),
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "_run_one_variant", side_effect=fake_run_one),
+        # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+        # leaves the prelude's real dispatch_layer("unit") path, which would
+        # recursively spawn pytest).
+        patch.object(
+            runner, "_run_unit_prelude",
+            return_value=runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.01),
+        ),
     ):
         # Pin to a single AWS cell — full matrix would try to import
         # testcontainers (Reaper pre-warm in cmd_up_to) which we don't
@@ -1788,7 +1909,9 @@ def test_cmd_up_to_skip_cheap_short_circuits_cached_layer(
     monkeypatch.setattr(runner, "RUN_TESTS_CACHE_DIR", tmp_path / ".cache")
     monkeypatch.delenv(QS_GEN_RUNNER_YES.name, raising=False)
 
-    runner.write_cache_marker("unit", duration_seconds=1.0, variant="sp_pg_lo")
+    # Y.2.gate.n — the `unit` cache marker is keyed by the `_PRELUDE_VARIANT`
+    # sentinel (unit runs once as a run-level prelude, not per cell).
+    runner.write_cache_marker("unit", duration_seconds=1.0, variant=runner._PRELUDE_VARIANT)
 
     dispatched: list[str] = []
 
@@ -1805,7 +1928,7 @@ def test_cmd_up_to_skip_cheap_short_circuits_cached_layer(
     ):
         code = runner.main(["up_to=db", "--variants=sp_pg_lo", "--skip-cheap"])
     assert code == runner.EXIT_SUCCESS
-    # unit was cached → not dispatched. db was not cached → dispatched.
+    # unit prelude was cached → not dispatched. db was not cached → dispatched.
     assert "unit" not in dispatched
     assert "db" in dispatched
 
@@ -2068,8 +2191,13 @@ def _stub_runner_for_keep_test(
     monkeypatch.setattr(runner, "seed_variant", lambda spec, env, **_: None)
 
     def fake_dispatch(layer: str, run_dir: Path, options: Any = None, **kwargs: Any) -> runner.LayerResult:
+        # Y.2.gate.n — `unit` is the prelude (variant-independent); it always
+        # passes here so the per-variant chain (db) is reached. `layer_passes`
+        # controls the per-variant layers — that's where the f.5 keep/teardown
+        # contract is exercised.
+        passed = True if layer == "unit" else layer_passes
         return runner.LayerResult(
-            layer=layer, exit_code=0 if layer_passes else 1,
+            layer=layer, exit_code=0 if passed else 1,
             duration_seconds=0.1,
         )
 
@@ -2806,7 +2934,12 @@ def test_cmd_up_to_seed_failure_still_runs_teardown(
         runner, "teardown_variant",
         lambda h: teardown_calls.append(h),
     )
-    monkeypatch.setattr(runner, "dispatch_layer", lambda *a, **k: None)
+    # dispatch_layer is only reached for the `unit` prelude here (seed_variant
+    # raises before the per-variant layer loop) — return a passing LayerResult.
+    monkeypatch.setattr(
+        runner, "dispatch_layer",
+        lambda layer, *a, **k: runner.LayerResult(layer=layer, exit_code=0, duration_seconds=0.01),
+    )
     monkeypatch.setattr(runner, "probe_dependencies", lambda layer: [])
 
     parser = runner._build_parser()
@@ -2845,10 +2978,18 @@ def test_cmd_up_to_multi_variant_runs_each_variant(
         ], runner.EXIT_SUCCESS
 
     monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+    # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+    # leaves the prelude's real dispatch_layer("unit"), which recursively
+    # spawns pytest). up_to=db so the matrix actually fans out — up_to=unit
+    # now returns after the prelude with no per-cell fan-out at all.
+    monkeypatch.setattr(
+        runner, "_run_unit_prelude",
+        lambda *a, **k: runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+    )
 
     parser = runner._build_parser()
     args = parser.parse_args([
-        "up_to", "unit", "--variants", "sp_pg_lo,sp_or_lo",
+        "up_to", "db", "--variants", "sp_pg_lo,sp_or_lo",
     ])
     rc = runner.cmd_up_to(args)
     assert rc == runner.EXIT_SUCCESS
@@ -2878,10 +3019,18 @@ def test_cmd_up_to_multi_variant_nests_run_dir_per_variant(
         ], runner.EXIT_SUCCESS
 
     monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+    # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+    # leaves the prelude's real dispatch_layer("unit"), which recursively
+    # spawns pytest). up_to=db so the matrix actually fans out — up_to=unit
+    # now returns after the prelude with no per-cell fan-out at all.
+    monkeypatch.setattr(
+        runner, "_run_unit_prelude",
+        lambda *a, **k: runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+    )
 
     parser = runner._build_parser()
     args = parser.parse_args([
-        "up_to", "unit", "--variants", "sp_pg_lo,sp_or_lo",
+        "up_to", "db", "--variants", "sp_pg_lo,sp_or_lo",
     ])
     runner.cmd_up_to(args)
 
@@ -2916,10 +3065,18 @@ def test_cmd_up_to_multi_variant_threads_terminal_prefix(
         ], runner.EXIT_SUCCESS
 
     monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+    # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+    # leaves the prelude's real dispatch_layer("unit"), which recursively
+    # spawns pytest). up_to=db so the matrix actually fans out — up_to=unit
+    # now returns after the prelude with no per-cell fan-out at all.
+    monkeypatch.setattr(
+        runner, "_run_unit_prelude",
+        lambda *a, **k: runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+    )
 
     parser = runner._build_parser()
     args = parser.parse_args([
-        "up_to", "unit", "--variants", "sp_pg_lo,sp_or_lo",
+        "up_to", "db", "--variants", "sp_pg_lo,sp_or_lo",
     ])
     runner.cmd_up_to(args)
 
@@ -2956,10 +3113,18 @@ def test_cmd_up_to_multi_variant_soft_fast_fail_per_variant(
         ], runner.EXIT_SUCCESS
 
     monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+    # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+    # leaves the prelude's real dispatch_layer("unit"), which recursively
+    # spawns pytest). up_to=db so the matrix actually fans out — up_to=unit
+    # now returns after the prelude with no per-cell fan-out at all.
+    monkeypatch.setattr(
+        runner, "_run_unit_prelude",
+        lambda *a, **k: runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+    )
 
     parser = runner._build_parser()
     args = parser.parse_args([
-        "up_to", "unit", "--variants", "sp_pg_lo,sp_or_lo",
+        "up_to", "db", "--variants", "sp_pg_lo,sp_or_lo",
     ])
     rc = runner.cmd_up_to(args)
     # Both cells ran — soft fast-fail did not skip the sibling.
@@ -2987,10 +3152,18 @@ def test_cmd_up_to_multi_variant_aggregates_timings(
         ], runner.EXIT_SUCCESS
 
     monkeypatch.setattr(runner, "_run_one_variant", fake_run_one)
+    # Y.2.gate.n — stub the unit prelude (mocking _run_one_variant alone
+    # leaves the prelude's real dispatch_layer("unit"), which recursively
+    # spawns pytest). up_to=db so the matrix actually fans out — up_to=unit
+    # now returns after the prelude with no per-cell fan-out at all.
+    monkeypatch.setattr(
+        runner, "_run_unit_prelude",
+        lambda *a, **k: runner.LayerResult(layer="unit", exit_code=0, duration_seconds=0.1),
+    )
 
     parser = runner._build_parser()
     args = parser.parse_args([
-        "up_to", "unit", "--variants", "sp_pg_lo,sp_or_lo",
+        "up_to", "db", "--variants", "sp_pg_lo,sp_or_lo",
     ])
     runner.cmd_up_to(args)
 

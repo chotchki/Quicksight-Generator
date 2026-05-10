@@ -36,6 +36,15 @@ from quicksight_gen.common.browser.helpers import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
+@pytest.fixture(autouse=True)
+def _require_chains(l2ft_l2_instance) -> None:
+    # Fast-exit when the deployed L2 declares zero chains (spec_example) —
+    # see `conftest.require_l2ft_feature` for the rationale + the
+    # "declared ≠ instantiated" caveat the `before <= 0` skip below covers.
+    from tests.e2e.conftest import require_l2ft_feature
+    require_l2ft_feature(l2ft_l2_instance, "chains")
+
+
 @pytest.fixture
 def embed_url(region, account_id, l2ft_dashboard_id) -> str:
     return generate_dashboard_embed_url(
@@ -51,11 +60,20 @@ TALL_VIEWPORT = (1600, 4000)
 
 def _navigate_to_chains(page, page_timeout: int) -> None:
     """Open dashboard, switch to Chains, wait for the Chain Instances
-    table to render its first cells."""
+    table to render its first cells (best-effort — see below)."""
     wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
     click_sheet_tab(page, "Chains", timeout_ms=page_timeout)
     wait_for_visuals_present(page, min_count=1, timeout_ms=page_timeout)
-    wait_for_table_cells_present(page, timeout_ms=page_timeout)
+    # The Chain Instances matview is empty when the deployed L2 declares no
+    # chains (spec_example) OR declares them but the seed fires no instances
+    # (a non-zero `declared_chain_parents` is necessary but not sufficient).
+    # `sn-table-cell-0-0` then never appears — don't burn `page_timeout` on
+    # it; bound the wait and let the caller's `before <= 0` skip handle the
+    # empty case. A populated table renders cells in ~1-3s, so 12s is ample.
+    try:
+        wait_for_table_cells_present(page, timeout_ms=12_000)
+    except Exception:  # empty matview → caller skips on before<=0; no cells to wait for
+        pass
 
 
 def _pick_each_option_and_assert_table_nonempty(
