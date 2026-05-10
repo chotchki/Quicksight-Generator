@@ -1,5 +1,69 @@
 # Release Notes
 
+## v8.8.0a20 — Y.2.gate close-out (k.1.coverage + l.8 release-pipeline fix)
+
+Twentieth alpha. Closes `Y.2.gate` (a–o all landed). Supersedes
+v8.8.0a18 and v8.8.0a19 — both reached TestPyPI but not PyPI because
+the release pipeline's `e2e-against-testpypi` gate kept getting
+**cancelled** by a concurrency-group collision (`Y.2.gate.l.8` below
+is the fix). No `quicksight_gen` package behavior changes vs a19 — this
+is a test-infra + CI-pipeline release.
+
+### Y.2.gate.k.1.coverage — runner emits coverage data behind `--coverage`
+
+- New `RunOptions.coverage` + `--coverage` flag on `./run_tests.sh
+  up_to=<layer>`. When set, every pytest layer (unit / db / app2 / api
+  / browser — not `deploy`, which is a `quicksight-gen json apply` CLI
+  call) runs with `--cov=quicksight_gen --cov-report=` and points
+  `COVERAGE_FILE` at `<run_dir>/.coverage.<variant>.<layer>` — one
+  uniquely-suffixed data file per (variant, layer).
+- `ci.yml::integration-pg` now passes `--coverage`, flattens
+  `runs/**/.coverage.*` to the repo root, and uploads
+  `coverage-data-pg-runner`; the `coverage` aggregator job gains
+  `needs: integration-pg` and picks the data up via its existing
+  `coverage-data-*` glob + `coverage combine` (W.8b unchanged).
+  `integration-oracle` deliberately stays out (conditional job; its
+  Oracle dialect branches are unit-covered by `test_sql_dialect.py`).
+- `.gitignore`: `.coverage` → `.coverage*`.
+- Closes `Y.2.gate.k` / `k.1` (the literal "push:main + PR cells run
+  `up_to=browser variants=full`" was superseded by `k.3`'s cost-tiering
+  + the thin-wrapper migration) and `Y.2.gate.o` (the `Y.2.c+
+  unblocked` terminal gate — a–o all done). The m.4 follow-up "App2
+  Oracle column-casing bug" was confirmed already fixed by `Y.3.f.alt`
+  (re-verified: `up_to=app2 --variants=sp_or_lo` green).
+
+### Y.2.gate.l.8 — `e2e-against-testpypi` own concurrency group + disjoint per-release L2
+
+**The bug it kills:** `release.yml::e2e-against-testpypi` shared the
+`e2e-pg` concurrency group with `e2e.yml`'s push:main PG jobs. Cutting
+a release pushes the merge-to-main and the tag at ~the same time, so
+this release-e2e gate (pending behind whichever e2e.yml job grabbed
+`e2e-pg` first) and a *second* push's `e2e-pg-api` both become pending
+in `e2e-pg` — GitHub keeps only the LATEST pending run per group and
+**cancels the older one**, which is this gate → `publish-pypi` (which
+`needs:` it) is skipped → the release never reaches PyPI. v8.8.0a18 AND
+v8.8.0a19 both died this way. `cancel-in-progress: false` does not
+prevent it — it only protects the *in-progress* run.
+
+**Fix:**
+- `e2e-against-testpypi` moves to its own group `e2e-pg-release` (never
+  the evictable pending run).
+- It now deploys against a synthesized per-release L2 instance
+  (`sed "s/^instance:.*/instance: rel_<safe-tag>/" tests/l2/spec_example.yaml`)
+  → tables `rel_<safe-tag>_*`, disjoint from e2e.yml's `sp_pg_aw_*`
+  and `cleanup-pg`'s `spec_example_*` — plus its already-distinct QS
+  `resource_prefix` (`qs-release-<tag>`) — so the now-possible
+  concurrent runs can't collide on QS resources or DB tables. `--l2
+  /tmp/release-l2.yaml` threaded through schema / data / json apply +
+  data refresh + schema clean + json clean.
+- "Last one stops the cluster": `cleanup-pg::Stop PG cluster` and
+  `e2e-against-testpypi::Stop PG cluster` only `aws rds stop-db-cluster`
+  when `gh run list` shows no other in-progress/queued E2E or Release
+  run (else leave it up; the operator's `./run_tests.sh down aws` is
+  the backstop; `|| echo 1` fail-safe = don't stop on a check failure).
+  Needs `actions: read` (workflow-wide in e2e.yml; on the job in
+  release.yml).
+
 ## v8.8.0a19 — Y.2.d/e + App2 convergence + unit-layer prelude
 
 Nineteenth alpha. Closes out the Y.2 L2FT dataset-SQL pushdown sweep,
