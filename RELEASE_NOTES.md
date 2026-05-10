@@ -1,5 +1,66 @@
 # Release Notes
 
+## v8.8.0a16 — Y.2.gate.k.1.absorb-audit + thin-wrapper + k.6 closeout
+
+Sixteenth alpha. Closes Y.2.gate.k.1.absorb-audit (Phase 2.5),
+k.1.thin-wrapper (Phase 4), and k.6 (workflows as runner wrappers).
+Only k.1.coverage (Phase 3) remains under k.1.
+
+### k.1.absorb-audit — audit-PDF render+verify in runner db layer
+
+New `tests/e2e/test_audit_pdf_render_verify.py` wraps
+`quicksight-gen audit apply --execute` + `audit verify` as pytest
+that reads `QS_GEN_CONFIG` + `QS_GEN_TEST_L2_INSTANCE` from the
+variant subprocess env. Wired into the runner's `db` layer dispatch
+alongside the SQL smoke + row-count tests.
+
+The runner's `db` layer now dispatches three e2e files in one shot:
+- `test_dataset_sql_smoke.py` — every dataset's CustomSQL → live DB
+- `test_demo_apply_row_counts.py` — ≥1 row per named matview
+- `test_audit_pdf_render_verify.py` — audit render + provenance
+  fingerprint verify cycle
+
+All three pick up the variant's synthesized prefix
+(`<spec.name>_*`) automatically — no more workflow-side prefix
+mismatches like the one that broke v8.8.0a15's Phase 1 proof.
+
+Local CI-mode verify against transient `postgres:17` AND
+`gvenzl/oracle-free:23-faststart` containers — both passed (43
+db-layer tests in ~9s on each dialect).
+
+### k.1.thin-wrapper + k.6 — workflow YAMLs become runner wrappers
+
+`ci.yml::integration-pg`, `ci.yml::integration-oracle`,
+`e2e.yml::e2e-pg-api`, `e2e.yml::e2e-pg-browser`,
+`e2e.yml::e2e-oracle-api` all migrated. Each job now boils down to:
+
+```yaml
+- install deps
+- (e2e.yml: configure AWS creds via OIDC)
+- generate per-job config.yaml
+- ./run_tests.sh up_to=<layer> --variants=<spec.name>
+- upload runs/ artifact (per-cell logs + db-perf + manifest)
+- cleanup
+```
+
+Net diff in e2e.yml: -100 lines (62 added, 160 removed). ci.yml's
+two integration jobs collapsed by similar margins. Per-cell
+artifacts (cmd/stdout/stderr/timings + db-perf top-queries +
+manifest) flow through `runs/<run-id>/<variant>/<layer>/`
+uniformly — local triage shape == CI triage shape (closes the
+contract laid down by gate.k.7).
+
+`cleanup-pg` + `cleanup-oracle` stay as separate
+belt-and-suspenders jobs — they catch the runner-died case
+(GHA hard-timeout / OOM / manual cancel) the per-job `if: always()`
+step can't.
+
+### release.yml unchanged
+
+`release.yml` keeps its own publish-side shape. Its Tests/Smoke
+cells predate the runner and are disjoint from CI test
+orchestration; the runner pattern doesn't apply.
+
 ## v8.8.0a15 — Y.2.gate.k.1+k.6 spike + Phase 1 wedge
 
 Fifteenth alpha. Lands the runner CI-mode unblocker for k.1 + k.6,
