@@ -6,9 +6,9 @@ contract; the HTMX dialect needs the same shapes produced here from
 SQL rows. This module is the single source of truth for the contract:
 
 - ``shape_kpi``         → ``{values: [{value, label, format, delta}]}``
-- ``shape_table``       → ``{columns, rows, page_offset, page_size, total_rows, sort_column}``
+- ``shape_table``       → ``{columns: [{name}], rows, page_offset, page_size, total_rows, sort_column}``
 - ``shape_bar_chart``   → ``{categories, values, x_label, y_label}``
-- ``shape_line_chart``  → ``{series: [{name, points: [{x, y}]}], x_label, y_label}``
+- ``shape_line_chart``  → ``{x_values, series: [{name, values: [num]}], x_label, y_label}``
 - ``shape_sankey``      → ``{nodes, links}``  (delegates to existing helper)
 - ``shape_force_graph`` → ``{nodes, links}``  (delegates to existing helper)
 
@@ -81,9 +81,14 @@ def shape_table(
     as "one page of N rows". ``total_rows`` defaults to len(rows)
     when not supplied (no separate count query) — the renderer's
     pagination UI will hide page-N-of-M when total == page size.
+
+    ``columns`` go out as ``[{"name": <col>}]`` objects — that's the
+    shape ``bootstrap.js::renderTable`` reads (it uses ``col.name`` for
+    the header label and ``col.format`` for numeric alignment; a future
+    pass can thread per-column ``format`` through from the tree).
     """
     return {
-        "columns": list(columns),
+        "columns": [{"name": str(c)} for c in columns],
         "rows": [list(r) for r in rows],
         "page_offset": page_offset,
         "page_size": page_size if page_size is not None else len(rows),
@@ -147,41 +152,53 @@ def shape_line_chart(
     Single-series is the common case (timeseries → daily volume
     line); multi-series covers the "compare A vs B" overlay
     pattern.
+
+    Output shape matches ``bootstrap.js::renderLineChart``:
+    ``{"x_values": [...], "series": [{"name", "values": [num | None]}],
+    "x_label", "y_label"}`` — ``values`` is index-aligned to
+    ``x_values`` (``None`` where a series has no point at that x).
     """
+    x_label_out = (
+        x_label if x_label is not None
+        else (str(columns[0]) if columns else "")
+    )
     if series_column is None:
-        points = [{"x": r[0], "y": r[1] if len(r) > 1 else 0} for r in rows]
-        series_name = columns[1] if len(columns) > 1 else "value"
+        x_values = [r[0] for r in rows]
+        values: list[Any] = [r[1] if len(r) > 1 else 0 for r in rows]
+        series_name = str(columns[1]) if len(columns) > 1 else "value"
         return {
-            "series": [{"name": series_name, "points": points}],
-            "x_label": (
-                x_label if x_label is not None
-                else (columns[0] if columns else "")
-            ),
+            "x_values": x_values,
+            "series": [{"name": series_name, "values": values}],
+            "x_label": x_label_out,
             "y_label": (
                 y_label if y_label is not None
-                else (columns[1] if len(columns) > 1 else "")
+                else (str(columns[1]) if len(columns) > 1 else "")
             ),
         }
-    # Multi-series — bucket by series_column.
-    buckets: dict[Any, list[dict[str, Any]]] = {}
+    # Multi-series — bucket each series' (x → y) and align every
+    # series to the shared, first-seen-ordered x axis.
+    x_order: list[Any] = []
+    buckets: dict[Any, dict[Any, Any]] = {}
     for row in rows:
         series_key = row[series_column]
-        # x is column 0; y is the first column that's neither 0 nor
-        # series_column.
+        x_val = row[0]
+        if x_val not in x_order:
+            x_order.append(x_val)
+        # y is the first column that's neither 0 nor series_column.
         y_idx = next(
             (i for i in range(len(row)) if i != 0 and i != series_column),
             None,
         )
-        y_val = row[y_idx] if y_idx is not None else 0
-        buckets.setdefault(series_key, []).append({"x": row[0], "y": y_val})
+        buckets.setdefault(series_key, {})[x_val] = (
+            row[y_idx] if y_idx is not None else 0
+        )
     return {
+        "x_values": x_order,
         "series": [
-            {"name": str(name), "points": pts} for name, pts in buckets.items()
+            {"name": str(name), "values": [pts.get(x) for x in x_order]}
+            for name, pts in buckets.items()
         ],
-        "x_label": (
-            x_label if x_label is not None
-            else (columns[0] if columns else "")
-        ),
+        "x_label": x_label_out,
         "y_label": y_label if y_label is not None else "",
     }
 

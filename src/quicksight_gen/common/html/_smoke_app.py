@@ -287,20 +287,18 @@ def _showcase_bar(params: dict[str, str]) -> dict[str, Any]:
 
 def _showcase_line(params: dict[str, str]) -> dict[str, Any]:
     """Stub line chart. Series amplitude seeds off date_from + date_to
-    so a date change visibly reshapes the curve."""
+    so a date change visibly reshapes the curve. Output shape matches
+    renderLineChart / _data_shape.shape_line_chart: parallel
+    ``x_values`` + ``series[].values`` (index-aligned), NOT ``points``.
+    """
     seed = sum(
         ord(c) for c in (params.get("date_from", "") + params.get("date_to", ""))
     ) or 13
-    points = []
-    for i in range(7):
-        points.append({
-            "x": f"2030-01-0{i + 1}",
-            "y": (seed * (i + 1) * 3) % 80 + 20,
-        })
+    x_values = [f"2030-01-{i + 1:02d}" for i in range(7)]
+    values = [(seed * (i + 1) * 3) % 80 + 20 for i in range(7)]
     return {
-        "series": [
-            {"name": "Daily volume", "points": points},
-        ],
+        "x_values": x_values,
+        "series": [{"name": "Daily volume", "values": values}],
         "x_label": "Date",
         "y_label": "Volume",
     }
@@ -360,7 +358,10 @@ def _showcase_demo_table(params: dict[str, str]) -> dict[str, Any]:
     page_offset = max(0, _int("page_offset", 0))
     page = rows[page_offset:page_offset + page_size]
     return {
-        "columns": _SHOWCASE_TABLE_COLUMNS,
+        # renderTable wants column *objects* ({name, label?, format?}),
+        # matching _data_shape.shape_table — the header label comes from
+        # col.name.
+        "columns": [{"name": c} for c in _SHOWCASE_TABLE_COLUMNS],
         "rows": page,
         "page_offset": page_offset,
         "page_size": page_size,
