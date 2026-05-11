@@ -11,10 +11,22 @@ HTMX wire shape the Tom Select / Flatpickr / noUiSlider widgets produce
 when a user drives them — the widget chrome is a fidelity concern for
 the ``tests/js`` unit harness, not for a driver expressing test intent).
 
-The ``.smoke()`` factory spins a local App 2 server (the smoke app +
-its ``SMOKE_FILTER_SPECS`` + the deterministic stub fetcher — no DB, no
-AWS) and a WebKit page; a future ``.against(url)`` factory will point at
-an already-running server.
+Two factories own the page+server lifecycle:
+
+- ``App2Driver.smoke()`` — bundled smoke app (fixed shape, deterministic
+  stub fetcher, ``SMOKE_FILTER_SPECS``). Use for the protocol parity
+  tests in ``tests/e2e/test_dashboard_driver.py``.
+- ``App2Driver.serving(tree_app=, sheet=, data_fetcher=, ...)`` — any
+  tree + fetcher you build. Use for the per-app App2 tests that build
+  Executives / L2FT / Investigation / Money Trail trees and need the
+  fetcher to be either stub or live-DB. Same context-manager shape as
+  ``smoke()``.
+
+Both expose ``driver.base_url`` (so tests can build cross-sheet URLs
+themselves) and ``driver.page`` (escape hatch for App2-internal
+assertions — ``page.route`` for HTTP intercept, ``page.expect_response``
+for refetch checks, ``page.evaluate`` for DOM probes — the kind of
+wire-shape assertions that don't translate to renderer-agnostic verbs).
 
 **Re-fetch contract.** A ``change`` on a ``#filter-form`` input →
 ``wireFilterAutoRefresh``'s 300 ms debounce → ``htmx.trigger(body,
@@ -41,6 +53,9 @@ from quicksight_gen.common.html._smoke_app import (
     build_smoke_app,
     stub_money_trail_fetcher,
 )
+from quicksight_gen.common.html.render import FilterSpec
+from quicksight_gen.common.html.server import DataFetcher
+from quicksight_gen.common.tree.structure import App, Sheet
 from tests._test_helpers import make_test_config
 from tests.e2e._harness_html2 import html2_server
 
@@ -77,13 +92,70 @@ class App2Driver:
         driver, tear both down."""
         cfg = cfg or make_test_config()
         tree_app, sheet = build_smoke_app(cfg)
-        with html2_server(
+        with cls.serving(
             tree_app=tree_app, sheet=sheet,
             data_fetcher=stub_money_trail_fetcher,
             dashboard_id="smoke", dashboard_title="Smoke",
             filter_specs=SMOKE_FILTER_SPECS,
+        ) as driver:
+            yield driver
+
+    @classmethod
+    @contextlib.contextmanager
+    def serving(
+        cls, *,
+        tree_app: App,
+        sheet: Sheet,
+        data_fetcher: DataFetcher,
+        dashboard_id: str = "harness",
+        dashboard_title: str = "Harness",
+        filter_specs: Sequence[FilterSpec] = (),
+        dev_log: bool = False,
+    ) -> Iterator["App2Driver"]:
+        """Spin a local App 2 server serving any tree + fetcher and yield
+        a driver pointed at it.
+
+        The general-purpose factory behind ``smoke()`` — use directly
+        when the test builds its own tree (Executives / L2FT /
+        Investigation / Money Trail) and supplies its own fetcher (stub
+        or live-DB via ``make_live_db_fetcher_for_app``). Same context-
+        manager shape: server + browser tear down on exit.
+
+        ``driver.base_url`` exposes the server's base URL so tests can
+        construct cross-sheet URLs themselves (``f"{base_url}/dashboards/
+        {dashboard_id}/sheets/{sheet_id}"``); ``driver.page`` is the
+        escape hatch for App2-internal assertions (HTTP intercept via
+        ``page.route``, refetch checks via ``page.expect_response``,
+        DOM probes via ``page.evaluate``) — the wire-shape kind of
+        assertion that doesn't translate to renderer-agnostic verbs.
+        """
+        with html2_server(
+            tree_app=tree_app, sheet=sheet,
+            data_fetcher=data_fetcher,
+            dashboard_id=dashboard_id,
+            dashboard_title=dashboard_title,
+            filter_specs=filter_specs,
+            dev_log=dev_log,
         ) as url, webkit_page() as page:
             yield cls(base_url=url, page=page)
+
+    # -- raw access (escape hatch for App2-internal assertions) ---------
+
+    @property
+    def page(self) -> Any:
+        """The underlying Playwright ``Page`` — escape hatch for
+        App2-internal assertions (``page.route`` for HTTP intercept,
+        ``page.expect_response`` for refetch checks, ``page.evaluate``
+        for DOM probes). Tests that only need renderer-agnostic verbs
+        should NOT touch ``page``."""
+        return self._page
+
+    @property
+    def base_url(self) -> str:
+        """The App 2 server's bound base URL (``http://127.0.0.1:<port>``)
+        — for tests that need to construct cross-sheet URLs the protocol
+        verbs don't expose."""
+        return self._base
 
     # -- navigation ------------------------------------------------------
 

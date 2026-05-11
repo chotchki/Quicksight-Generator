@@ -2,8 +2,9 @@
 HTMX dialect.
 
 Builds the real L2FT tree, plugs in a stub fetcher returning deterministic
-data per visual_id, spins the App2 Starlette server in a thread, and drives
-Playwright (WebKit, headless) against ``/dashboards/l2ft``.
+data per visual_id, spins the App2 Starlette server via
+``App2Driver.serving(...)``, and drives Playwright (WebKit, headless)
+against ``/dashboards/l2ft``.
 
 Asserts on:
 
@@ -19,12 +20,14 @@ Asserts on:
   visuals with ``param_pL2ftRail`` in the query string — the repeated-key
   shape ``_sql_executor``'s multi-valued expansion consumes.
 
+Ported onto ``DashboardDriver`` (X.2.q.3) — driver verbs handle navigation
++ filter writes; ``driver.page`` is the escape hatch for App2-internal
+wire-shape assertions (param-name attributes, fetcher's calls log).
+
 Stub fetcher (not live PG) keeps the test fast + DB-free, same shape as
 ``test_html2_executives.py``. The live-PG variant is the ``app2`` chain
 layer (``./run_tests.sh up_to=app2 …``) which runs this file with
 ``QS_GEN_E2E=1`` against a seeded container.
-
-Gated by ``QS_GEN_E2E=1`` like every other tests/e2e/ file.
 """
 
 from __future__ import annotations
@@ -39,14 +42,8 @@ from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
     build_all_l2_flow_tracing_datasets,
 )
-from quicksight_gen.common.browser.helpers import webkit_page
 from tests._test_helpers import make_test_config
-from tests.e2e._harness_html2 import html2_server
-
-
-# Playwright tracing / console capture on failure (Y.2.gate.c.11.app2);
-# the importorskip gate keeps the module skippable without Playwright.
-playwright_sync_api = pytest.importorskip("playwright.sync_api")
+from tests.e2e._drivers import App2Driver
 
 
 _TEST_INSTANCE = default_l2_instance()
@@ -93,96 +90,100 @@ def _sheet_id_by_name(tree_app: Any, name: str) -> str:
 
 
 @pytest.fixture
-def l2ft_server() -> Iterator[tuple[str, Any]]:
-    """App2 server with the real L2FT tree + stub fetcher. Yields
-    ``(base_url, tree_app)`` so tests can resolve sheet ids."""
+def l2ft_driver() -> Iterator[tuple[App2Driver, Any]]:
+    """``App2Driver`` aimed at the L2FT app + the tree it was built
+    against (so tests can resolve sheet ids without rebuilding)."""
     _calls_log.clear()
     build_all_l2_flow_tracing_datasets(_TEST_CFG, _TEST_INSTANCE)
     tree_app = build_l2_flow_tracing_app(_TEST_CFG, l2_instance=_TEST_INSTANCE)
     assert tree_app.analysis is not None
     landing_sheet = tree_app.analysis.sheets[0]  # Getting Started
-    with html2_server(
-        tree_app=tree_app,
-        sheet=landing_sheet,
+    with App2Driver.serving(
+        tree_app=tree_app, sheet=landing_sheet,
         data_fetcher=_l2ft_stub_fetcher,
         dashboard_id=_DASHBOARD_ID,
         dashboard_title="L2 Flow Tracing",
-    ) as base_url:
-        yield base_url, tree_app
+    ) as driver:
+        yield driver, tree_app
 
 
 def test_l2ft_dashboard_landing_renders_with_sheet_tabs(
-    l2ft_server: tuple[str, Any],
+    l2ft_driver: tuple[App2Driver, Any],
 ) -> None:
-    base_url, _ = l2ft_server
-    with webkit_page() as page:
-        page.goto(f"{base_url}/dashboards/{_DASHBOARD_ID}")
-        page.wait_for_load_state("networkidle")
-        nav_html = page.locator("nav").inner_html()
-        for expected in ("Getting Started", "Rails", "Chains", "Transfer Templates"):
-            assert expected in nav_html, (
-                f"Sheet tab {expected!r} missing from nav — got {nav_html[:300]}"
-            )
+    driver, _ = l2ft_driver
+    driver.open(_DASHBOARD_ID)
+    names = driver.sheet_names()
+    for expected in ("Getting Started", "Rails", "Chains", "Transfer Templates"):
+        assert expected in names, (
+            f"Sheet tab {expected!r} missing from sheet_names() — got {names}"
+        )
 
 
 def test_l2ft_rails_sheet_renders_three_multiselect_dropdowns(
-    l2ft_server: tuple[str, Any],
+    l2ft_driver: tuple[App2Driver, Any],
 ) -> None:
     """Y.2.app2.cde.l2ft-wiring.b — the Rails sheet's filter bar carries
     the rail / status / bundle MULTI_SELECT dropdowns the tree-walk
-    auto-derived, each rendered as a ``<select multiple>`` with options."""
-    base_url, tree_app = l2ft_server
+    auto-derived, each rendered as a ``<select multiple>`` with options.
+
+    App2-internal wire shape: ``<select name="param_X" multiple>``. The
+    ``param_X`` attribute name is the URL key the fetcher receives — not
+    a user-facing label, so ``driver.filter_labels()`` doesn't help.
+    ``driver.page`` for the DOM probe."""
+    driver, tree_app = l2ft_driver
     rails_id = _sheet_id_by_name(tree_app, "Rails")
-    with webkit_page() as page:
-        page.goto(f"{base_url}/dashboards/{_DASHBOARD_ID}/sheets/{rails_id}")
-        page.wait_for_load_state("networkidle")
-        for param in ("pL2ftRail", "pL2ftStatus", "pL2ftBundle"):
-            sel = page.locator(f'select[name="param_{param}"]')
-            assert sel.count() == 1, f"missing <select name=param_{param}>"
-            assert sel.first.evaluate("el => el.multiple") is True, (
-                f"param_{param} should be a multi-select"
-            )
-            assert sel.locator("option").count() >= 1, (
-                f"param_{param} has no options"
-            )
+    driver.open(_DASHBOARD_ID, sheet=rails_id)
+    page = driver.page
+    for param in ("pL2ftRail", "pL2ftStatus", "pL2ftBundle"):
+        sel = page.locator(f'select[name="param_{param}"]')
+        assert sel.count() == 1, f"missing <select name=param_{param}>"
+        assert sel.first.evaluate("el => el.multiple") is True, (
+            f"param_{param} should be a multi-select"
+        )
+        assert sel.locator("option").count() >= 1, (
+            f"param_{param} has no options"
+        )
 
 
 def test_l2ft_chains_sheet_renders_its_dropdowns(
-    l2ft_server: tuple[str, Any],
+    l2ft_driver: tuple[App2Driver, Any],
 ) -> None:
     """The Chains sheet carries its own auto-derived dropdowns. spec_example
     declares no chains, so the option lists may be empty — what matters is
     the ``<select multiple>`` widgets are present (wiring proof)."""
-    base_url, tree_app = l2ft_server
+    driver, tree_app = l2ft_driver
     chains_id = _sheet_id_by_name(tree_app, "Chains")
-    with webkit_page() as page:
-        page.goto(f"{base_url}/dashboards/{_DASHBOARD_ID}/sheets/{chains_id}")
-        page.wait_for_load_state("networkidle")
-        for param in ("pL2ftChainsChain", "pL2ftChainsCompletion"):
-            sel = page.locator(f'select[name="param_{param}"]')
-            assert sel.count() == 1, f"missing <select name=param_{param}>"
-            assert sel.first.evaluate("el => el.multiple") is True
+    driver.open(_DASHBOARD_ID, sheet=chains_id)
+    page = driver.page
+    for param in ("pL2ftChainsChain", "pL2ftChainsCompletion"):
+        sel = page.locator(f'select[name="param_{param}"]')
+        assert sel.count() == 1, f"missing <select name=param_{param}>"
+        assert sel.first.evaluate("el => el.multiple") is True
 
 
 def test_l2ft_rail_dropdown_selection_refetches_with_param(
-    l2ft_server: tuple[str, Any],
+    l2ft_driver: tuple[App2Driver, Any],
 ) -> None:
     """Selecting a value in the rail multi-select fires a debounced refresh
     that re-fetches the sheet's visuals with ``param_pL2ftRail`` in the
     query string — the repeated-key wire shape the multi-valued executor
-    consumes."""
-    base_url, tree_app = l2ft_server
+    consumes.
+
+    Drives the multi-select via ``driver.page.select_option`` (the
+    ``param_X`` attr-name shape isn't reachable via
+    ``driver.pick_filter(label, ...)``); asserts on ``_calls_log`` (the
+    fetcher's recorded URL params) for the wire-shape proof."""
+    driver, tree_app = l2ft_driver
     rails_id = _sheet_id_by_name(tree_app, "Rails")
-    with webkit_page() as page:
-        page.goto(f"{base_url}/dashboards/{_DASHBOARD_ID}/sheets/{rails_id}")
-        page.wait_for_load_state("networkidle")
-        # Wait past the initial auto-load fetch before clearing the log.
-        page.wait_for_timeout(400)
-        _calls_log.clear()
-        # Select the first rail option. ``select_option`` fires a change
-        # event that the form's debounced listener broadcasts as refresh.
-        page.select_option('select[name="param_pL2ftRail"]', index=0)
-        page.wait_for_timeout(900)  # 300ms debounce + swap settle
+    driver.open(_DASHBOARD_ID, sheet=rails_id)
+    page = driver.page
+    # Wait past the initial auto-load fetch before clearing the log.
+    page.wait_for_timeout(400)
+    _calls_log.clear()
+    # Select the first rail option. ``select_option`` fires a change event
+    # that the form's debounced listener broadcasts as refresh.
+    page.select_option('select[name="param_pL2ftRail"]', index=0)
+    page.wait_for_timeout(900)  # 300ms debounce + swap settle
     saw_rail_param = [
         params for _vid, params in _calls_log
         if params.get("param_pL2ftRail")

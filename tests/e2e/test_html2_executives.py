@@ -1,28 +1,21 @@
 """X.2.h.1 — Executives Layer-2 e2e against the HTMX dialect.
 
-Builds the real Executives tree, plugs in a stub fetcher that
-returns deterministic data per visual_id, spins the App2 Starlette
-server in a thread, and drives Playwright (WebKit, headless)
+Builds the real Executives tree, plugs in a stub fetcher that returns
+deterministic data per visual_id, spins the App2 Starlette server via
+``App2Driver.serving(...)``, and drives Playwright (WebKit, headless)
 against ``/dashboards/exec``.
 
-Stub fetcher (not live PG) keeps the test fast + DB-free. The
-live-PG variant lands as a CI matrix entry alongside the existing
-``e2e-pg-browser`` job — same test shape, fetcher swapped for
-``make_tree_db_fetcher(tree_app, cfg)`` with cfg pointing at the
-seeded PG.
+Stub fetcher (not live PG) keeps the test fast + DB-free. The live-PG
+variant is ``test_html2_executives_live.py`` — same shape with
+``make_live_db_fetcher_for_app`` plumbed in.
 
-Asserts on:
-
-- Sheet tabs render (Getting Started / Account Coverage / etc.)
-- Visuals auto-load on DOMContentLoaded (X.2.g.1.a polish — no
-  Refresh click required)
-- KPI cards land in the DOM with the stub fetcher's values
-- TextBox rendering (X.2.g.1.a polish — Getting Started sheet
-  shows its rich-text welcome content, not blank)
-- Filter changes refetch (date_from in URL params lands in the
-  fetcher's call list)
-
-Gated by ``QS_GEN_E2E=1`` like every other tests/e2e/ file.
+Assertions split between ``DashboardDriver`` verbs (``sheet_names`` for
+the per-app tab strip) and ``driver.page`` for App2-internal wire shape
+(filter-form emit/suppress per-sheet, fetcher's calls log carrying
+``date_from`` after a refresh, the dev-log POST → server-log capture
+path). The KPI-auto-load smoke check that lived here is dropped — it's
+covered by ``test_dashboard_driver::test_showcase_kpi_renders_a_value``
+against the smoke app, same shape.
 """
 
 from __future__ import annotations
@@ -34,17 +27,9 @@ import pytest
 
 from quicksight_gen.apps.executives.app import build_executives_app
 from quicksight_gen.apps.executives.datasets import build_all_datasets
-from quicksight_gen.common.browser.helpers import webkit_page
 from quicksight_gen.common.env_keys import QS_GEN_RUN_DIR
 from tests._test_helpers import make_test_config
-from tests.e2e._harness_html2 import html2_server
-
-
-# Y.2.gate.c.11.app2 — `webkit_page` provides Playwright tracing +
-# console/network capture on failure (same lifecycle as the QS tests).
-# `pytest.importorskip` gate stays so the module skips cleanly when
-# Playwright isn't installed.
-playwright_sync_api = pytest.importorskip("playwright.sync_api")
+from tests.e2e._drivers import App2Driver
 
 
 # Test cfg with the L2 prefix set explicitly (matches what
@@ -53,18 +38,18 @@ _TEST_CFG = make_test_config().with_l2_instance_prefix("spec_example")
 _DASHBOARD_ID = "exec"
 
 
-# Deterministic per-visual stub data — visual_id → response. Tests
-# don't have to write a fetcher inline; just look up by id.
+# Deterministic per-visual stub data — visual_id → response. Tests don't
+# have to write a fetcher inline; just look up by id.
 def _exec_stub_fetcher(
     visual_id: str, params: dict[str, list[str]],
 ) -> dict[str, Any]:
     """Stub fetcher matching the shape adapters in ``_data_shape``.
 
-    Returns enough data per Executives visual_id that the d3
-    hydrators paint something the test can assert on. Records each
-    call into ``_calls_log`` so filter-substitution assertions can
-    inspect what URL params landed. ``params`` is the URL multi-dict
-    (a key can repeat); the assertions below collapse to scalar.
+    Returns enough data per Executives visual_id that the d3 hydrators
+    paint something the test can assert on. Records each call into
+    ``_calls_log`` so filter-substitution assertions can inspect what
+    URL params landed. ``params`` is the URL multi-dict (a key can
+    repeat); the assertions below collapse to scalar.
     """
     _calls_log.append((visual_id, dict(params)))
     if "kpi" in visual_id:
@@ -91,101 +76,71 @@ _calls_log: list[tuple[str, dict[str, list[str]]]] = []
 
 
 @pytest.fixture
-def exec_server() -> Iterator[str]:
-    """Spin the App2 server with the real Executives tree + the
-    stub fetcher. Yields the bound base URL."""
+def exec_driver() -> Iterator[App2Driver]:
+    """``App2Driver`` aimed at the real Executives tree + the stub
+    fetcher."""
     _calls_log.clear()
     build_all_datasets(_TEST_CFG)  # populate the SQL registry (unused by stub)
     tree_app = build_executives_app(_TEST_CFG)
     assert tree_app.analysis is not None
     primary_sheet = tree_app.analysis.sheets[0]
-    with html2_server(
-        tree_app=tree_app,
-        sheet=primary_sheet,
+    with App2Driver.serving(
+        tree_app=tree_app, sheet=primary_sheet,
         data_fetcher=_exec_stub_fetcher,
         dashboard_id=_DASHBOARD_ID,
         dashboard_title="Executives",
-    ) as base_url:
-        yield base_url
+    ) as driver:
+        yield driver
 
 
-def test_dashboard_landing_renders_with_sheet_tabs(exec_server: str) -> None:
-    """Default landing (``/dashboards/exec``) shows tab strip with
-    every analysis sheet — proves X.2.e tabs render for a real
-    multi-sheet app."""
-    with webkit_page() as page:
-        page.goto(f"{exec_server}/dashboards/{_DASHBOARD_ID}")
-        page.wait_for_load_state("networkidle")
-        # Tab strip exists with each sheet's name.
-        nav_html = page.locator("nav").inner_html()
-        for expected in ("Getting Started", "Account Coverage", "Money Moved"):
-            assert expected in nav_html, (
-                f"Sheet tab {expected!r} missing from nav — got: {nav_html[:200]}"
-            )
+def test_dashboard_landing_renders_with_sheet_tabs(
+    exec_driver: App2Driver,
+) -> None:
+    """Default landing (``/dashboards/exec``) shows tab strip with every
+    analysis sheet — proves X.2.e tabs render for a real multi-sheet
+    app, named the way the executives tree declares them."""
+    exec_driver.open(_DASHBOARD_ID)
+    names = exec_driver.sheet_names()
+    for expected in ("Getting Started", "Account Coverage", "Money Moved"):
+        assert expected in names, (
+            f"Sheet tab {expected!r} missing — got {names}"
+        )
 
 
-def test_getting_started_sheet_renders_text_boxes(exec_server: str) -> None:
+def test_getting_started_sheet_renders_text_boxes(
+    exec_driver: App2Driver,
+) -> None:
     """X.2.g.1.a polish: TextBoxes render via _qs_richtext_to_html.
     Getting Started has 3 text boxes; the page should show non-empty
-    content (not blank)."""
-    with webkit_page() as page:
-        # Default landing IS the Getting Started sheet (first in
-        # the analysis order per executives/app.py).
-        page.goto(f"{exec_server}/dashboards/{_DASHBOARD_ID}")
-        page.wait_for_load_state("networkidle")
-        # The page body should contain at least one text-box section
-        # with rendered content (spans, anchors, etc. — not just empty).
-        body_text = page.locator("body").inner_text()
-        assert len(body_text) > 200, (
-            f"Getting Started body too thin ({len(body_text)} chars) — "
-            f"text boxes likely not rendered. Body preview: "
-            f"{body_text[:200]!r}"
-        )
+    content (not blank).
 
-
-def test_account_coverage_visuals_auto_load(exec_server: str) -> None:
-    """X.2.g.1.a polish: visuals fetch on DOMContentLoaded — no
-    Refresh click required for the initial paint. Asserts the
-    KPI's value appears in the DOM after the page loads."""
-    with webkit_page() as page:
-        page.goto(
-            f"{exec_server}/dashboards/{_DASHBOARD_ID}"
-            f"/sheets/exec-sheet-account-coverage"
-        )
-        # Wait for HTMX swap + d3 hydration.
-        page.wait_for_function(
-            "() => document.querySelector('.kpi-value') !== null",
-            timeout=10000,
-        )
-        kpi_text = page.locator(".kpi-value").first.inner_text()
-    # Stub fetcher returns 47 for any visual_id containing "kpi".
-    assert "47" in kpi_text, (
-        f"KPI didn't render the stub value — got {kpi_text!r}. "
-        f"Auto-load may not be firing."
+    App2-internal: ``driver.page`` for the body-text inspection — there's
+    no driver verb for "is the rendered prose non-trivial"."""
+    # Default landing IS the Getting Started sheet (first in the analysis
+    # order per executives/app.py).
+    exec_driver.open(_DASHBOARD_ID)
+    body_text = exec_driver.page.locator("body").inner_text()
+    assert len(body_text) > 200, (
+        f"Getting Started body too thin ({len(body_text)} chars) — text "
+        f"boxes likely not rendered. Body preview: {body_text[:200]!r}"
     )
 
 
-def test_filter_change_refetches_visuals(exec_server: str) -> None:
-    """Changing the date filter + clicking Refresh fires a new
-    swap with date_from / date_to in the query string. Verifies
-    the X.2.d filter form → visual data fetch round-trip."""
-    with webkit_page() as page:
-        page.goto(
-            f"{exec_server}/dashboards/{_DASHBOARD_ID}"
-            f"/sheets/exec-sheet-account-coverage"
-        )
-        page.wait_for_function(
-            "() => document.querySelector('.kpi-value') !== null",
-            timeout=10000,
-        )
-        _calls_log.clear()
-        # Set a date and click Refresh on the first visual.
-        page.fill('input[name="date_from"]', "2030-02-01")
-        # X.2.g.1.e — auto-refresh: filling the input triggers a
-        # 'change' event that the form's debounced listener catches
-        # and broadcasts as 'refresh'. No button click needed.
-        # Wait past the 300ms debounce + swap settle.
-        page.wait_for_timeout(800)
+def test_filter_change_refetches_visuals(
+    exec_driver: App2Driver,
+) -> None:
+    """Setting the date filter fires an auto-refresh that re-fetches the
+    sheet's visuals with ``date_from`` in the query string. Verifies the
+    X.2.d filter form → visual data fetch round-trip.
+
+    ``driver.set_date_range`` blocks on the App2 refetch (per the App2
+    write-verb contract); the wire-shape assertion (URL key landed)
+    needs the fetcher's ``_calls_log`` — App2-internal."""
+    exec_driver.open(
+        _DASHBOARD_ID, sheet="exec-sheet-account-coverage",
+    )
+    _calls_log.clear()
+    exec_driver.set_date_range("2030-02-01", None)
     # The fetcher should have been called with date_from set.
     assert any(
         params.get("date_from") == ["2030-02-01"]
@@ -197,53 +152,48 @@ def test_filter_change_refetches_visuals(exec_server: str) -> None:
 
 
 def test_text_box_only_sheet_does_not_emit_filter_form(
-    exec_server: str,
+    exec_driver: App2Driver,
 ) -> None:
-    """X.2.g.1.a polish: Getting Started has no data visuals so
-    the filter form (date pickers) should be suppressed. Without
-    this, users see a vestigial date picker that does nothing."""
-    with webkit_page() as page:
-        page.goto(f"{exec_server}/dashboards/{_DASHBOARD_ID}")
-        page.wait_for_load_state("networkidle")
-        # No filter form on Getting Started.
-        form_count = page.locator('form#filter-form').count()
+    """X.2.g.1.a polish: Getting Started has no data visuals so the
+    filter form (date pickers) should be suppressed. Without this, users
+    see a vestigial date picker that does nothing.
+
+    App2-internal: filter-form emission is an App2 layout decision; no
+    cross-renderer driver verb."""
+    exec_driver.open(_DASHBOARD_ID)
+    form_count = exec_driver.page.locator('form#filter-form').count()
     assert form_count == 0, (
         "Filter form should not render on a text-box-only sheet"
     )
 
 
 def test_account_coverage_sheet_does_emit_filter_form(
-    exec_server: str,
+    exec_driver: App2Driver,
 ) -> None:
-    """Inverse of the previous test: sheets WITH data visuals get
-    the form. Pins the suppression to the empty-visuals case
-    specifically."""
-    with webkit_page() as page:
-        page.goto(
-            f"{exec_server}/dashboards/{_DASHBOARD_ID}"
-            f"/sheets/exec-sheet-account-coverage"
-        )
-        page.wait_for_load_state("networkidle")
-        form_count = page.locator('form#filter-form').count()
+    """Inverse of the previous test: sheets WITH data visuals get the
+    form. Pins the suppression to the empty-visuals case specifically."""
+    exec_driver.open(
+        _DASHBOARD_ID, sheet="exec-sheet-account-coverage",
+    )
+    form_count = exec_driver.page.locator('form#filter-form').count()
     assert form_count == 1
 
 
 # Y.2.gate.c.11.app2-server-logs — verify the full dev-log path:
-# JS in browser → POST /log → server's _DEVLOG.info → uvicorn's
-# logging chain → harness FileHandler → $QS_GEN_RUN_DIR/app2/server.log.
+# JS in browser → POST /log → server's _DEVLOG.info → uvicorn's logging
+# chain → harness FileHandler → $QS_GEN_RUN_DIR/app2/server.log.
 
 def test_dev_log_events_land_in_server_log() -> None:
-    """Spin a separate App2 server with `dev_log=True` so the page
-    emits the `<meta name="dev-log">` tag that activates dev_log.js.
-    The script POSTs `dev-log:ready` immediately on page load (and
-    HTMX events thereafter). Assert the captured server log file
-    contains the forwarded event.
+    """Spin a separate App2 server (own driver) with `dev_log=True` so
+    the page emits the `<meta name="dev-log">` tag that activates
+    dev_log.js. The script POSTs `dev-log:ready` immediately on page
+    load (and HTMX events thereafter). Assert the captured server log
+    file contains the forwarded event.
 
     Skips when `QS_GEN_RUN_DIR` isn't set — there's no log file to
     assert against in legacy mode (direct pytest invocation). Runs
     under the runner (`./run_tests.sh up_to=app2 ...`).
     """
-    import time
     from pathlib import Path
     run_dir_path = QS_GEN_RUN_DIR.get_or_none()
     if run_dir_path is None:
@@ -256,22 +206,19 @@ def test_dev_log_events_land_in_server_log() -> None:
     tree_app = build_executives_app(_TEST_CFG)
     assert tree_app.analysis is not None
     primary_sheet = tree_app.analysis.sheets[0]
-    with html2_server(
-        tree_app=tree_app,
-        sheet=primary_sheet,
+    with App2Driver.serving(
+        tree_app=tree_app, sheet=primary_sheet,
         data_fetcher=_exec_stub_fetcher,
         dashboard_id=_DASHBOARD_ID,
         dashboard_title="Executives",
         dev_log=True,
-    ) as base_url:
-        with webkit_page() as page:
-            page.goto(f"{base_url}/dashboards/{_DASHBOARD_ID}")
-            page.wait_for_load_state("networkidle")
-            # dev_log.js sends dev-log:ready synchronously on load,
-            # and the keepalive flag means the fetch can outlive the
-            # navigation. Give the server a moment to land the POST
-            # + flush through the FileHandler.
-            page.wait_for_timeout(300)
+    ) as driver:
+        driver.open(_DASHBOARD_ID)
+        # dev_log.js sends dev-log:ready synchronously on load, and the
+        # keepalive flag means the fetch can outlive the navigation.
+        # Give the server a moment to land the POST + flush through the
+        # FileHandler.
+        driver.page.wait_for_timeout(300)
 
     # Server context torn down → harness has detached + closed the
     # FileHandler. Read the log fresh.

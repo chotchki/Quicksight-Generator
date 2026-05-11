@@ -1101,12 +1101,7 @@ _BROWSER_PKG = "quicksight_gen.common.browser"
 #  exec/l1/inv dashboard_renders + sheet_visuals + tree_validator, then
 #  l1/inv filters + l2ft rails/chains/templates dropdowns, then the drill
 #  trio (inv_drilldown / l1_cross_sheet_drill / l2ft_metadata_cascade), done.)
-_PLAYWRIGHT_LEAK_LEGACY: frozenset[str] = frozenset({
-    "tests/e2e/test_html2_executives.py",
-    "tests/e2e/test_html2_executives_live.py",
-    "tests/e2e/test_html2_l2ft.py",
-    "tests/e2e/test_html2_money_trail.py",
-})
+_PLAYWRIGHT_LEAK_LEGACY: frozenset[str] = frozenset()
 
 
 class _NoPlaywrightLeakVisitor(ast.NodeVisitor):
