@@ -2,11 +2,19 @@
 protocol, proving a single test body reads cleanly through the driver
 (no Playwright in the test).
 
-Today the ``driver`` fixture only yields the App 2 leg (``["app2"]``);
-when ``QsEmbedDriver`` lands (X.2.q.1) the ``"qs"`` param gets added and
-the same bodies verify both renderers. Gated by ``QS_GEN_E2E`` like
-every e2e (``conftest.py`` matches on path) and skips cleanly without
-Playwright.
+Two legs:
+
+- The ``driver`` fixture (App 2 only) drives the bundled *smoke app* —
+  no DB, no AWS — exercising every renderer through ``App2Driver``.
+- The ``qs_driver`` fixture (QuickSight only) drives a *deployed*
+  dashboard through ``QsEmbedDriver``, proving the QS facade works
+  against a live embed. (Needs a live QuickSight account +
+  ``QS_E2E_USER_ARN`` — skips cleanly without.)
+
+X.2.q.3 will fold a real app (L1) onto a single ``@parametrize(["qs",
+"app2"])`` fixture so one body verifies both renderers. Gated by
+``QS_GEN_E2E`` like every e2e (``conftest.py`` matches on path) and
+skips cleanly without Playwright.
 """
 
 from __future__ import annotations
@@ -18,16 +26,33 @@ import pytest
 
 playwright_sync_api = pytest.importorskip("playwright.sync_api")
 
-from tests.e2e._drivers import App2Driver, DashboardDriver
+from tests.e2e._drivers import App2Driver, DashboardDriver, QsEmbedDriver
 
 
-@pytest.fixture(params=["app2"])
-def driver(request: pytest.FixtureRequest) -> Iterator[DashboardDriver]:
-    if request.param == "app2":
-        with App2Driver.smoke() as d:
-            yield d
-    else:  # "qs" — X.2.q.1: QsEmbedDriver
-        pytest.skip("QsEmbedDriver not implemented yet (X.2.q.1)")
+@pytest.fixture
+def driver() -> Iterator[DashboardDriver]:
+    """The App 2 leg — the bundled smoke app, no DB, no AWS."""
+    with App2Driver.smoke() as d:
+        yield d
+
+
+@pytest.fixture
+def qs_driver(cfg, region, account_id) -> Iterator[QsEmbedDriver]:
+    """The QuickSight leg — a WebKit page over a live QS embed.
+
+    Skips when ``QS_E2E_USER_ARN`` is unset (the test runner derives it
+    from ``cfg.auth.aws_profile``; export it for a direct ``pytest``
+    run)."""
+    from quicksight_gen.common.browser.helpers import get_user_arn
+
+    try:
+        get_user_arn()
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+    with QsEmbedDriver.embed(
+        aws_account_id=account_id, aws_region=region,
+    ) as d:
+        yield d
 
 
 def test_showcase_table_rows(driver: DashboardDriver) -> None:
@@ -67,3 +92,36 @@ def test_showcase_lists_every_visual(driver: DashboardDriver) -> None:
         "Account Balances",
     ):
         assert expected in titles, expected
+
+
+# -- QuickSight leg ----------------------------------------------------------
+#
+# Drives a *deployed* L1 dashboard through QsEmbedDriver — proves the QS
+# facade (open / goto_sheet / visual_titles / wait_loaded / screenshot)
+# works against a live embed. The L1 dashboard's deployed DashboardId
+# derives from cfg + the targeted L2 instance via the shared e2e
+# `l1_dashboard_id` fixture (conftest). No assertion on a *specific*
+# visual title — a stale deploy may have renamed one; the point is the
+# verbs work, returning plain Python.
+
+@pytest.mark.e2e
+@pytest.mark.browser
+def test_qs_l1_dashboard_drift_sheet_lists_visuals(
+    qs_driver: QsEmbedDriver, l1_dashboard_id: str,
+) -> None:
+    qs_driver.open(l1_dashboard_id, sheet="Drift")
+    titles = qs_driver.visual_titles()
+    assert titles, f"L1 dashboard {l1_dashboard_id!r} Drift sheet rendered no visual titles"
+    # Exercise wait_loaded against whatever rendered — must not raise.
+    qs_driver.wait_loaded(titles[0])
+
+
+@pytest.mark.e2e
+@pytest.mark.browser
+def test_qs_l1_dashboard_screenshot(
+    qs_driver: QsEmbedDriver, l1_dashboard_id: str, tmp_path,
+) -> None:
+    qs_driver.open(l1_dashboard_id)
+    png = qs_driver.screenshot(tmp_path / "l1_initial.png")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert (tmp_path / "l1_initial.png").exists()
