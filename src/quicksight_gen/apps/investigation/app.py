@@ -19,7 +19,6 @@ from quicksight_gen.apps.investigation.constants import (
     CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
     CF_INV_ANETWORK_IS_INBOUND_EDGE,
     CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
-    CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_ACCOUNT_NETWORK,
     DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
@@ -30,7 +29,6 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_WINDOW,
-    FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
     FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
@@ -95,9 +93,6 @@ from quicksight_gen.common.tree import (
     FilterGroup,
     IntegerParam,
     LinkedValues,
-    Measure,
-    NumericRangeFilter,
-    ParameterBound,
     ParameterDropdown,
     ParameterSlider,
     Sankey,
@@ -289,20 +284,18 @@ def _build_recipient_fanout_sheet(
         arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-recipient-fanout-dataset")),
     ))
 
+    # Y.3.a — bridge the analyst-facing slider param into the
+    # parameter-bearing dataset's dataset-level parameter (same name).
+    # QS resolves <<$pInvFanoutThreshold>> in the dataset SQL by walking
+    # MappedDataSetParameters → finding the analysis param of the same
+    # name → substituting its current value at query time. App2 binds
+    # via :param_pInvFanoutThreshold after the SQL preprocessor.
     threshold_param = analysis.add_parameter(IntegerParam(
         name=P_INV_FANOUT_THRESHOLD,
         default=[_DEFAULT_FANOUT_THRESHOLD],
-    ))
-
-    # Calc field name kept explicit (CF_INV_FANOUT_DISTINCT_SENDERS)
-    # because analysts see the column name in the table header.
-    distinct_senders_calc = analysis.add_calc_field(CalcField(
-        name=CF_INV_FANOUT_DISTINCT_SENDERS,
-        dataset=ds_fanout,
-        expression=(
-            "distinct_count({sender_account_id}, "
-            "[{recipient_account_id}])"
-        ),
+        mapped_dataset_params=[
+            (ds_fanout, str(P_INV_FANOUT_THRESHOLD)),
+        ],
     ))
 
     sheet = analysis.add_sheet(Sheet(
@@ -338,7 +331,10 @@ def _build_recipient_fanout_sheet(
     )
 
     # Row 2: ranked table full-width.
-    distinct_senders_value = Measure.max(ds_fanout, distinct_senders_calc)
+    # Y.3.a — distinct_senders is now a real dataset column (window
+    # function in the dataset SQL). Was an analysis-level CalcField
+    # pre-Y.3; the .max() aggregation is the same shape as before.
+    distinct_senders_value = ds_fanout["distinct_senders"].max()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Recipient Fanout — Ranked",
@@ -373,20 +369,13 @@ def _build_recipient_fanout_sheet(
     ))
     window_fg.scope_sheet(sheet)
 
-    # Threshold on the distinct-senders calc field, min-only, parameter-bound.
-    # IncludeMinimum=True matches "slider value = visible cutoff".
-    threshold_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_FANOUT_THRESHOLD,
-        filters=[NumericRangeFilter(
-            filter_id="filter-inv-fanout-threshold",
-            dataset=ds_fanout,
-            column=distinct_senders_calc,
-            minimum=ParameterBound(threshold_param),
-            null_option="NON_NULLS_ONLY",
-            include_minimum=True,
-        )],
-    ))
-    threshold_fg.scope_sheet(sheet)
+    # Y.3.a — threshold pushdown is in the dataset SQL now
+    # (`WHERE distinct_senders >= <<$pInvFanoutThreshold>>`); the
+    # MappedDataSetParameters bridge on `threshold_param` declared
+    # above carries the analyst's slider pick into the SQL via QS
+    # substitution + App2 bind. Pre-Y.3 this was a separate analysis-
+    # level NumericRangeFilter (FG_INV_FANOUT_THRESHOLD); QS applied
+    # it but App2 never did, so the renderers diverged.
 
     # Sheet controls: date range picker + threshold slider.
     sheet.add_filter_datetime_picker(

@@ -29,6 +29,7 @@ from quicksight_gen.apps.investigation.constants import (
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
+    P_INV_FANOUT_THRESHOLD,
     P_INV_MONEY_TRAIL_MAX_HOPS,
     P_INV_MONEY_TRAIL_MIN_AMOUNT,
     P_INV_MONEY_TRAIL_ROOT,
@@ -107,6 +108,11 @@ RECIPIENT_FANOUT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("posted_at", "DATETIME"),
     ColumnSpec("amount", "DECIMAL"),
+    # Y.3.a — window column computed at the DB. Pre-Y.3 this was the
+    # `recipient_distinct_sender_count` analysis-level CalcField; pushed
+    # down here so the threshold WHERE narrows at the DB and both QS +
+    # App2 see one shape.
+    ColumnSpec("distinct_senders", "INTEGER"),
 ])
 
 
@@ -235,6 +241,17 @@ def _require_prefix(cfg: Config) -> str:
     return cfg.l2_instance_prefix
 
 
+_DEFAULT_FANOUT_THRESHOLD_DSP = 5
+
+# Y.3.a — dataset parameter id for the threshold pushdown. The PARAMETER
+# NAME (``pInvFanoutThreshold``) is the analysis-level handle the slider
+# binds to; QS substitutes via ``<<$pInvFanoutThreshold>>``; App2 binds
+# via ``:param_pInvFanoutThreshold`` after the preprocessor. The id is
+# the dataset-resource-internal handle the MappedDataSetParameters
+# bridge resolves to when the analysis param fires.
+_DSP_ID_INV_FANOUT_THRESHOLD = "dsp-inv-fanout-threshold"
+
+
 def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
     """Recipient × sender × transfer rows, one per (recipient leg, sender leg).
 
@@ -245,6 +262,14 @@ def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
     accounts don't dominate the fanout ranking. v5 column names kept
     in the output projection (``_account_type``) so downstream consumers
     aren't sensitive to the source-side rename.
+
+    Y.3.a — ``distinct_senders`` window column computed at the DB
+    (``COUNT(DISTINCT sender_account_id) OVER (PARTITION BY
+    recipient_account_id)``); the analyst-facing threshold pushes down
+    via ``WHERE distinct_senders >= <<$pInvFanoutThreshold>>``. Replaces
+    the pre-Y.3 analysis-level CalcField + NumericRangeFilter pair
+    (which QS handled but App2 didn't apply). Both renderers now see
+    one shape.
     """
     p = _require_prefix(cfg)
     sql = f"""\
@@ -271,19 +296,27 @@ outflows AS (
     FROM {p}_transactions t
     WHERE t.amount_money < 0
       AND t.status = 'Posted'
+),
+joined AS (
+    SELECT
+        i.recipient_account_id,
+        i.recipient_account_name,
+        i.recipient_account_type,
+        o.sender_account_id,
+        o.sender_account_name,
+        o.sender_account_type,
+        i.transfer_id,
+        i.posted_at,
+        i.amount,
+        COUNT(DISTINCT o.sender_account_id) OVER (
+            PARTITION BY i.recipient_account_id
+        ) AS distinct_senders
+    FROM inflows i
+    JOIN outflows o ON o.transfer_id = i.transfer_id
 )
-SELECT
-    i.recipient_account_id,
-    i.recipient_account_name,
-    i.recipient_account_type,
-    o.sender_account_id,
-    o.sender_account_name,
-    o.sender_account_type,
-    i.transfer_id,
-    i.posted_at,
-    i.amount
-FROM inflows i
-JOIN outflows o ON o.transfer_id = i.transfer_id"""
+SELECT *
+FROM joined
+WHERE distinct_senders >= <<${P_INV_FANOUT_THRESHOLD}>>"""
     return build_dataset(
         cfg,
         cfg.prefixed("inv-recipient-fanout-dataset"),
@@ -292,6 +325,16 @@ JOIN outflows o ON o.transfer_id = i.transfer_id"""
         sql,
         RECIPIENT_FANOUT_CONTRACT,
         visual_identifier=DS_INV_RECIPIENT_FANOUT,
+        dataset_parameters=[
+            DatasetParameter(IntegerDatasetParameter=IntegerDatasetParameter(
+                Id=_DSP_ID_INV_FANOUT_THRESHOLD,
+                Name=str(P_INV_FANOUT_THRESHOLD),
+                ValueType="SINGLE_VALUED",
+                DefaultValues=IntegerDatasetParameterDefaultValues(
+                    StaticValues=[_DEFAULT_FANOUT_THRESHOLD_DSP],
+                ),
+            )),
+        ],
     )
 
 
