@@ -1,5 +1,55 @@
 # Release Notes
 
+## v8.8.0a22 — Y.2.g (L1 per-sheet categorical filter pushdown) + App2 pool fix
+
+Twenty-second alpha. Two related landings on `y-2-gh-l1-categorical-pushdown`.
+
+- **Y.2.g — L1 per-sheet categorical filter pushdown.** Converts the L1
+  dashboard's ~22 per-sheet filter dropdowns from
+  `CategoryFilter.with_values(values=[], FILTER_ALL_VALUES)` (the X.1.g
+  cold-fetch QS footgun — those lazy-fetched the column's distinct values
+  from QS's `tenK-sample-values-V2` endpoint, which 404s on cold per-CI-run
+  dashboards) to dataset-SQL pushdown, fixing the footgun and converging
+  the QuickSight / App2 narrowing path. Operator-verified the deployed
+  sasquatch_pr dashboard is **noticeably faster** — the headline win:
+  narrowing now pushes into indexed `WHERE col IN (<<$p>>)` predicates
+  against the matview instead of QS's lazy sample-values round-trip on
+  every dropdown. Two helper shapes in
+  `apps/l1_dashboard/app.py`: `_populate_pushdown_enum_dropdown`
+  (`StaticValues` for bounded enums — `transfer_type`, `rail_name`,
+  `account_role`, `supersedes`, `check_type`) and
+  `_populate_pushdown_value_dropdown` (`LinkedValues` from a small
+  companion dataset + the `('__l1_all__' IN (<<$p>>) OR col IN (<<$p>>))`
+  sentinel-OR guard for data-value columns — `account_id`, `transfer_id`,
+  open-set `status`, open-set `origin`). Three new companion datasets
+  (`<prefix>_l1_accounts`, `<prefix>_l1_tx_ids`, `<prefix>_l1_tx_facets`)
+  feed those LinkedValues. Daily Statement's account narrow also pushed
+  down (single-valued `pL1DsAccount` dataset param on summary +
+  transactions; dropdown options re-pointed at `DS_L1_ACCOUNTS`). The
+  M.2b.7 cross-sheet drill sentinel `pL1TxTransfer` is unchanged; the new
+  Transactions-sheet transfer-id filter param is `pL1TxTransferId`
+  (distinct name; the two compose).
+- **X.2.g.2.d — App2 cross-event-loop pool bug fixed.** Surfaced while
+  validating Y.2.g's L1 pushdown locally: `serve app2 apply --app
+  <tree-app>` was calling `asyncio.run(make_connection_pool(...))` to
+  open the psycopg3 async pool, then `uvicorn.run()` started a *new*
+  event loop and tried to use it — the pool's background filler task
+  was bound to the first loop and died, surfacing as
+  `error connecting in 'pool-1':` on the first request and a 500 on
+  every visual-data fetch. The smoke app worked because its sync
+  fetcher doesn't use the async pool. Fix: collapse pool creation +
+  uvicorn into one event loop via `uvicorn.Config + uvicorn.Server.serve()`
+  inside an `asyncio.run` wrapper (see `cli/serve.py`). Also wired
+  `--app l1_dashboard` (mirrors the executives / investigation /
+  l2_flow_tracing arms — was the dead spot that the X.2.g.4 follow-up
+  would have filled). Drift KPI live-fetch confirmed
+  `{"value": 10}` from the `sasquatch_pr_drift` matview after the fix.
+
+Tech debt captured (not in this release): App2-local L1 has per-visual
+render errors beyond the drift KPI — that's `_tree_fetcher.wrap_for_visual`
+needing arms for L1's visual kinds, X.2.g.4 territory, NOT a Y.2.g
+pushdown regression.
+
 ## v8.8.0a21 — release-pipeline fix-up + post-Y.2.gate doc sweep
 
 Twenty-first alpha. No `quicksight_gen` package behavior changes vs a20 —
