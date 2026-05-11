@@ -79,15 +79,16 @@ def app2() -> None:
     "--app",
     "app_name",
     type=click.Choice(
-        ["smoke", "executives", "investigation", "l2_flow_tracing"],
+        ["smoke", "executives", "investigation", "l2_flow_tracing",
+         "l1_dashboard"],
     ),
     default="smoke",
     show_default=True,
     help=(
         "Which App2 surface to serve. ``smoke`` is the spike fixture; "
-        "``executives`` (X.2.g.1) and ``investigation`` (X.2.g.2) "
-        "build the real tree + wire its datasets through the generic "
-        "tree fetcher. More apps land at X.2.g.{3,4}."
+        "``executives`` / ``investigation`` / ``l2_flow_tracing`` / "
+        "``l1_dashboard`` build the real tree + wire its datasets "
+        "through the generic tree fetcher."
     ),
 )
 def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the function-decorator return type
@@ -131,19 +132,13 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
     )
 
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
+    needs_pool = app_name != "smoke"
     if app_name == "smoke":
         tree_app, sheet = build_smoke_app(cfg)
         smoke_filter_specs = SMOKE_FILTER_SPECS
-        if stub:
-            fetcher = stub_money_trail_fetcher
-            click.echo("data: stub fetcher (deterministic)")
-        else:
-            fetcher = make_db_fetcher(cfg, instance)
-            click.echo(
-                f"data: DB-backed ({cfg.dialect.value}) → "
-                f"{cfg.l2_instance_prefix or instance.instance}_inv_money_trail_edges"
-            )
-    elif app_name in ("executives", "investigation", "l2_flow_tracing"):
+    elif app_name in (
+        "executives", "investigation", "l2_flow_tracing", "l1_dashboard",
+    ):
         # X.2.g.{1,2} — real tree app via the generic tree fetcher.
         # build_all_datasets(cfg, ...) populates the SQL registry (via
         # build_dataset → register_sql); make_tree_db_fetcher reads
@@ -154,10 +149,6 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
                 f"--stub is only supported for --app smoke. The "
                 f"{app_name} app needs a real DB."
             )
-        from quicksight_gen.common.html._tree_fetcher import (  # noqa: PLC0415
-            make_tree_db_fetcher,
-        )
-
         if app_name == "executives":
             from quicksight_gen.apps.executives.app import (  # noqa: PLC0415
                 build_executives_app,
@@ -181,7 +172,7 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
             # L2FT signature.
             build_inv_datasets(cfg, instance)
             tree_app = build_investigation_app(cfg, l2_instance=instance)
-        else:  # l2_flow_tracing (Y.2.app2.cde.l2ft-wiring)
+        elif app_name == "l2_flow_tracing":  # Y.2.app2.cde.l2ft-wiring
             from quicksight_gen.apps.l2_flow_tracing.app import (  # noqa: PLC0415
                 build_l2_flow_tracing_app,
             )
@@ -193,51 +184,94 @@ def app2_apply(  # type: ignore[no-untyped-def]: Click decorator strips the func
             # params' declared-value defaults are all L2-derived).
             build_all_l2_flow_tracing_datasets(cfg, instance)
             tree_app = build_l2_flow_tracing_app(cfg, l2_instance=instance)
+        else:  # l1_dashboard (Y.2.g)
+            from quicksight_gen.apps.l1_dashboard.app import (  # noqa: PLC0415
+                build_l1_dashboard_app,
+            )
+            from quicksight_gen.apps.l1_dashboard.datasets import (  # noqa: PLC0415
+                build_all_l1_dashboard_datasets,
+            )
+            # L1's dataset builder requires l2_instance (matview names
+            # + Y.2.g pushdown-param defaults are all L2-derived).
+            build_all_l1_dashboard_datasets(cfg, instance)
+            tree_app = build_l1_dashboard_app(cfg, l2_instance=instance)
 
         if tree_app.analysis is None or not tree_app.analysis.sheets:
             raise click.UsageError(
                 f"{app_name} app has no analysis sheets — bug in builder."
             )
         sheet = tree_app.analysis.sheets[0]
-        # X.2.n.4 — fetcher needs an open AsyncConnectionPool. The CLI
-        # spins one synchronously here; X.2.n.5 will move pool
-        # lifecycle into the server's startup hook so the CLI doesn't
-        # need to know about asyncio at all.
-        import asyncio  # noqa: PLC0415
-
-        from quicksight_gen.common.db import (  # noqa: PLC0415
-            make_connection_pool,
-        )
-        pool = asyncio.run(make_connection_pool(
-            cfg, max_size=cfg.app2_db_pool_size,
-        ))
-        fetcher = make_tree_db_fetcher(tree_app, cfg, pool=pool)
         smoke_filter_specs = ()
-        click.echo(
-            f"data: DB-backed ({cfg.dialect.value}) → "
-            f"{app_name} tree fetcher "
-            f"(prefix={cfg.l2_instance_prefix or instance.instance})"
-        )
     else:
         # click.Choice(...) above prevents this branch.
         raise click.UsageError(f"Unknown --app value: {app_name!r}")
+
     theme = resolve_l2_theme(instance)
     if theme is not None:
         click.echo(f"theme: L2-driven ({theme.theme_name})")
-    asgi_app = make_app(
-        dashboards={
-            app_name: ServedDashboard(
-                tree_app=tree_app,
-                sheet=sheet,
-                title=app_name.title(),
-                data_fetcher=fetcher,
-                theme=theme,
-                filter_specs=smoke_filter_specs,
-            ),
-        },
-        dev_log=dev_log,
-    )
-    click.echo(f"App2 server: http://{host}:{port}/")
-    if dev_log:
-        click.echo("dev-log: on (events forwarded to stderr)")
-    uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+
+    async def _serve() -> None:
+        # X.2.g.2.d — keep pool + uvicorn in ONE event loop. Previously
+        # ``asyncio.run(make_connection_pool(...))`` opened the psycopg
+        # pool in loop A and then ``uvicorn.run()`` started loop B; the
+        # pool's background filler task was bound to A and died when B
+        # tried to use it ("error connecting in 'pool-1':" on first
+        # request). Building the pool inside the same loop that runs
+        # ``uvicorn.Server.serve()`` lets the filler keep running.
+        pool = None
+        if app_name == "smoke":
+            if stub:
+                fetcher = stub_money_trail_fetcher
+                click.echo("data: stub fetcher (deterministic)")
+            else:
+                fetcher = make_db_fetcher(cfg, instance)
+                click.echo(
+                    f"data: DB-backed ({cfg.dialect.value}) → "
+                    f"{cfg.l2_instance_prefix or instance.instance}"
+                    f"_inv_money_trail_edges"
+                )
+        else:
+            from quicksight_gen.common.db import (  # noqa: PLC0415
+                make_connection_pool,
+            )
+            from quicksight_gen.common.html._tree_fetcher import (  # noqa: PLC0415
+                make_tree_db_fetcher,
+            )
+            pool = await make_connection_pool(
+                cfg, max_size=cfg.app2_db_pool_size,
+            )
+            fetcher = make_tree_db_fetcher(tree_app, cfg, pool=pool)
+            click.echo(
+                f"data: DB-backed ({cfg.dialect.value}) → "
+                f"{app_name} tree fetcher "
+                f"(prefix={cfg.l2_instance_prefix or instance.instance})"
+            )
+        try:
+            asgi_app = make_app(
+                dashboards={
+                    app_name: ServedDashboard(
+                        tree_app=tree_app,
+                        sheet=sheet,
+                        title=app_name.title(),
+                        data_fetcher=fetcher,
+                        theme=theme,
+                        filter_specs=smoke_filter_specs,
+                    ),
+                },
+                dev_log=dev_log,
+            )
+            click.echo(f"App2 server: http://{host}:{port}/")
+            if dev_log:
+                click.echo("dev-log: on (events forwarded to stderr)")
+            config = uvicorn.Config(
+                asgi_app, host=host, port=port, log_level="info",
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
+        finally:
+            if pool is not None:
+                await pool.close()
+
+    import asyncio  # noqa: PLC0415
+
+    asyncio.run(_serve())

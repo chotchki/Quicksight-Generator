@@ -238,8 +238,10 @@ def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
     ledger_sql = next(iter(ledger_ds.PhysicalTableMap.values())).CustomSql
     assert drift_sql is not None
     assert ledger_sql is not None
-    assert drift_sql.SqlQuery == f"SELECT * FROM {prefix}_drift"
-    assert ledger_sql.SqlQuery == f"SELECT * FROM {prefix}_ledger_drift"
+    # Y.2.g — SQL now also carries the per-sheet pushdown WHERE
+    # (account_id sentinel-OR + account_role IN (...)).
+    assert drift_sql.SqlQuery.startswith(f"SELECT * FROM {prefix}_drift")
+    assert ledger_sql.SqlQuery.startswith(f"SELECT * FROM {prefix}_ledger_drift")
 
 
 # -- Drift Timelines sheet (M.2b.6) ------------------------------------------
@@ -364,7 +366,8 @@ def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
     overdraft_ds = build_overdraft_dataset(_CFG, instance)
     sql = next(iter(overdraft_ds.PhysicalTableMap.values())).CustomSql
     assert sql is not None
-    assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_overdraft"
+    # Y.2.g — SQL also carries the Account / Account-Role pushdown WHERE.
+    assert sql.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_overdraft")
 
 
 # -- Limit Breach sheet (M.2a.5) ---------------------------------------------
@@ -403,7 +406,7 @@ def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
     lb_ds = build_limit_breach_dataset(_CFG, instance)
     sql = next(iter(lb_ds.PhysicalTableMap.values())).CustomSql
     assert sql is not None
-    assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_limit_breach"
+    assert sql.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_limit_breach")
 
 
 # -- Today's Exceptions sheet (M.2a.6) ---------------------------------------
@@ -451,7 +454,7 @@ def test_todays_exceptions_dataset_reads_matview() -> None:
     assert sql_obj is not None
     sql = sql_obj.SqlQuery
     # SQL is now just a SELECT * from the prefixed matview.
-    assert sql == f"SELECT * FROM {instance.instance}_todays_exceptions"
+    assert sql.startswith(f"SELECT * FROM {instance.instance}_todays_exceptions")
 
 
 # -- Transactions sheet (M.2b.5) ---------------------------------------------
@@ -552,9 +555,10 @@ def test_daily_statement_filter_groups_target_correct_columns() -> None:
     assert app.analysis is not None
     fg_ids = {fg.filter_group_id for fg in app.analysis.filter_groups}
     expected = {
-        "fg-l1-ds-summary-account",
+        # Y.2.g.9 — the account narrow now pushes into the dataset SQL
+        # via the bridged pL1DsAccount param; only the date FilterGroups
+        # remain analysis-level.
         "fg-l1-ds-summary-date",
-        "fg-l1-ds-txn-account",
         "fg-l1-ds-txn-date",
     }
     assert expected.issubset(fg_ids)
@@ -589,7 +593,7 @@ def test_daily_statement_datasets_registered() -> None:
     # (the multi-CTE moved into the L1 schema). Transactions still
     # projects per-leg from current_transactions (which IS itself a
     # matview, so cheap).
-    assert summary_sql.SqlQuery == (
+    assert summary_sql.SqlQuery.startswith(
         f"SELECT * FROM {instance.instance}_daily_statement_summary"
     )
     assert f"FROM {instance.instance}_current_transactions" in txn_sql.SqlQuery
@@ -714,13 +718,18 @@ def test_per_sheet_filter_dropdowns() -> None:
     - Today's Exceptions: Check Type + Account + Transfer Type
     - Transactions: Account + Transfer + Status + Origin + Transfer Type
 
-    Plus the date-range pickers from M.2b.1 (Date From / Date To)."""
+    Plus the date-range pickers from M.2b.1 (Date From / Date To).
+
+    Y.2.g — these dropdowns are now parameter-backed (bridged to dataset
+    pushdown params), so they live in ``parameter_controls`` rather than
+    ``filter_controls``; this collects titles from both."""
     app = build_l1_dashboard_app(_CFG)
 
     def _filter_titles(sheet_name: str) -> set[str]:
         sheet = _sheet_by_name(app, sheet_name)
         return {
-            ctrl.title for ctrl in sheet.filter_controls
+            ctrl.title
+            for ctrl in (*sheet.filter_controls, *sheet.parameter_controls)
             if hasattr(ctrl, "title")
         }
 
@@ -984,7 +993,7 @@ def test_pending_aging_dataset_registered() -> None:
     sp_ds = build_stuck_pending_dataset(_CFG, instance)
     sql_obj = next(iter(sp_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
-    assert sql_obj.SqlQuery == f"SELECT * FROM {instance.instance}_stuck_pending"
+    assert sql_obj.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_stuck_pending")
 
 
 # -- Unbundled Aging sheet (M.2b.11) -----------------------------------------
@@ -1061,7 +1070,7 @@ def test_unbundled_aging_dataset_registered() -> None:
     su_ds = build_stuck_unbundled_dataset(_CFG, instance)
     sql_obj = next(iter(su_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
-    assert sql_obj.SqlQuery == f"SELECT * FROM {instance.instance}_stuck_unbundled"
+    assert sql_obj.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_stuck_unbundled")
 
 
 # -- Supersession Audit sheet (M.2b.12) --------------------------------------
@@ -1138,12 +1147,14 @@ def test_supersession_datasets_registered_and_target_base_tables() -> None:
 
 
 def test_supersession_audit_has_supersedes_filter() -> None:
-    """Supersession Audit carries one filter dropdown: supersedes
-    reason. Daily-balances doesn't get a paired filter (low signal)."""
+    """Supersession Audit carries one dropdown: supersedes reason
+    (Y.2.g — now a parameter-backed pushdown control). Daily-balances
+    doesn't get a paired filter (low signal)."""
     app = build_l1_dashboard_app(_CFG)
     sa = _sheet_by_name(app, "Supersession Audit")
     titles = {
-        ctrl.title for ctrl in sa.filter_controls
+        ctrl.title
+        for ctrl in (*sa.filter_controls, *sa.parameter_controls)
         if hasattr(ctrl, "title")
     }
     assert "Supersedes Reason" in titles
@@ -1390,3 +1401,183 @@ class TestCli:
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 
+
+
+# -- Y.2.g — per-sheet categorical filter pushdown ---------------------------
+
+
+def test_y2g_enum_value_helpers_reflect_l2_instance() -> None:
+    """The enum-value helpers feeding the pushdown dropdowns return the
+    L2-declared universe (transfer types / rails / account roles) or the
+    fixed schema enums (supersede reasons / check types). These are the
+    `StaticValues` defaults baked into the dataset params + dropdown
+    options — switching L2 instance switches the dropdown contents."""
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        l1_account_role_values,
+        l1_check_type_values,
+        l1_rail_values,
+        l1_supersede_reason_values,
+        l1_transfer_type_values,
+    )
+
+    instance = default_l2_instance()
+
+    rail_names = {str(r.name) for r in instance.rails}
+    assert set(l1_rail_values(instance)) == rail_names
+    assert l1_rail_values(instance) == sorted(rail_names)
+
+    declared_types = {str(r.transfer_type) for r in instance.rails}
+    declared_types |= {str(ls.transfer_type) for ls in instance.limit_schedules}
+    assert set(l1_transfer_type_values(instance)) == declared_types
+
+    declared_roles = {str(a.role) for a in instance.accounts if a.role}
+    declared_roles |= {str(t.role) for t in instance.account_templates}
+    assert set(l1_account_role_values(instance)) == declared_roles
+
+    # Fixed schema enums — L2-independent.
+    assert l1_supersede_reason_values() == [
+        "BundleAssignment", "Inflight", "TechnicalCorrection",
+    ]
+    assert l1_check_type_values() == [
+        "drift", "expected_eod_balance_breach", "ledger_drift",
+        "limit_breach", "overdraft", "stuck_pending", "stuck_unbundled",
+    ]
+
+
+def _dataset_param_names(ds) -> list[str]:
+    """The ``Name`` of each StringDatasetParameter on a built DataSet."""
+    out: list[str] = []
+    for dp in ds.DatasetParameters or []:
+        sdp = dp.StringDatasetParameter
+        if sdp is not None:
+            out.append(sdp.Name)
+    return out
+
+
+def test_y2g_datasets_declare_pushdown_params() -> None:
+    """Every per-sheet-filtered L1 dataset declares the dataset-level
+    parameters that its CustomSql substitutes (``<<$pX>>``) — otherwise
+    the analysis-param → dataset-param bridge has no target and the
+    dropdown is a no-op."""
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_drift_dataset,
+        build_ledger_drift_dataset,
+        build_drift_timeline_dataset,
+        build_ledger_drift_timeline_dataset,
+        build_overdraft_dataset,
+        build_limit_breach_dataset,
+        build_todays_exceptions_dataset,
+        build_stuck_pending_dataset,
+        build_stuck_unbundled_dataset,
+        build_supersession_transactions_dataset,
+        build_transactions_dataset,
+        build_daily_statement_summary_dataset,
+        build_daily_statement_transactions_dataset,
+    )
+
+    inst = default_l2_instance()
+    cases = {
+        build_drift_dataset: {"pL1DriftAccount", "pL1DriftRole"},
+        build_ledger_drift_dataset: {"pL1DriftAccount", "pL1DriftRole"},
+        build_drift_timeline_dataset: {"pL1DriftTlRole"},
+        build_ledger_drift_timeline_dataset: {"pL1DriftTlRole"},
+        build_overdraft_dataset: {"pL1OverdraftAccount", "pL1OverdraftRole"},
+        build_limit_breach_dataset:
+            {"pL1LimitBreachAccount", "pL1LimitBreachType"},
+        build_todays_exceptions_dataset: {
+            "pL1TodaysExcCheckType", "pL1TodaysExcAccount", "pL1TodaysExcType",
+        },
+        build_stuck_pending_dataset:
+            {"pL1PendingAccount", "pL1PendingType", "pL1PendingRail"},
+        build_stuck_unbundled_dataset:
+            {"pL1UnbundledAccount", "pL1UnbundledType", "pL1UnbundledRail"},
+        build_supersession_transactions_dataset: {"pL1SupersedeReason"},
+        build_transactions_dataset: {
+            "pL1TxAccount", "pL1TxTransferId", "pL1TxStatus",
+            "pL1TxOrigin", "pL1TxType",
+        },
+        build_daily_statement_summary_dataset: {"pL1DsAccount"},
+        build_daily_statement_transactions_dataset: {"pL1DsAccount"},
+    }
+    for builder, expected in cases.items():
+        ds = builder(_CFG, inst)
+        names = set(_dataset_param_names(ds))
+        assert names == expected, f"{builder.__name__}: {names} != {expected}"
+        sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+        for pn in expected:
+            assert f"<<${pn}>>" in sql, f"{builder.__name__} SQL missing <<${pn}>>"
+
+
+def test_y2g_companion_datasets_registered_and_unparameterized() -> None:
+    """The three Y.2.g companion datasets (accounts / transfer ids /
+    tx facets) register on the App + are themselves unparameterized
+    DISTINCT projections — so the dropdowns reading their options via
+    LinkedValues see the full universe, not a narrowed slice."""
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_L1_ACCOUNTS, DS_L1_TX_FACETS, DS_L1_TX_IDS,
+        build_l1_accounts_dataset, build_l1_tx_facets_dataset,
+        build_l1_tx_ids_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered = {ds.identifier for ds in app.datasets}
+    assert {DS_L1_ACCOUNTS, DS_L1_TX_IDS, DS_L1_TX_FACETS}.issubset(registered)
+
+    inst = default_l2_instance()
+    for builder, frag in (
+        (build_l1_accounts_dataset, "SELECT DISTINCT account_id"),
+        (build_l1_tx_ids_dataset, "SELECT DISTINCT transfer_id"),
+        (build_l1_tx_facets_dataset, "SELECT DISTINCT status, origin"),
+    ):
+        ds = builder(_CFG, inst)
+        assert not ds.DatasetParameters, f"{builder.__name__} should be unparameterized"
+        sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+        assert sql.startswith(frag)
+        assert "<<$" not in sql
+
+
+def test_y2g_no_per_sheet_category_filter_groups_remain() -> None:
+    """The X.1.g/M.2b.3 per-sheet ``fg-l1-<sheet>-<col>`` category-filter
+    FilterGroups (the cold-fetch footgun source) are gone — the
+    narrowing moved into dataset SQL. Only the date-range FilterGroups
+    and the drill sentinel FilterGroups should remain on the analysis."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    fg_ids = {fg.filter_group_id for fg in app.analysis.filter_groups}
+    # None of the old per-sheet category dropdown FGs survive.
+    stale = {
+        "fg-l1-drift-account", "fg-l1-drift-role", "fg-l1-drift-tl-role",
+        "fg-l1-overdraft-account", "fg-l1-overdraft-role",
+        "fg-l1-limit-breach-account", "fg-l1-limit-breach-type",
+        "fg-l1-pending-account", "fg-l1-pending-type", "fg-l1-pending-rail",
+        "fg-l1-unbundled-account", "fg-l1-unbundled-type",
+        "fg-l1-unbundled-rail", "fg-l1-supersession-reason",
+        "fg-l1-todays-exc-check-type", "fg-l1-todays-exc-account",
+        "fg-l1-todays-exc-type",
+        "fg-l1-tx-account", "fg-l1-tx-transfer", "fg-l1-tx-status",
+        "fg-l1-tx-origin", "fg-l1-tx-type",
+        "fg-l1-ds-summary-account", "fg-l1-ds-txn-account",
+    }
+    assert fg_ids.isdisjoint(stale), f"stale per-sheet FGs left: {fg_ids & stale}"
+
+
+def test_y2g_drift_dropdowns_bridge_to_both_drift_datasets() -> None:
+    """The Drift sheet's Account + Account-Role dropdowns are
+    cross-dataset (one control narrows both the leaf-drift and
+    ledger-drift tables). After Y.2.g that means each analysis param
+    bridges to a same-named dataset param on BOTH the drift and
+    ledger-drift datasets."""
+    from quicksight_gen.common.tree import StringParam
+
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    by_name = {p.name: p for p in app.analysis.parameters}
+    for pname in ("pL1DriftAccount", "pL1DriftRole"):
+        param = by_name[pname]
+        assert isinstance(param, StringParam)
+        assert param.multi_valued
+        bridged_ds_ids = {ds.identifier for ds, _ in (param.mapped_dataset_params or [])}
+        from quicksight_gen.apps.l1_dashboard.datasets import (
+            DS_DRIFT, DS_LEDGER_DRIFT,
+        )
+        assert {DS_DRIFT, DS_LEDGER_DRIFT}.issubset(bridged_ds_ids)
