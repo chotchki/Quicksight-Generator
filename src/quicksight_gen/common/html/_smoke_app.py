@@ -151,6 +151,29 @@ def build_smoke_app(cfg: Config) -> tuple[App, Sheet]:
             ),
         )
     )
+    # All six renderers in one place — "showcase" should mean *every*
+    # primitive, so the network graphs (Sankey + ForceGraph) live here
+    # too, not only on the Money Trail sheet.
+    showcase.visuals.append(
+        Sankey(
+            title="Chain Sankey",
+            subtitle=(
+                "Stub Sankey; link weights seed off the current "
+                "date_from / date_to so a date change reshapes it."
+            ),
+            visual_id=VisualId("showcase-sankey"),
+        )
+    )
+    showcase.visuals.append(
+        ForceGraph(
+            title="Account Topology — Force Layout",
+            subtitle=(
+                "Stub d3-force graph (accounts as nodes, rails as edges). "
+                "Click a node to anchor it."
+            ),
+            visual_id=VisualId("showcase-force"),
+        )
+    )
     showcase.visuals.append(
         KPI(
             title="Open Exceptions",
@@ -183,10 +206,13 @@ def build_smoke_app(cfg: Config) -> tuple[App, Sheet]:
     )
     showcase.visuals.append(
         Table(
-            title="Filter Echo",
+            title="Account Balances",
             subtitle=(
-                "Stub table — one row per filter URL param. Confirms the "
-                "form serializes correctly via hx-include."
+                "Stub table — 25 rows, 10 per page. Click a column header "
+                "to sort (▲/▼ cycles asc → desc → off); use the pager at "
+                "the bottom. Demonstrates the sortable-header + pagination "
+                "round-trip (each click refetches with sort_column / "
+                "page_offset query params)."
             ),
             visual_id=VisualId("showcase-table"),
         )
@@ -280,23 +306,67 @@ def _showcase_line(params: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _showcase_table(params: dict[str, str]) -> dict[str, Any]:
-    """Stub table — one row per filter URL param the form serialized.
-    Lets the user eyeball the form → URL round-trip without opening
-    devtools.
+_SHOWCASE_TABLE_COLUMNS = ["account_id", "account_name", "balance", "status"]
+_SHOWCASE_TABLE_STATUSES = ("open", "closed", "pending", "failed")
+
+
+def _showcase_table_rows() -> list[list[str]]:
+    """25 deterministic rows — enough to demo pagination (10/page) +
+    sortable headers. Persona-blind sample data."""
+    rows: list[list[str]] = []
+    for i in range(1, 26):
+        # Pseudo-random-but-deterministic balance so a sort visibly
+        # reorders (not already in account_id order).
+        bal = ((i * 37 + 11) % 100) * 1000 + (i * 7) % 1000
+        rows.append([
+            f"acct-{i:03d}",
+            f"Account {chr(64 + (i % 26 or 26))}-{i}",
+            f"{bal:.2f}",
+            _SHOWCASE_TABLE_STATUSES[i % len(_SHOWCASE_TABLE_STATUSES)],
+        ])
+    return rows
+
+
+def _showcase_demo_table(params: dict[str, str]) -> dict[str, Any]:
+    """Stub table demoing the Table renderer's sortable headers +
+    pagination. Honors the ``sort_column`` (``"<col>:asc"`` /
+    ``"<col>:desc"``), ``page_offset``, and ``page_size`` query params
+    the renderer sends on a header / pager click, so the demo is
+    interactive — not a static snapshot.
     """
-    rows = [
-        [str(k), str(v)]
-        for k, v in sorted(params.items())
-    ]
-    if not rows:
-        rows = [["(no filters set)", "—"]]
+    rows: list[list[str]] = _showcase_table_rows()
+    total = len(rows)
+
+    sort_column = params.get("sort_column", "")
+    col_name, _, direction = sort_column.partition(":")
+    if col_name in _SHOWCASE_TABLE_COLUMNS and direction in ("asc", "desc"):
+        ci = _SHOWCASE_TABLE_COLUMNS.index(col_name)
+        desc = direction == "desc"
+        if col_name == "balance":
+            rows = sorted(rows, key=lambda r: float(r[ci]), reverse=desc)
+        else:
+            rows = sorted(rows, key=lambda r: r[ci], reverse=desc)
+
+    def _int(key: str, default: int) -> int:
+        raw = params.get(key, "")
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
+    page_size = max(1, _int("page_size", 10))
+    page_offset = max(0, _int("page_offset", 0))
+    page = rows[page_offset:page_offset + page_size]
     return {
-        "columns": ["URL key", "Value"],
-        "rows": rows,
-        "page_offset": 0,
-        "page_size": len(rows),
-        "total_rows": len(rows),
+        "columns": _SHOWCASE_TABLE_COLUMNS,
+        "rows": page,
+        "page_offset": page_offset,
+        "page_size": page_size,
+        "total_rows": total,
+        # Echo the sort back so the header badge (▲/▼) renders.
+        "sort_column": sort_column,
     }
 
 
@@ -326,7 +396,7 @@ def stub_money_trail_fetcher(
     # Collapse the URL multi-dict to scalar last-values — the stub
     # only reads single-valued filters.
     params: dict[str, str] = {k: v[-1] for k, v in params_multi.items() if v}
-    if visual_id == "smoke-force":
+    if visual_id in ("smoke-force", "showcase-force"):
         return _stub_rails_accounts()
     if visual_id == "showcase-kpi":
         return _showcase_kpi(params)
@@ -335,7 +405,9 @@ def stub_money_trail_fetcher(
     if visual_id == "showcase-line":
         return _showcase_line(params)
     if visual_id == "showcase-table":
-        return _showcase_table(params)
+        return _showcase_demo_table(params)
+    # smoke-sankey + showcase-sankey both fall through to the
+    # date-seeded Money-Trail Sankey below.
     seed = sum(
         ord(c)
         for c in (params.get("date_from", "") + params.get("date_to", ""))
