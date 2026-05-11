@@ -109,16 +109,37 @@ def test_existing_cdn_libs_still_present() -> None:
 
 
 def test_vendor_css_before_theme_style_before_vendor_js() -> None:
-    """Cascade order: ``output.css`` → vendor widget CSS → per-instance
-    ``:root`` theme override → vendor widget JS. The widget CSS reads
-    the ``--color-*`` vars, so the runtime ``<style>`` override (which
-    the X.2.l.4.c sheet maps the libs' own hooks onto) must follow it."""
+    """Cascade order: ``output.css`` → vendor widget CSS →
+    ``widgets-theme.css`` (the X.2.l.4.c override that re-colours the
+    libs in terms of the ``--color-*`` tokens — must follow their base
+    CSS) → per-instance ``:root`` theme override → vendor widget JS."""
     for shell in _shells():
         i_tailwind = shell.index('href="/static/output.css"')
         i_vendor_css = shell.index("tom-select.min.css")
+        i_widget_theme = shell.index("/static/widgets-theme.css")
         i_theme = shell.index(":root {")
         i_vendor_js = shell.index("tom-select.complete.min.js")
-        assert i_tailwind < i_vendor_css < i_theme < i_vendor_js
+        assert (
+            i_tailwind < i_vendor_css < i_widget_theme < i_theme < i_vendor_js
+        )
+
+
+def test_widget_theme_override_sheet_is_linked() -> None:
+    """The X.2.l.4.c override sheet (plain CSS, served from ``assets/``)
+    is linked so the widgets pick up the per-instance ``--color-*``
+    tokens; it ships with the package (``common/html/assets/*.css``)."""
+    for shell in _shells():
+        assert '<link rel="stylesheet" href="/static/widgets-theme.css">' in shell
+    css_path = (
+        Path(__file__).parents[2]
+        / "src" / "quicksight_gen" / "common" / "html" / "assets"
+        / "widgets-theme.css"
+    )
+    body = css_path.read_text(encoding="utf-8")
+    # Re-colours the libs via the semantic tokens, not fixed colours.
+    assert ".ts-control" in body and "var(--color-surface)" in body
+    assert ".flatpickr-day.selected" in body and "var(--color-accent)" in body
+    assert ".noUi-connect" in body and "var(--color-accent)" in body
 
 
 # ---------------------------------------------------------------------------

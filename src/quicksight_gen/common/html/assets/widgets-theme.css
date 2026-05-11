@@ -1,0 +1,169 @@
+/* X.2.l.4.c — theme the filter widgets onto the L2 semantic tokens.
+ *
+ * Tom Select / Flatpickr / noUiSlider each ship their own base CSS
+ * (linked in the page shell as ``{tom-select,flatpickr,nouislider}.min.css``);
+ * those use fixed colours. This sheet loads AFTER them and rewrites
+ * the colour-bearing rules in terms of the ``--color-*`` CSS variables
+ * the page shell injects per L2 instance (``render.py`` :root <style>;
+ * defaults from ``input.css``'s @theme). So a fresh L2 theme recolours
+ * the widgets without rebuilding anything — same trick as the Tailwind
+ * utilities.
+ *
+ * Not Tailwind-processed — plain CSS, served as ``/static/widgets-theme.css``.
+ *
+ * Accessibility (carries the X.2.l.4 rule): colour is never the only
+ * indicator — chips have an ✕ remove affordance, the active dropdown
+ * row is bold + tinted, the picker's "today" cell gets an outline (not
+ * just a fill), the slider handles are circles with a border, and the
+ * slider tooltips show the numeric values as text.
+ */
+
+/* ---------------------------------------------------------------- */
+/* Tom Select — single + multi <select> enhancement                  */
+/* ---------------------------------------------------------------- */
+.ts-control {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-border);
+  color: var(--color-primary-fg);
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.ts-wrapper.focus .ts-control {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.ts-control input,
+.ts-control input::placeholder {
+  color: var(--color-secondary-fg);
+}
+.ts-dropdown {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-border);
+  color: var(--color-primary-fg);
+  box-shadow: 0 4px 10px 0 rgb(0 0 0 / 0.12);
+}
+.ts-dropdown .option:hover,
+.ts-dropdown .option.active,
+.ts-dropdown .active {
+  background: var(--color-link-tint);
+  color: var(--color-primary-fg);
+  font-weight: 600; /* a11y: not colour-only */
+}
+.ts-dropdown .optgroup-header {
+  color: var(--color-secondary-fg);
+}
+/* Multi-select chips. */
+.ts-wrapper.multi .ts-control > .item {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 0.25rem;
+}
+.ts-wrapper.multi .ts-control > .item.active {
+  background: color-mix(in srgb, var(--color-accent) 80%, black);
+}
+.ts-wrapper.multi .ts-control > .item .remove {
+  border-left-color: color-mix(in srgb, var(--color-accent-fg) 40%, transparent);
+}
+.ts-wrapper.multi .ts-control > .item .remove:hover {
+  background: color-mix(in srgb, black 18%, var(--color-accent));
+}
+
+/* ---------------------------------------------------------------- */
+/* Flatpickr — date-range popover                                    */
+/* ---------------------------------------------------------------- */
+.flatpickr-calendar {
+  background: var(--color-surface);
+  box-shadow: 0 6px 18px 0 rgb(0 0 0 / 0.18);
+}
+.flatpickr-months .flatpickr-month,
+.flatpickr-current-month .flatpickr-monthDropdown-months,
+.flatpickr-current-month input.cur-year,
+.flatpickr-weekday {
+  color: var(--color-primary-fg);
+}
+.flatpickr-day {
+  color: var(--color-primary-fg);
+}
+.flatpickr-day:hover,
+.flatpickr-day.prevMonthDay:hover,
+.flatpickr-day.nextMonthDay:hover {
+  background: var(--color-link-tint);
+  border-color: var(--color-link-tint);
+}
+.flatpickr-day.today {
+  border-color: var(--color-accent); /* a11y: outline, not a fill */
+}
+.flatpickr-day.today:hover {
+  background: var(--color-link-tint);
+  color: var(--color-primary-fg);
+}
+.flatpickr-day.selected,
+.flatpickr-day.startRange,
+.flatpickr-day.endRange,
+.flatpickr-day.selected:hover,
+.flatpickr-day.startRange:hover,
+.flatpickr-day.endRange:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+.flatpickr-day.inRange,
+.flatpickr-day.inRange:hover {
+  background: var(--color-link-tint);
+  border-color: var(--color-link-tint);
+  box-shadow:
+    -5px 0 0 var(--color-link-tint),
+    5px 0 0 var(--color-link-tint);
+}
+.flatpickr-day.flatpickr-disabled,
+.flatpickr-day.prevMonthDay,
+.flatpickr-day.nextMonthDay {
+  color: var(--color-secondary-fg);
+}
+span.flatpickr-weekday {
+  color: var(--color-secondary-fg);
+}
+
+/* ---------------------------------------------------------------- */
+/* noUiSlider — two-handle numeric range                             */
+/* ---------------------------------------------------------------- */
+.noUi-target {
+  background: var(--color-surface-border);
+  border: none;
+  box-shadow: none;
+  border-radius: 0.25rem;
+}
+.noUi-horizontal {
+  height: 6px;
+}
+.noUi-connect {
+  background: var(--color-accent);
+}
+.noUi-horizontal .noUi-handle {
+  width: 16px;
+  height: 16px;
+  right: -8px;
+  top: -5px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-accent); /* a11y: bordered circle */
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.2);
+  cursor: pointer;
+}
+.noUi-handle::before,
+.noUi-handle::after {
+  display: none; /* drop the default grip lines */
+}
+.noUi-handle:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.noUi-tooltip {
+  background: var(--color-primary-fg);
+  color: var(--color-surface);
+  border: none;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+}

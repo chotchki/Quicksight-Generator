@@ -254,6 +254,7 @@ _PAGE_SHELL = """\
 {dev_log_meta}
   <link rel="stylesheet" href="/static/output.css">
 {vendor_css}
+  <link rel="stylesheet" href="/static/widgets-theme.css">
 {theme_style}
 {vendor_js}
 </head>

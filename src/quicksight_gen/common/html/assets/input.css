@@ -67,26 +67,11 @@
  */
 
 /*
- * Date input polish — Safari/Chrome render <input type="date"> with a
- * default calendar icon that ignores the surrounding form theme. The
- * pseudo-elements below recolor the icon to the accent token so the
- * picker visually belongs to the form. Firefox ignores these (no-op).
+ * The filter widgets (Tom Select / Flatpickr / noUiSlider — X.2.l.4)
+ * are themed in ``assets/widgets-theme.css``, a plain-CSS sheet the
+ * page shell links AFTER the libs' own base CSS so it can override
+ * their colours with the ``--color-*`` tokens. (The native
+ * ``<input type="date">`` polish that used to live here is gone — the
+ * date picker is Flatpickr now, styled in that sheet.)
  */
-input[type="date"]::-webkit-calendar-picker-indicator {
-  cursor: pointer;
-  opacity: 0.6;
-  padding: 2px;
-  border-radius: 3px;
-  transition: opacity 0.15s, background-color 0.15s;
-}
-input[type="date"]::-webkit-calendar-picker-indicator:hover {
-  opacity: 1;
-  background-color: var(--color-link-tint);
-}
-input[type="date"]::-webkit-datetime-edit {
-  color: var(--color-primary-fg);
-}
-input[type="date"]::-webkit-datetime-edit-fields-wrapper {
-  padding: 0;
-}
 
