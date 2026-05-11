@@ -27,7 +27,12 @@ from quicksight_gen.common.dataset_contract import (
     build_dataset,
 )
 from quicksight_gen.common.l2 import L2Instance
-from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.models import (
+    DataSet,
+    DatasetParameter,
+    StringDatasetParameter,
+    StringDatasetParameterDefaultValues,
+)
 from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
@@ -66,6 +71,162 @@ def l1_matview_specs(l2_instance: L2Instance) -> list[tuple[str, str | None]]:
     ]
 
 
+# -- Y.2.g pushdown sentinels + enum-value helpers ---------------------------
+#
+# Y.2.g converts the L1 dashboard's ~22 per-sheet category-filter
+# dropdowns from ``CategoryFilter.with_values(values=[], FILTER_ALL_VALUES)``
+# (the X.1.g cold-fetch footgun — it lazy-fetches the column's distinct
+# values from QS's ``tenK-sample-values-V2`` endpoint, which 404s on cold
+# per-CI-run dashboards) to dataset-SQL pushdown. Two sub-patterns:
+#
+# - **enum dropdowns** (``transfer_type`` / ``rail_name`` / ``account_role``
+#   / ``supersedes`` / ``check_type``): the value universe is bounded +
+#   known at deploy time (closed L2-declared set or a fixed schema enum).
+#   The dataset SQL gets ``col IN (<<$pX>>)``; the dataset param's
+#   ``StaticValues`` default IS the full universe so a freshly-loaded
+#   dashboard matches every row. Mirrors ``apps/l2_flow_tracing``'s
+#   Y.2.c pattern.
+# - **data-value dropdowns** (``account_id`` / ``transfer_id``): the
+#   universe isn't enumerable at deploy time. The dataset param's
+#   ``StaticValues`` default is ``[L1_ALL_SENTINEL]`` and the SQL guards
+#   ``('__l1_all__' IN (<<$pX>>)) OR (col IN (<<$pX>>))`` — on load (and
+#   when the dropdown is emptied, which reverts the dataset param to its
+#   default) the first disjunct is true so all rows pass; once the
+#   analyst selects real values the second disjunct narrows. The dropdown
+#   options come from a shared companion dataset (DISTINCT column over the
+#   base matview) via ``LinkedValues``, so the dropdown's option fetch is
+#   a well-formed query — not the lazy sample-values endpoint.
+
+# ``col IN ('__no_match__')`` is valid SQL returning zero rows — the
+# right outcome when an L2 instance declares zero values for an enum
+# (an empty ``StaticValues`` default would substitute as ``IN ()``,
+# invalid SQL on every dialect). Builders fall back to this; the
+# analysis-level dropdown still gets the raw (possibly empty) list.
+PUSHDOWN_NO_MATCH_SENTINEL = "__no_match__"
+
+# "Show everything" sentinel for the data-value dropdowns. See the
+# block comment above for the SQL-guard shape.
+L1_ALL_SENTINEL = "__l1_all__"
+# Pre-quoted form for splicing into SQL (the sentinel is alnum +
+# underscores only, so f-string quoting is safe — no escaping needed).
+_L1_ALL_SENTINEL_SQL = f"'{L1_ALL_SENTINEL}'"
+
+# Daily Statement is a single-account view (the analyst picks one
+# account-day). Its account dataset param is SINGLE_VALUED with this
+# sentinel as the static default — matches no real account_id, so a
+# freshly-loaded statement is empty until the analyst picks (mirrors
+# Investigation's Account Network anchor sentinel, K.4.8k).
+_L1_DS_ACCOUNT_SENTINEL = "__l1_no_account_selected__"
+_L1_DS_ACCOUNT_SENTINEL_SQL = f"'{_L1_DS_ACCOUNT_SENTINEL}'"
+
+# Fixed ``check_type`` discriminator values the ``<prefix>_todays_exceptions``
+# matview's UNION ALL projects (common/l2/schema.py). Schema-level, not
+# L2-dependent.
+_L1_CHECK_TYPE_VALUES: tuple[str, ...] = (
+    "drift",
+    "expected_eod_balance_breach",
+    "ledger_drift",
+    "limit_breach",
+    "overdraft",
+    "stuck_pending",
+    "stuck_unbundled",
+)
+
+# v1 ``SupersedeReason`` vocabulary (common/l2/primitives.py). The
+# storage column is open enum, but the loader pins this set at load
+# time; the demo data only ever produces these three.
+_L1_SUPERSEDE_REASON_VALUES: tuple[str, ...] = (
+    "BundleAssignment",
+    "Inflight",
+    "TechnicalCorrection",
+)
+
+
+def l1_transfer_type_values(l2_instance: L2Instance) -> list[str]:
+    """Sorted distinct ``transfer_type`` values declared across the L2's
+    rails + limit schedules — the universe the L1 matviews' ``transfer_type``
+    column draws from. Drives the StaticValues default + dropdown options
+    on every L1 sheet with a transfer-type dropdown.
+    """
+    types: set[str] = {str(r.transfer_type) for r in l2_instance.rails}
+    types |= {str(ls.transfer_type) for ls in l2_instance.limit_schedules}
+    return sorted(types)
+
+
+def l1_rail_values(l2_instance: L2Instance) -> list[str]:
+    """Sorted distinct declared Rail names — the universe the L1 matviews'
+    ``rail_name`` column draws from. Drives the Rail dropdowns on the
+    Pending / Unbundled Aging sheets.
+    """
+    return sorted(str(r.name) for r in l2_instance.rails)
+
+
+def l1_account_role_values(l2_instance: L2Instance) -> list[str]:
+    """Sorted distinct account roles declared by singleton Accounts +
+    AccountTemplates — the universe the L1 matviews' ``account_role``
+    column draws from. Drives the Account-Role dropdowns on the Drift /
+    Drift Timelines / Overdraft sheets.
+    """
+    roles: set[str] = {str(a.role) for a in l2_instance.accounts if a.role}
+    roles |= {str(t.role) for t in l2_instance.account_templates}
+    return sorted(roles)
+
+
+def l1_supersede_reason_values() -> list[str]:
+    """The v1 ``SupersedeReason`` vocabulary. Static dropdown source on
+    the Supersession Audit sheet — see ``_L1_SUPERSEDE_REASON_VALUES``.
+    """
+    return list(_L1_SUPERSEDE_REASON_VALUES)
+
+
+def l1_check_type_values() -> list[str]:
+    """The ``check_type`` discriminator values the Today's Exceptions
+    matview projects. Static dropdown source — see ``_L1_CHECK_TYPE_VALUES``.
+    """
+    return list(_L1_CHECK_TYPE_VALUES)
+
+
+def _mv_dataset_param(
+    dsp_id: str, name: str, default: list[str],
+) -> DatasetParameter:
+    """A MULTI_VALUED string dataset parameter. ``default`` is the
+    full closed value set (enum dropdowns) or ``[L1_ALL_SENTINEL]``
+    (data-value dropdowns); never empty — an empty default substitutes
+    as ``IN ()``, so callers pass ``... or [PUSHDOWN_NO_MATCH_SENTINEL]``
+    for the rare empty-L2-instance case.
+    """
+    return DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+        Id=dsp_id, Name=name, ValueType="MULTI_VALUED",
+        DefaultValues=StringDatasetParameterDefaultValues(
+            StaticValues=list(default),
+        ),
+    ))
+
+
+def _sv_dataset_param(
+    dsp_id: str, name: str, default: str,
+) -> DatasetParameter:
+    """A SINGLE_VALUED string dataset parameter with a sentinel default
+    (Daily Statement's per-account narrow)."""
+    return DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+        Id=dsp_id, Name=name, ValueType="SINGLE_VALUED",
+        DefaultValues=StringDatasetParameterDefaultValues(
+            StaticValues=[default],
+        ),
+    ))
+
+
+def _data_value_clause(col: str, param_name: str) -> str:
+    """WHERE-fragment for a data-value dropdown: ``('__l1_all__' IN
+    (<<$p>>) OR col IN (<<$p>>))``. On load (and when the dropdown is
+    emptied, reverting the dataset param to its ``[L1_ALL_SENTINEL]``
+    default) the first disjunct is true so every row passes."""
+    return (
+        f"({_L1_ALL_SENTINEL_SQL} IN (<<${param_name}>>)"
+        f" OR {col} IN (<<${param_name}>>))"
+    )
+
+
 # Visual identifiers — keys for the Dataset registry on App.
 DS_DRIFT = "l1-drift-ds"
 DS_LEDGER_DRIFT = "l1-ledger-drift-ds"
@@ -81,6 +242,15 @@ DS_STUCK_PENDING = "l1-stuck-pending-ds"
 DS_STUCK_UNBUNDLED = "l1-stuck-unbundled-ds"
 DS_SUPERSESSION_TRANSACTIONS = "l1-supersession-transactions-ds"
 DS_SUPERSESSION_DAILY_BALANCES = "l1-supersession-daily-balances-ds"
+# Y.2.g — shared companion datasets feeding the data-value dropdowns
+# (account_id / transfer_id / status / origin) across every sheet. Each
+# is a DISTINCT projection over the base matview so the dropdown's
+# option fetch is a cheap, well-formed query (not the lazy sample-values
+# endpoint). `status` / `origin` are open-set in the L1 schema (no fixed
+# enum), so they get a companion rather than StaticValues.
+DS_L1_ACCOUNTS = "l1-accounts-ds"
+DS_L1_TX_IDS = "l1-tx-ids-ds"
+DS_L1_TX_FACETS = "l1-tx-facets-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -324,7 +494,38 @@ SUPERSESSION_DAILY_BALANCES_CONTRACT = DatasetContract(columns=[
 ])
 
 
+# Y.2.g — companion datasets feeding the data-value dropdowns. One row
+# per distinct id; one column. The bridged dataset param substitutes
+# the selected id(s) into the consuming dataset's ``col IN (...)``.
+L1_ACCOUNTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+])
+
+L1_TX_IDS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+])
+
+L1_TX_FACETS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("origin", "STRING"),
+])
+
+
 # -- Builders ----------------------------------------------------------------
+
+
+# Y.2.g — the Drift sheet's Account + Account-Role dropdowns are
+# cross_dataset=ALL_DATASETS: one control narrows BOTH the leaf-drift
+# and ledger-drift tables. The analysis param bridges to a same-named
+# dataset param on each dataset (mirrors L2FT's Y.2.e TT sheet). The
+# Drift Timelines sheet's Account-Role dropdown likewise narrows both
+# timeline datasets.
+_DSP_L1_DRIFT_ACCOUNT = "dsp-l1-drift-account"
+_DSP_L1_DRIFT_ROLE = "dsp-l1-drift-role"
+_DSP_L1_DRIFT_TL_ROLE = "dsp-l1-drift-tl-role"
+P_L1_DRIFT_ACCOUNT = "pL1DriftAccount"
+P_L1_DRIFT_ROLE = "pL1DriftRole"
+P_L1_DRIFT_TL_ROLE = "pL1DriftTlRole"
 
 
 def build_drift_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
@@ -335,14 +536,32 @@ def build_drift_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
     No `drift_status='in_balance'` rows; if the dashboard wants to show
     "all accounts including no-drift", it queries the underlying
     Current* view directly, not this dataset.
+
+    Y.2.g — the Account / Account-Role dropdowns push down here via
+    ``account_id`` (data-value, sentinel-OR) + ``account_role`` (enum,
+    ``IN (...)``). Same dataset-param names on ``build_ledger_drift_dataset``
+    so one ALL_DATASETS dropdown narrows both.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_drift"
+    sql = (
+        f"SELECT * FROM {prefix}_drift\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_DRIFT_ACCOUNT)}\n"
+        f"  AND account_role IN (<<${P_L1_DRIFT_ROLE}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-drift-dataset"),
         "L1 Drift", "l1-drift",
         sql, DRIFT_CONTRACT,
         visual_identifier=DS_DRIFT,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_DRIFT_ACCOUNT, P_L1_DRIFT_ACCOUNT,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_DRIFT_ROLE, P_L1_DRIFT_ROLE,
+                l1_account_role_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
 
 
@@ -353,16 +572,41 @@ def build_ledger_drift_dataset(
 
     Same shape as ``build_drift_dataset`` minus ``account_parent_role``
     (parent accounts ARE the parents — no parent_role column on this
-    view).
+    view). Carries the same Y.2.g dataset-param names as the leaf-drift
+    dataset so the Drift sheet's ALL_DATASETS dropdowns narrow both.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_ledger_drift"
+    sql = (
+        f"SELECT * FROM {prefix}_ledger_drift\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_DRIFT_ACCOUNT)}\n"
+        f"  AND account_role IN (<<${P_L1_DRIFT_ROLE}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-ledger-drift-dataset"),
         "L1 Ledger Drift", "l1-ledger-drift",
         sql, LEDGER_DRIFT_CONTRACT,
         visual_identifier=DS_LEDGER_DRIFT,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_DRIFT_ACCOUNT, P_L1_DRIFT_ACCOUNT,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_DRIFT_ROLE, P_L1_DRIFT_ROLE,
+                l1_account_role_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
+
+
+# Y.2.g — per-sheet single-dataset pushdown param names + IDs.
+_DSP_L1_OVERDRAFT_ACCOUNT = "dsp-l1-overdraft-account"
+_DSP_L1_OVERDRAFT_ROLE = "dsp-l1-overdraft-role"
+P_L1_OVERDRAFT_ACCOUNT = "pL1OverdraftAccount"
+P_L1_OVERDRAFT_ROLE = "pL1OverdraftRole"
+_DSP_L1_LIMIT_BREACH_ACCOUNT = "dsp-l1-limit-breach-account"
+_DSP_L1_LIMIT_BREACH_TYPE = "dsp-l1-limit-breach-type"
+P_L1_LIMIT_BREACH_ACCOUNT = "pL1LimitBreachAccount"
+P_L1_LIMIT_BREACH_TYPE = "pL1LimitBreachType"
 
 
 def build_overdraft_dataset(
@@ -373,14 +617,30 @@ def build_overdraft_dataset(
     Rows are accounts with negative stored balance — the L1 invariant
     is "no internal account holds negative money." External accounts
     are excluded by the view (filtered to ``account_scope = 'internal'``).
+
+    Y.2.g — Account dropdown pushes down via ``account_id`` (data-value,
+    sentinel-OR); Account-Role dropdown via ``account_role IN (...)``.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_overdraft"
+    sql = (
+        f"SELECT * FROM {prefix}_overdraft\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_OVERDRAFT_ACCOUNT)}\n"
+        f"  AND account_role IN (<<${P_L1_OVERDRAFT_ROLE}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-overdraft-dataset"),
         "L1 Overdraft", "l1-overdraft",
         sql, OVERDRAFT_CONTRACT,
         visual_identifier=DS_OVERDRAFT,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_OVERDRAFT_ACCOUNT,
+                              P_L1_OVERDRAFT_ACCOUNT, [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_OVERDRAFT_ROLE, P_L1_OVERDRAFT_ROLE,
+                l1_account_role_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
 
 
@@ -393,15 +653,40 @@ def build_limit_breach_dataset(
     the L2-configured cap. Caps are inlined in the view at emit-time
     from the L2 LimitSchedules — no JSON path lookups in the dataset
     SQL.
+
+    Y.2.g — Account dropdown pushes down via ``account_id`` (data-value,
+    sentinel-OR); Transfer Type dropdown via ``transfer_type IN (...)``.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_limit_breach"
+    sql = (
+        f"SELECT * FROM {prefix}_limit_breach\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_LIMIT_BREACH_ACCOUNT)}\n"
+        f"  AND transfer_type IN (<<${P_L1_LIMIT_BREACH_TYPE}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-limit-breach-dataset"),
         "L1 Limit Breach", "l1-limit-breach",
         sql, LIMIT_BREACH_CONTRACT,
         visual_identifier=DS_LIMIT_BREACH,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_LIMIT_BREACH_ACCOUNT,
+                              P_L1_LIMIT_BREACH_ACCOUNT, [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_LIMIT_BREACH_TYPE, P_L1_LIMIT_BREACH_TYPE,
+                l1_transfer_type_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
+
+
+# Y.2.g — Today's Exceptions pushdown params.
+_DSP_L1_TODAYS_EXC_CHECK_TYPE = "dsp-l1-todays-exc-check-type"
+_DSP_L1_TODAYS_EXC_ACCOUNT = "dsp-l1-todays-exc-account"
+_DSP_L1_TODAYS_EXC_TYPE = "dsp-l1-todays-exc-type"
+P_L1_TODAYS_EXC_CHECK_TYPE = "pL1TodaysExcCheckType"
+P_L1_TODAYS_EXC_ACCOUNT = "pL1TodaysExcAccount"
+P_L1_TODAYS_EXC_TYPE = "pL1TodaysExcType"
 
 
 def build_todays_exceptions_dataset(
@@ -414,15 +699,49 @@ def build_todays_exceptions_dataset(
     reads a precomputed table instead of re-running the 5-branch UNION.
     Refresh contract: integrators MUST call `refresh_matviews_sql()`
     after every batch insert into the base tables.
+
+    Y.2.g — three dropdowns push down: ``check_type`` (enum, ``IN (...)``),
+    ``account_id`` (data-value, sentinel-OR), and ``transfer_type``
+    (enum). ``transfer_type`` is NULL for every branch except limit /
+    stuck rows, so the predicate keeps the NULL-type rows on load (and
+    while narrowing) — matching the FILTER_ALL_VALUES behavior it
+    replaces.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_todays_exceptions"
+    sql = (
+        f"SELECT * FROM {prefix}_todays_exceptions\n"
+        f"WHERE check_type IN (<<${P_L1_TODAYS_EXC_CHECK_TYPE}>>)\n"
+        f"  AND {_data_value_clause('account_id', P_L1_TODAYS_EXC_ACCOUNT)}\n"
+        f"  AND (transfer_type IN (<<${P_L1_TODAYS_EXC_TYPE}>>)"
+        f" OR transfer_type IS NULL)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-todays-exceptions-dataset"),
         "L1 Today's Exceptions", "l1-todays-exceptions",
         sql, TODAYS_EXCEPTIONS_CONTRACT,
         visual_identifier=DS_TODAYS_EXCEPTIONS,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_TODAYS_EXC_CHECK_TYPE,
+                              P_L1_TODAYS_EXC_CHECK_TYPE,
+                              l1_check_type_values()),
+            _mv_dataset_param(_DSP_L1_TODAYS_EXC_ACCOUNT,
+                              P_L1_TODAYS_EXC_ACCOUNT, [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_TODAYS_EXC_TYPE, P_L1_TODAYS_EXC_TYPE,
+                l1_transfer_type_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
+
+
+# Y.2.g — Daily Statement is single-account: one SINGLE_VALUED dataset
+# param (the same name on the summary + transactions datasets) bridged
+# from the analysis-level account picker. Sentinel default → empty
+# statement until the analyst picks. The date picker stays an
+# analysis-level TimeEqualityFilter (Y.2.f territory).
+_DSP_L1_DS_ACCOUNT = "dsp-l1-ds-account"
+P_L1_DS_ACCOUNT_DSP = "pL1DsAccount"
 
 
 def build_daily_statement_summary_dataset(
@@ -436,21 +755,34 @@ def build_daily_statement_summary_dataset(
     re-evaluating the multi-CTE per visual (5 KPIs × CTE = 5
     re-evaluations otherwise). Refresh contract via
     `refresh_matviews_sql()` after every batch insert.
+
+    Y.2.g — the per-account narrow pushes down via ``account_id =
+    <<$pL1DsAccount>>`` instead of an analysis-level CategoryFilter; the
+    sheet's account dropdown reads its options from the ``DS_L1_ACCOUNTS``
+    companion (not this parameterized dataset).
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_daily_statement_summary"
+    sql = (
+        f"SELECT * FROM {prefix}_daily_statement_summary\n"
+        f"WHERE account_id = <<${P_L1_DS_ACCOUNT_DSP}>>"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-daily-statement-summary-dataset"),
         "L1 Daily Statement Summary", "l1-daily-statement-summary",
         sql, DAILY_STATEMENT_SUMMARY_CONTRACT,
         visual_identifier=DS_DAILY_STATEMENT_SUMMARY,
+        dataset_parameters=[
+            _sv_dataset_param(_DSP_L1_DS_ACCOUNT, P_L1_DS_ACCOUNT_DSP,
+                              _L1_DS_ACCOUNT_SENTINEL),
+        ],
     )
 
 
 def _daily_statement_transactions_sql(prefix: str, dialect: Dialect) -> str:
     """Per-leg projection from `<prefix>_current_transactions` carrying
-    everything the Daily Statement detail table renders. Sheet-level
-    filters narrow to one (account_id, business_day) at render time.
+    everything the Daily Statement detail table renders. Narrowed to one
+    ``account_id`` via the ``pL1DsAccount`` dataset param (Y.2.g); the
+    date filter stays analysis-level.
 
     ``business_day`` is a day-truncation of ``posting``; built via
     ``date_trunc_day`` so the projection stays a TIMESTAMP-shaped value
@@ -468,6 +800,7 @@ def _daily_statement_transactions_sql(prefix: str, dialect: Dialect) -> str:
         f"       tx.amount_money, tx.amount_direction,"
         f"       tx.status, tx.origin"
         f" FROM {prefix}_current_transactions tx"
+        f" WHERE tx.account_id = <<${P_L1_DS_ACCOUNT_DSP}>>"
     )
 
 
@@ -482,7 +815,26 @@ def build_daily_statement_transactions_dataset(
         "l1-daily-statement-transactions",
         sql, DAILY_STATEMENT_TRANSACTIONS_CONTRACT,
         visual_identifier=DS_DAILY_STATEMENT_TRANSACTIONS,
+        dataset_parameters=[
+            _sv_dataset_param(_DSP_L1_DS_ACCOUNT, P_L1_DS_ACCOUNT_DSP,
+                              _L1_DS_ACCOUNT_SENTINEL),
+        ],
     )
+
+
+# Y.2.g — Transactions sheet pushdown params. account_id / transfer_id /
+# status / origin are data-value (sentinel-OR; status + origin are
+# open-set in the L1 schema); transfer_type is the bounded enum.
+_DSP_L1_TX_ACCOUNT = "dsp-l1-tx-account"
+_DSP_L1_TX_TRANSFER_ID = "dsp-l1-tx-transfer-id"
+_DSP_L1_TX_STATUS = "dsp-l1-tx-status"
+_DSP_L1_TX_ORIGIN = "dsp-l1-tx-origin"
+_DSP_L1_TX_TYPE = "dsp-l1-tx-type"
+P_L1_TX_ACCOUNT = "pL1TxAccount"
+P_L1_TX_TRANSFER_ID = "pL1TxTransferId"
+P_L1_TX_STATUS = "pL1TxStatus"
+P_L1_TX_ORIGIN = "pL1TxOrigin"
+P_L1_TX_TYPE = "pL1TxType"
 
 
 def build_transactions_dataset(
@@ -497,6 +849,10 @@ def build_transactions_dataset(
     only the analyst-visible columns; internal columns (entry,
     account_scope, supersedes, bundle_id, template_name, metadata) stay
     in the matview but aren't surfaced.
+
+    Y.2.g — all five dropdowns push into this SQL: account_id /
+    transfer_id / status / origin via the sentinel-OR data-value guard,
+    transfer_type via ``IN (...)``.
     """
     prefix = l2_instance.instance
     sql = (
@@ -505,13 +861,33 @@ def build_transactions_dataset(
         f" transfer_id, transfer_parent_id, transfer_type, rail_name,"
         f" amount_money, amount_direction, status, origin,"
         f" posting, transfer_completion"
-        f" FROM {prefix}_current_transactions"
+        f" FROM {prefix}_current_transactions\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_TX_ACCOUNT)}\n"
+        f"  AND {_data_value_clause('transfer_id', P_L1_TX_TRANSFER_ID)}\n"
+        f"  AND {_data_value_clause('status', P_L1_TX_STATUS)}\n"
+        f"  AND {_data_value_clause('origin', P_L1_TX_ORIGIN)}\n"
+        f"  AND transfer_type IN (<<${P_L1_TX_TYPE}>>)"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-transactions-dataset"),
         "L1 Transactions", "l1-transactions",
         sql, TRANSACTIONS_CONTRACT,
         visual_identifier=DS_TRANSACTIONS,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_TX_ACCOUNT, P_L1_TX_ACCOUNT,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(_DSP_L1_TX_TRANSFER_ID, P_L1_TX_TRANSFER_ID,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(_DSP_L1_TX_STATUS, P_L1_TX_STATUS,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(_DSP_L1_TX_ORIGIN, P_L1_TX_ORIGIN,
+                              [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_TX_TYPE, P_L1_TX_TYPE,
+                l1_transfer_type_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
 
 
@@ -523,6 +899,10 @@ def build_drift_timeline_dataset(
     One row per (day, role) carrying SUM(ABS(drift)). Source matview is
     already small (only violations) and indexed on `account_role`, so the
     GROUP BY runs at indexed-scan latency. Backs the leaf-drift LineChart.
+
+    Y.2.g — the Drift Timelines sheet's Account-Role dropdown narrows
+    BOTH timeline datasets via the same ``pL1DriftTlRole`` dataset param;
+    the predicate sits before the GROUP BY.
     """
     prefix = l2_instance.instance
     sql = (
@@ -530,6 +910,7 @@ def build_drift_timeline_dataset(
         f"       account_role,"
         f"       SUM(ABS(drift)) AS abs_drift"
         f" FROM {prefix}_drift"
+        f" WHERE account_role IN (<<${P_L1_DRIFT_TL_ROLE}>>)"
         f" GROUP BY business_day_end, account_role"
     )
     return build_dataset(
@@ -537,6 +918,13 @@ def build_drift_timeline_dataset(
         "L1 Drift Timeline", "l1-drift-timeline",
         sql, DRIFT_TIMELINE_CONTRACT,
         visual_identifier=DS_DRIFT_TIMELINE,
+        dataset_parameters=[
+            _mv_dataset_param(
+                _DSP_L1_DRIFT_TL_ROLE, P_L1_DRIFT_TL_ROLE,
+                l1_account_role_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
 
 
@@ -546,7 +934,9 @@ def build_ledger_drift_timeline_dataset(
     """Pre-aggregate ledger drift by (business_day_end, account_role).
 
     Same shape as the leaf-drift timeline, sourced from the parent-account
-    drift matview. Backs the ledger-drift LineChart.
+    drift matview. Backs the ledger-drift LineChart. Carries the same
+    ``pL1DriftTlRole`` Y.2.g param so the ALL_DATASETS dropdown narrows
+    both timelines.
     """
     prefix = l2_instance.instance
     sql = (
@@ -554,6 +944,7 @@ def build_ledger_drift_timeline_dataset(
         f"       account_role,"
         f"       SUM(ABS(drift)) AS abs_drift"
         f" FROM {prefix}_ledger_drift"
+        f" WHERE account_role IN (<<${P_L1_DRIFT_TL_ROLE}>>)"
         f" GROUP BY business_day_end, account_role"
     )
     return build_dataset(
@@ -561,7 +952,30 @@ def build_ledger_drift_timeline_dataset(
         "L1 Ledger Drift Timeline", "l1-ledger-drift-timeline",
         sql, DRIFT_TIMELINE_CONTRACT,
         visual_identifier=DS_LEDGER_DRIFT_TIMELINE,
+        dataset_parameters=[
+            _mv_dataset_param(
+                _DSP_L1_DRIFT_TL_ROLE, P_L1_DRIFT_TL_ROLE,
+                l1_account_role_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
+
+
+# Y.2.g — Pending / Unbundled Aging pushdown params (same three vectors
+# over their respective matviews).
+_DSP_L1_PENDING_ACCOUNT = "dsp-l1-pending-account"
+_DSP_L1_PENDING_TYPE = "dsp-l1-pending-type"
+_DSP_L1_PENDING_RAIL = "dsp-l1-pending-rail"
+P_L1_PENDING_ACCOUNT = "pL1PendingAccount"
+P_L1_PENDING_TYPE = "pL1PendingType"
+P_L1_PENDING_RAIL = "pL1PendingRail"
+_DSP_L1_UNBUNDLED_ACCOUNT = "dsp-l1-unbundled-account"
+_DSP_L1_UNBUNDLED_TYPE = "dsp-l1-unbundled-type"
+_DSP_L1_UNBUNDLED_RAIL = "dsp-l1-unbundled-rail"
+P_L1_UNBUNDLED_ACCOUNT = "pL1UnbundledAccount"
+P_L1_UNBUNDLED_TYPE = "pL1UnbundledType"
+P_L1_UNBUNDLED_RAIL = "pL1UnbundledRail"
 
 
 def build_stuck_pending_dataset(
@@ -572,15 +986,35 @@ def build_stuck_pending_dataset(
     Pending transactions whose age exceeds the per-rail
     `max_pending_age` cap. Backs the M.2b.10 Pending Aging sheet —
     aging buckets come from a calc field on the dataset, so the SQL
-    stays a thin SELECT * passthrough.
+    stays a thin SELECT * passthrough plus the Y.2.g pushdown WHERE
+    (account_id data-value + transfer_type / rail_name enums).
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_stuck_pending"
+    sql = (
+        f"SELECT * FROM {prefix}_stuck_pending\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_PENDING_ACCOUNT)}\n"
+        f"  AND transfer_type IN (<<${P_L1_PENDING_TYPE}>>)\n"
+        f"  AND rail_name IN (<<${P_L1_PENDING_RAIL}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-stuck-pending-dataset"),
         "L1 Stuck Pending", "l1-stuck-pending",
         sql, STUCK_PENDING_CONTRACT,
         visual_identifier=DS_STUCK_PENDING,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_PENDING_ACCOUNT,
+                              P_L1_PENDING_ACCOUNT, [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_PENDING_TYPE, P_L1_PENDING_TYPE,
+                l1_transfer_type_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+            _mv_dataset_param(
+                _DSP_L1_PENDING_RAIL, P_L1_PENDING_RAIL,
+                l1_rail_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
 
 
@@ -591,16 +1025,45 @@ def build_stuck_unbundled_dataset(
 
     Posted transactions where bundle_id IS NULL and age exceeds the
     per-rail `max_unbundled_age` cap. Backs the M.2b.11 Unbundled
-    Aging sheet.
+    Aging sheet. Same Y.2.g pushdown vectors as the Pending Aging
+    dataset.
     """
     prefix = l2_instance.instance
-    sql = f"SELECT * FROM {prefix}_stuck_unbundled"
+    sql = (
+        f"SELECT * FROM {prefix}_stuck_unbundled\n"
+        f"WHERE {_data_value_clause('account_id', P_L1_UNBUNDLED_ACCOUNT)}\n"
+        f"  AND transfer_type IN (<<${P_L1_UNBUNDLED_TYPE}>>)\n"
+        f"  AND rail_name IN (<<${P_L1_UNBUNDLED_RAIL}>>)"
+    )
     return build_dataset(
         cfg, cfg.prefixed("l1-stuck-unbundled-dataset"),
         "L1 Stuck Unbundled", "l1-stuck-unbundled",
         sql, STUCK_UNBUNDLED_CONTRACT,
         visual_identifier=DS_STUCK_UNBUNDLED,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_UNBUNDLED_ACCOUNT,
+                              P_L1_UNBUNDLED_ACCOUNT, [L1_ALL_SENTINEL]),
+            _mv_dataset_param(
+                _DSP_L1_UNBUNDLED_TYPE, P_L1_UNBUNDLED_TYPE,
+                l1_transfer_type_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+            _mv_dataset_param(
+                _DSP_L1_UNBUNDLED_RAIL, P_L1_UNBUNDLED_RAIL,
+                l1_rail_values(l2_instance)
+                or [PUSHDOWN_NO_MATCH_SENTINEL],
+            ),
+        ],
     )
+
+
+# Y.2.g — Supersession Audit's lone dropdown (the `supersedes`
+# cause-class). `supersedes` is NULL on the entry-1 (original) rows of
+# every audit trail, so the predicate keeps the originals visible on
+# load and while narrowing — you always see the trail, the dropdown
+# just narrows which cause class you're auditing.
+_DSP_L1_SUPERSEDE_REASON = "dsp-l1-supersede-reason"
+P_L1_SUPERSEDE_REASON = "pL1SupersedeReason"
 
 
 def build_supersession_transactions_dataset(
@@ -618,6 +1081,9 @@ def build_supersession_transactions_dataset(
     FROM (...)` for filter dropdowns; QS chokes on the IN-subquery +
     `ORDER BY` combo). Sort handled by the dashboard, not the
     dataset.
+
+    Y.2.g — the Supersedes-Reason dropdown pushes down via
+    ``(supersedes IN (<<$pL1SupersedeReason>>) OR supersedes IS NULL)``.
     """
     prefix = l2_instance.instance
     sql = (
@@ -634,6 +1100,8 @@ def build_supersession_transactions_dataset(
         f"   FROM {prefix}_transactions"
         f" ) sub"
         f" WHERE entry_count > 1"
+        f" AND (supersedes IN (<<${P_L1_SUPERSEDE_REASON}>>)"
+        f" OR supersedes IS NULL)"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-transactions-dataset"),
@@ -641,6 +1109,11 @@ def build_supersession_transactions_dataset(
         "l1-supersession-transactions",
         sql, SUPERSESSION_TRANSACTIONS_CONTRACT,
         visual_identifier=DS_SUPERSESSION_TRANSACTIONS,
+        dataset_parameters=[
+            _mv_dataset_param(_DSP_L1_SUPERSEDE_REASON,
+                              P_L1_SUPERSEDE_REASON,
+                              l1_supersede_reason_values()),
+        ],
     )
 
 
@@ -678,6 +1151,69 @@ def build_supersession_daily_balances_dataset(
     )
 
 
+def build_l1_accounts_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Y.2.g companion — distinct ``account_id`` over the universe of
+    accounts. Feeds every L1 sheet's Account dropdown via ``LinkedValues``
+    (the Daily Statement sheet's account dropdown re-points here too).
+
+    Reads ``<prefix>_current_daily_balances`` (one row per account-day,
+    so every account is present) rather than ``current_transactions``
+    (an account with no movement still has daily-balance rows). Same
+    DISTINCT-inside-SELECT shape as Investigation's
+    ``build_account_network_accounts_dataset`` (K.4.8k) — keeps the
+    dropdown's option fetch cheap as the matview grows.
+    """
+    prefix = l2_instance.instance
+    sql = f"SELECT DISTINCT account_id FROM {prefix}_current_daily_balances"
+    return build_dataset(
+        cfg, cfg.prefixed("l1-accounts-dataset"),
+        "L1 Accounts", "l1-accounts",
+        sql, L1_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_L1_ACCOUNTS,
+    )
+
+
+def build_l1_tx_ids_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Y.2.g companion — distinct ``transfer_id`` over the current
+    ledger. Feeds the Transactions sheet's Transfer dropdown via
+    ``LinkedValues``.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT DISTINCT transfer_id FROM {prefix}_current_transactions"
+        f" WHERE transfer_id IS NOT NULL"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-tx-ids-dataset"),
+        "L1 Transfer IDs", "l1-tx-ids",
+        sql, L1_TX_IDS_CONTRACT,
+        visual_identifier=DS_L1_TX_IDS,
+    )
+
+
+def build_l1_tx_facets_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Y.2.g companion — distinct ``(status, origin)`` over the current
+    ledger. Feeds the Transactions sheet's Status + Origin dropdowns via
+    ``LinkedValues``. Both columns are open-set in the L1 schema, so a
+    companion (cheap, well-formed query) replaces the StaticValues path
+    used for the bounded enum columns.
+    """
+    prefix = l2_instance.instance
+    sql = f"SELECT DISTINCT status, origin FROM {prefix}_current_transactions"
+    return build_dataset(
+        cfg, cfg.prefixed("l1-tx-facets-dataset"),
+        "L1 Transaction Facets", "l1-tx-facets",
+        sql, L1_TX_FACETS_CONTRACT,
+        visual_identifier=DS_L1_TX_FACETS,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -706,6 +1242,10 @@ def build_all_l1_dashboard_datasets(
         build_stuck_unbundled_dataset(cfg, l2_instance),
         build_supersession_transactions_dataset(cfg, l2_instance),
         build_supersession_daily_balances_dataset(cfg, l2_instance),
+        # Y.2.g — companion datasets for the data-value dropdowns.
+        build_l1_accounts_dataset(cfg, l2_instance),
+        build_l1_tx_ids_dataset(cfg, l2_instance),
+        build_l1_tx_facets_dataset(cfg, l2_instance),
         # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
         # M.4.4.7 — per-app segment so deploy <single-app> doesn't
         # delete-then-create another app's App Info dataset.

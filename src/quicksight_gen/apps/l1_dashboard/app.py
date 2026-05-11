@@ -42,6 +42,9 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DAILY_STATEMENT_TRANSACTIONS,
     DS_DRIFT,
     DS_DRIFT_TIMELINE,
+    DS_L1_ACCOUNTS,
+    DS_L1_TX_FACETS,
+    DS_L1_TX_IDS,
     DS_LEDGER_DRIFT,
     DS_LEDGER_DRIFT_TIMELINE,
     DS_LIMIT_BREACH,
@@ -52,7 +55,35 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_SUPERSESSION_TRANSACTIONS,
     DS_TODAYS_EXCEPTIONS,
     DS_TRANSACTIONS,
+    P_L1_DRIFT_ACCOUNT,
+    P_L1_DRIFT_ROLE,
+    P_L1_DRIFT_TL_ROLE,
+    P_L1_DS_ACCOUNT_DSP,
+    P_L1_LIMIT_BREACH_ACCOUNT,
+    P_L1_LIMIT_BREACH_TYPE,
+    P_L1_OVERDRAFT_ACCOUNT,
+    P_L1_OVERDRAFT_ROLE,
+    P_L1_PENDING_ACCOUNT,
+    P_L1_PENDING_RAIL,
+    P_L1_PENDING_TYPE,
+    P_L1_SUPERSEDE_REASON,
+    P_L1_TODAYS_EXC_ACCOUNT,
+    P_L1_TODAYS_EXC_CHECK_TYPE,
+    P_L1_TODAYS_EXC_TYPE,
+    P_L1_TX_ACCOUNT,
+    P_L1_TX_ORIGIN,
+    P_L1_TX_STATUS,
+    P_L1_TX_TRANSFER_ID,
+    P_L1_TX_TYPE,
+    P_L1_UNBUNDLED_ACCOUNT,
+    P_L1_UNBUNDLED_RAIL,
+    P_L1_UNBUNDLED_TYPE,
     build_all_l1_dashboard_datasets,
+    l1_account_role_values,
+    l1_check_type_values,
+    l1_rail_values,
+    l1_supersede_reason_values,
+    l1_transfer_type_values,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -90,6 +121,7 @@ from quicksight_gen.common.tree import (
     LinkedValues,
     Measure,
     Sheet,
+    StaticValues,
     StringParam,
     TextBox,
     TimeEqualityFilter,
@@ -442,6 +474,7 @@ def _l1_datasets(
         DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
         DS_STUCK_PENDING, DS_STUCK_UNBUNDLED,
         DS_SUPERSESSION_TRANSACTIONS, DS_SUPERSESSION_DAILY_BALANCES,
+        DS_L1_ACCOUNTS, DS_L1_TX_IDS, DS_L1_TX_FACETS,
         DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     ]
     return {
@@ -1672,10 +1705,95 @@ def _wire_date_range_filter(
         )
 
 
+def _populate_pushdown_enum_dropdown(
+    *,
+    sheet: Sheet,
+    analysis: Analysis,
+    bridges: list[tuple[Dataset, str]],
+    param_name: ParameterName,
+    title: str,
+    all_values: list[str],
+) -> None:
+    """Y.2.g — multi-select dropdown whose narrowing pushes into the
+    consuming dataset(s)' SQL via ``<<$dataset_param>>`` substitution (a
+    ``col IN (...)`` predicate). Mirrors
+    ``apps/l2_flow_tracing/app.py::_populate_pushdown_dropdown``.
+
+    A multi-valued ``StringParam`` whose default is the full closed
+    value set (so a freshly-loaded dashboard matches every row) is
+    bridged to each ``(dataset, dataset_param)`` pair — usually one;
+    ALL_DATASETS dropdowns pass two (the Drift / Drift Timelines sheets'
+    controls narrow both the leaf-drift and ledger-drift datasets). A
+    ``ParameterDropdown(MULTI_SELECT, StaticValues)`` lets the analyst
+    deselect to narrow. No analysis-level FilterGroup — emptying the
+    dropdown reverts each dataset param to its default (= all values);
+    QS does not emit ``IN ()``. Use for bounded enum columns
+    (``transfer_type`` / ``rail_name`` / ``account_role`` / ``supersedes``
+    / ``check_type``); for data-value columns use
+    ``_populate_pushdown_value_dropdown``.
+    """
+    p = analysis.add_parameter(StringParam(
+        name=param_name,
+        multi_valued=True,
+        default=list(all_values),
+        mapped_dataset_params=list(bridges),
+    ))
+    sheet.add_parameter_dropdown(
+        parameter=p,
+        title=title,
+        type="MULTI_SELECT",
+        selectable_values=StaticValues(values=list(all_values)),
+    )
+
+
+def _populate_pushdown_value_dropdown(
+    *,
+    sheet: Sheet,
+    analysis: Analysis,
+    bridges: list[tuple[Dataset, str]],
+    param_name: ParameterName,
+    title: str,
+    options_dataset: Dataset,
+    options_column: str,
+) -> None:
+    """Y.2.g — like ``_populate_pushdown_enum_dropdown`` but for
+    data-value columns (``account_id`` / ``transfer_id`` / open-set
+    ``status`` / ``origin``) whose value universe isn't enumerable at
+    deploy time.
+
+    The analysis ``StringParam`` carries no default (nothing pre-selected
+    on load); the bridged dataset param's static default is
+    ``[L1_ALL_SENTINEL]`` and the consuming SQL guards
+    ``('__l1_all__' IN (<<$p>>)) OR (col IN (<<$p>>))`` (see
+    ``datasets.py::_data_value_clause``), so a freshly-loaded dashboard
+    (bridge un-fired → dataset param at its static default) matches every
+    row, and emptying the dropdown (which reverts the dataset param to
+    that default) restores "all". The dropdown's options come from
+    ``options_dataset[options_column]`` via ``LinkedValues`` — a
+    well-formed ``SELECT DISTINCT`` query, not the lazy
+    ``tenK-sample-values-V2`` fetch the old empty-CategoryFilter pattern
+    triggered (the X.1.g cold-CI 404 source).
+    """
+    p = analysis.add_parameter(StringParam(
+        name=param_name,
+        multi_valued=True,
+        mapped_dataset_params=list(bridges),
+    ))
+    sheet.add_parameter_dropdown(
+        parameter=p,
+        title=title,
+        type="MULTI_SELECT",
+        selectable_values=LinkedValues.from_column(
+            options_dataset[options_column],
+        ),
+    )
+
+
 def _wire_per_sheet_dropdowns(
     analysis: Analysis,
     *,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
     drift_sheet: Sheet,
     drift_timelines_sheet: Sheet,
     overdraft_sheet: Sheet,
@@ -1686,168 +1804,200 @@ def _wire_per_sheet_dropdowns(
     todays_exceptions_sheet: Sheet,
     transactions_sheet: Sheet,
 ) -> None:
-    """M.2b.3 — per-sheet category filter dropdowns.
+    """Y.2.g — per-sheet filter dropdowns, all pushed into dataset SQL.
 
-    Each dropdown is a multi-select with empty-default-means-all
-    (`select_all_options="FILTER_ALL_VALUES"`), keyed off a
-    `CategoryFilter.with_values(values=[])` per AR's pattern. Single-
-    sheet scope (cross_dataset SINGLE_DATASET) for sheets backed by one
-    dataset; cross_dataset ALL_DATASETS only on the Drift sheet, which
-    has both leaf-drift + parent-drift datasets sharing the same
-    column names.
+    Replaces the M.2b.3 ``CategoryFilter.with_values(values=[],
+    FILTER_ALL_VALUES)`` per-sheet dropdowns (the X.1.g cold-fetch
+    footgun — those lazy-fetch the column's distinct values from QS's
+    ``tenK-sample-values-V2`` endpoint, which 404s on cold per-CI-run
+    dashboards). Each dropdown is now a parameter-backed MULTI_SELECT
+    bridged to a dataset parameter substituted into the dataset's
+    CustomSql, so QS does the narrowing in the database — no
+    analysis-level FilterGroup, no lazy fetch. Bounded enum columns use
+    ``StaticValues``; data-value columns (account_id / transfer_id /
+    status / origin) use ``LinkedValues`` against a small companion
+    dataset (``DS_L1_ACCOUNTS`` / ``DS_L1_TX_IDS`` / ``DS_L1_TX_FACETS``).
+    The ALL_DATASETS Drift / Drift-Timelines dropdowns bridge to both of
+    their respective datasets.
     """
-
-    def _dropdown(
-        *,
-        fg_id: FilterGroupId,
-        ds: Dataset,
-        col: str,
-        title: str,
-        sheet: Sheet,
-        cross_dataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = "SINGLE_DATASET",
-    ) -> None:
-        cat_filter = CategoryFilter.with_values(
-            filter_id=f"filter-{fg_id}",
-            dataset=ds,
-            column=ds[col],
-            values=[],
-            select_all_options="FILTER_ALL_VALUES",
-        )
-        fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,
-            cross_dataset=cross_dataset,
-            filters=[cat_filter],
-        ))
-        fg.scope_sheet(sheet)
-        sheet.add_filter_dropdown(filter=cat_filter, title=title)
-
     ds_drift = datasets[DS_DRIFT]
+    ds_ledger_drift = datasets[DS_LEDGER_DRIFT]
+    ds_drift_tl = datasets[DS_DRIFT_TIMELINE]
+    ds_ledger_drift_tl = datasets[DS_LEDGER_DRIFT_TIMELINE]
     ds_overdraft = datasets[DS_OVERDRAFT]
     ds_lb = datasets[DS_LIMIT_BREACH]
-    ds_te = datasets[DS_TODAYS_EXCEPTIONS]
-
-    # Drift — both drift + ledger_drift datasets share column names, so
-    # ALL_DATASETS lets one dropdown filter both tables on the sheet.
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-drift-account"), ds=ds_drift, col="account_id",
-        title="Account", sheet=drift_sheet, cross_dataset="ALL_DATASETS",
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-drift-role"), ds=ds_drift, col="account_role",
-        title="Account Role", sheet=drift_sheet,
-        cross_dataset="ALL_DATASETS",
-    )
-
-    # Drift Timelines — both timeline datasets share column names too.
-    ds_drift_tl = datasets[DS_DRIFT_TIMELINE]
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-drift-tl-role"), ds=ds_drift_tl, col="account_role",
-        title="Account Role", sheet=drift_timelines_sheet,
-        cross_dataset="ALL_DATASETS",
-    )
-
-    # Overdraft — single dataset.
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-overdraft-account"), ds=ds_overdraft,
-        col="account_id", title="Account", sheet=overdraft_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-overdraft-role"), ds=ds_overdraft,
-        col="account_role", title="Account Role",
-        sheet=overdraft_sheet,
-    )
-
-    # Limit Breach — single dataset; account + transfer_type.
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-limit-breach-account"), ds=ds_lb, col="account_id",
-        title="Account", sheet=limit_breach_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-limit-breach-type"), ds=ds_lb, col="transfer_type",
-        title="Transfer Type", sheet=limit_breach_sheet,
-    )
-
-    # Pending Aging — account / transfer_type / rail_name (per the
-    # M.2b.10 plan).
     ds_sp = datasets[DS_STUCK_PENDING]
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-pending-account"), ds=ds_sp, col="account_id",
-        title="Account", sheet=pending_aging_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-pending-type"), ds=ds_sp, col="transfer_type",
-        title="Transfer Type", sheet=pending_aging_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-pending-rail"), ds=ds_sp, col="rail_name",
-        title="Rail", sheet=pending_aging_sheet,
-    )
-
-    # Unbundled Aging — same 3 dropdowns over the stuck_unbundled
-    # dataset.
     ds_su = datasets[DS_STUCK_UNBUNDLED]
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-unbundled-account"), ds=ds_su, col="account_id",
-        title="Account", sheet=unbundled_aging_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-unbundled-type"), ds=ds_su, col="transfer_type",
-        title="Transfer Type", sheet=unbundled_aging_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-unbundled-rail"), ds=ds_su, col="rail_name",
-        title="Rail", sheet=unbundled_aging_sheet,
-    )
-
-    # Supersession Audit — supersedes-reason dropdown narrows the
-    # transactions table to one cause class (Inflight /
-    # BundleAssignment / TechnicalCorrection). The daily-balances
-    # table doesn't get a paired filter — supersession on
-    # daily_balances is rare enough that a second control would be
-    # noise.
     ds_sa_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-supersession-reason"), ds=ds_sa_tx, col="supersedes",
-        title="Supersedes Reason", sheet=supersession_audit_sheet,
-    )
-
-    # Today's Exceptions — check_type narrows the unified UNION; account
-    # + transfer_type are the secondary narrow-downs.
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-todays-exc-check-type"), ds=ds_te, col="check_type",
-        title="Check Type", sheet=todays_exceptions_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-todays-exc-account"), ds=ds_te, col="account_id",
-        title="Account", sheet=todays_exceptions_sheet,
-    )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-todays-exc-type"), ds=ds_te, col="transfer_type",
-        title="Transfer Type", sheet=todays_exceptions_sheet,
-    )
-
-    # Transactions — 5 dropdowns covering the analyst's narrow vectors:
-    # account / transfer / status / origin / transfer_type.
+    ds_te = datasets[DS_TODAYS_EXCEPTIONS]
     ds_tx = datasets[DS_TRANSACTIONS]
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-tx-account"), ds=ds_tx, col="account_id",
-        title="Account", sheet=transactions_sheet,
+    ds_accounts = datasets[DS_L1_ACCOUNTS]
+    ds_tx_ids = datasets[DS_L1_TX_IDS]
+    ds_tx_facets = datasets[DS_L1_TX_FACETS]
+
+    role_values = l1_account_role_values(l2_instance)
+    type_values = l1_transfer_type_values(l2_instance)
+    rail_values = l1_rail_values(l2_instance)
+
+    # --- Drift sheet — Account (data-value) + Account Role (enum),
+    #     both narrowing leaf-drift + ledger-drift together.
+    _populate_pushdown_value_dropdown(
+        sheet=drift_sheet, analysis=analysis,
+        bridges=[(ds_drift, P_L1_DRIFT_ACCOUNT),
+                 (ds_ledger_drift, P_L1_DRIFT_ACCOUNT)],
+        param_name=ParameterName(P_L1_DRIFT_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
     )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-tx-transfer"), ds=ds_tx, col="transfer_id",
-        title="Transfer", sheet=transactions_sheet,
+    _populate_pushdown_enum_dropdown(
+        sheet=drift_sheet, analysis=analysis,
+        bridges=[(ds_drift, P_L1_DRIFT_ROLE),
+                 (ds_ledger_drift, P_L1_DRIFT_ROLE)],
+        param_name=ParameterName(P_L1_DRIFT_ROLE), title="Account Role",
+        all_values=role_values,
     )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-tx-status"), ds=ds_tx, col="status",
-        title="Status", sheet=transactions_sheet,
+
+    # --- Drift Timelines sheet — Account Role (enum), both timeline
+    #     datasets.
+    _populate_pushdown_enum_dropdown(
+        sheet=drift_timelines_sheet, analysis=analysis,
+        bridges=[(ds_drift_tl, P_L1_DRIFT_TL_ROLE),
+                 (ds_ledger_drift_tl, P_L1_DRIFT_TL_ROLE)],
+        param_name=ParameterName(P_L1_DRIFT_TL_ROLE), title="Account Role",
+        all_values=role_values,
     )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-tx-origin"), ds=ds_tx, col="origin",
-        title="Origin", sheet=transactions_sheet,
+
+    # --- Overdraft sheet — Account (data-value) + Account Role (enum).
+    _populate_pushdown_value_dropdown(
+        sheet=overdraft_sheet, analysis=analysis,
+        bridges=[(ds_overdraft, P_L1_OVERDRAFT_ACCOUNT)],
+        param_name=ParameterName(P_L1_OVERDRAFT_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
     )
-    _dropdown(
-        fg_id=FilterGroupId("fg-l1-tx-type"), ds=ds_tx, col="transfer_type",
-        title="Transfer Type", sheet=transactions_sheet,
+    _populate_pushdown_enum_dropdown(
+        sheet=overdraft_sheet, analysis=analysis,
+        bridges=[(ds_overdraft, P_L1_OVERDRAFT_ROLE)],
+        param_name=ParameterName(P_L1_OVERDRAFT_ROLE), title="Account Role",
+        all_values=role_values,
+    )
+
+    # --- Limit Breach sheet — Account (data-value) + Transfer Type (enum).
+    _populate_pushdown_value_dropdown(
+        sheet=limit_breach_sheet, analysis=analysis,
+        bridges=[(ds_lb, P_L1_LIMIT_BREACH_ACCOUNT)],
+        param_name=ParameterName(P_L1_LIMIT_BREACH_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=limit_breach_sheet, analysis=analysis,
+        bridges=[(ds_lb, P_L1_LIMIT_BREACH_TYPE)],
+        param_name=ParameterName(P_L1_LIMIT_BREACH_TYPE),
+        title="Transfer Type", all_values=type_values,
+    )
+
+    # --- Pending Aging sheet — Account (data-value) + Transfer Type +
+    #     Rail (enums).
+    _populate_pushdown_value_dropdown(
+        sheet=pending_aging_sheet, analysis=analysis,
+        bridges=[(ds_sp, P_L1_PENDING_ACCOUNT)],
+        param_name=ParameterName(P_L1_PENDING_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=pending_aging_sheet, analysis=analysis,
+        bridges=[(ds_sp, P_L1_PENDING_TYPE)],
+        param_name=ParameterName(P_L1_PENDING_TYPE), title="Transfer Type",
+        all_values=type_values,
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=pending_aging_sheet, analysis=analysis,
+        bridges=[(ds_sp, P_L1_PENDING_RAIL)],
+        param_name=ParameterName(P_L1_PENDING_RAIL), title="Rail",
+        all_values=rail_values,
+    )
+
+    # --- Unbundled Aging sheet — same three over the stuck_unbundled
+    #     matview.
+    _populate_pushdown_value_dropdown(
+        sheet=unbundled_aging_sheet, analysis=analysis,
+        bridges=[(ds_su, P_L1_UNBUNDLED_ACCOUNT)],
+        param_name=ParameterName(P_L1_UNBUNDLED_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=unbundled_aging_sheet, analysis=analysis,
+        bridges=[(ds_su, P_L1_UNBUNDLED_TYPE)],
+        param_name=ParameterName(P_L1_UNBUNDLED_TYPE), title="Transfer Type",
+        all_values=type_values,
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=unbundled_aging_sheet, analysis=analysis,
+        bridges=[(ds_su, P_L1_UNBUNDLED_RAIL)],
+        param_name=ParameterName(P_L1_UNBUNDLED_RAIL), title="Rail",
+        all_values=rail_values,
+    )
+
+    # --- Supersession Audit sheet — Supersedes Reason (enum, nullable;
+    #     the daily-balances table stays unfiltered — see M.2b.12).
+    _populate_pushdown_enum_dropdown(
+        sheet=supersession_audit_sheet, analysis=analysis,
+        bridges=[(ds_sa_tx, P_L1_SUPERSEDE_REASON)],
+        param_name=ParameterName(P_L1_SUPERSEDE_REASON),
+        title="Supersedes Reason", all_values=l1_supersede_reason_values(),
+    )
+
+    # --- Today's Exceptions sheet — Check Type (enum) + Account
+    #     (data-value) + Transfer Type (enum, nullable).
+    _populate_pushdown_enum_dropdown(
+        sheet=todays_exceptions_sheet, analysis=analysis,
+        bridges=[(ds_te, P_L1_TODAYS_EXC_CHECK_TYPE)],
+        param_name=ParameterName(P_L1_TODAYS_EXC_CHECK_TYPE),
+        title="Check Type", all_values=l1_check_type_values(),
+    )
+    _populate_pushdown_value_dropdown(
+        sheet=todays_exceptions_sheet, analysis=analysis,
+        bridges=[(ds_te, P_L1_TODAYS_EXC_ACCOUNT)],
+        param_name=ParameterName(P_L1_TODAYS_EXC_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=todays_exceptions_sheet, analysis=analysis,
+        bridges=[(ds_te, P_L1_TODAYS_EXC_TYPE)],
+        param_name=ParameterName(P_L1_TODAYS_EXC_TYPE), title="Transfer Type",
+        all_values=type_values,
+    )
+
+    # --- Transactions sheet — Account / Transfer / Status / Origin
+    #     (data-value; status + origin are open-set in the L1 schema) +
+    #     Transfer Type (enum).
+    _populate_pushdown_value_dropdown(
+        sheet=transactions_sheet, analysis=analysis,
+        bridges=[(ds_tx, P_L1_TX_ACCOUNT)],
+        param_name=ParameterName(P_L1_TX_ACCOUNT), title="Account",
+        options_dataset=ds_accounts, options_column="account_id",
+    )
+    _populate_pushdown_value_dropdown(
+        sheet=transactions_sheet, analysis=analysis,
+        bridges=[(ds_tx, P_L1_TX_TRANSFER_ID)],
+        param_name=ParameterName(P_L1_TX_TRANSFER_ID), title="Transfer",
+        options_dataset=ds_tx_ids, options_column="transfer_id",
+    )
+    _populate_pushdown_value_dropdown(
+        sheet=transactions_sheet, analysis=analysis,
+        bridges=[(ds_tx, P_L1_TX_STATUS)],
+        param_name=ParameterName(P_L1_TX_STATUS), title="Status",
+        options_dataset=ds_tx_facets, options_column="status",
+    )
+    _populate_pushdown_value_dropdown(
+        sheet=transactions_sheet, analysis=analysis,
+        bridges=[(ds_tx, P_L1_TX_ORIGIN)],
+        param_name=ParameterName(P_L1_TX_ORIGIN), title="Origin",
+        options_dataset=ds_tx_facets, options_column="origin",
+    )
+    _populate_pushdown_enum_dropdown(
+        sheet=transactions_sheet, analysis=analysis,
+        bridges=[(ds_tx, P_L1_TX_TYPE)],
+        param_name=ParameterName(P_L1_TX_TYPE), title="Transfer Type",
+        all_values=type_values,
     )
 
 
@@ -1857,23 +2007,32 @@ def _wire_daily_statement_filters(
     datasets: dict[str, Dataset],
     daily_statement_sheet: Sheet,
 ) -> None:
-    """M.2b.4 — wire the Daily Statement sheet's per-account-day filter.
+    """M.2b.4 + Y.2.g.9 — wire the Daily Statement sheet's per-account-day
+    filter.
 
-    Two analysis-level parameters (P_L1_DS_ACCOUNT, P_L1_DS_BALANCE_DATE)
-    drive both the summary dataset and the transactions dataset via two
-    SINGLE_DATASET FilterGroups each — same-shape (account_id +
-    business_day_start) on the summary, (account_id + business_day) on
-    the transactions. ParameterDropdown + ParameterDateTimePicker
-    controls on the sheet bind to the params, so changing either
-    propagates to KPIs + table at once.
+    Two analysis-level parameters drive both the summary dataset and the
+    transactions dataset:
 
-    No defaults are pinned (no `RollingDate` / `default=...`) — at
-    first load the controls render empty and the analyst picks. This
-    avoids the no-hardcoded-data trap where a default account_id
-    would have to know an L2-specific value.
+    - **P_L1_DS_ACCOUNT** — Y.2.g.9 pushes this *into* both datasets'
+      SQL via the single-valued ``pL1DsAccount`` dataset parameter
+      (``WHERE account_id = <<$pL1DsAccount>>``), so QS does the
+      per-account narrow in the database rather than via an
+      analysis-level CategoryFilter. The dropdown's options come from the
+      ``DS_L1_ACCOUNTS`` companion (an unparameterized DISTINCT-accounts
+      dataset) — not the now-parameterized summary dataset, whose
+      ``SELECT DISTINCT account_id`` would inherit the WHERE and return
+      nothing. Sentinel default → empty statement until the analyst
+      picks (no L2-specific account hardcoded).
+    - **P_L1_DS_BALANCE_DATE** — stays an analysis-level
+      ``TimeEqualityFilter`` on each dataset's day column (Y.2.f date
+      territory; not pushed down here).
     """
     ds_account = analysis.add_parameter(StringParam(
         name=P_L1_DS_ACCOUNT,
+        mapped_dataset_params=[
+            (datasets[DS_DAILY_STATEMENT_SUMMARY], P_L1_DS_ACCOUNT_DSP),
+            (datasets[DS_DAILY_STATEMENT_TRANSACTIONS], P_L1_DS_ACCOUNT_DSP),
+        ],
     ))
     ds_balance_date = analysis.add_parameter(DateTimeParam(
         name=P_L1_DS_BALANCE_DATE,
@@ -1897,19 +2056,7 @@ def _wire_daily_statement_filters(
     summary_ds = datasets[DS_DAILY_STATEMENT_SUMMARY]
     txn_ds = datasets[DS_DAILY_STATEMENT_TRANSACTIONS]
 
-    # Summary dataset: account_id + business_day_start.
-    summary_account_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FilterGroupId("fg-l1-ds-summary-account"),
-        cross_dataset="SINGLE_DATASET",
-        filters=[CategoryFilter.with_parameter(
-            filter_id="filter-l1-ds-summary-account",
-            dataset=summary_ds,
-            column=summary_ds["account_id"],
-            parameter=ds_account,
-        )],
-    ))
-    summary_account_fg.scope_sheet(daily_statement_sheet)
-
+    # Date narrow stays analysis-level on each dataset's day column.
     summary_date_fg = analysis.add_filter_group(FilterGroup(
         filter_group_id=FilterGroupId("fg-l1-ds-summary-date"),
         cross_dataset="SINGLE_DATASET",
@@ -1922,20 +2069,6 @@ def _wire_daily_statement_filters(
         )],
     ))
     summary_date_fg.scope_sheet(daily_statement_sheet)
-
-    # Transactions dataset: account_id + business_day (DATE_TRUNC of
-    # posting); same parameter-bound shape.
-    txn_account_fg = analysis.add_filter_group(FilterGroup(
-        filter_group_id=FilterGroupId("fg-l1-ds-txn-account"),
-        cross_dataset="SINGLE_DATASET",
-        filters=[CategoryFilter.with_parameter(
-            filter_id="filter-l1-ds-txn-account",
-            dataset=txn_ds,
-            column=txn_ds["account_id"],
-            parameter=ds_account,
-        )],
-    ))
-    txn_account_fg.scope_sheet(daily_statement_sheet)
 
     txn_date_fg = analysis.add_filter_group(FilterGroup(
         filter_group_id=FilterGroupId("fg-l1-ds-txn-date"),
@@ -1951,20 +2084,18 @@ def _wire_daily_statement_filters(
     txn_date_fg.scope_sheet(daily_statement_sheet)
 
     # Sheet controls — single-select dropdown + datetime picker bound
-    # to the params. The dropdown's options are auto-populated from the
-    # summary dataset's `account_id` column (LinkedValues), so the
-    # analyst sees the institution's actual accounts. Without this,
-    # QuickSight has no source for the dropdown and only shows the
-    # empty-state "All" placeholder — which on a SINGLE_SELECT
-    # parameter-bound CategoryFilter narrows to nothing, so every
-    # KPI / table on the sheet renders empty until the analyst can
-    # pick a value (which they can't, because the dropdown is empty).
-    # `hidden_select_all=True` because SINGLE_SELECT semantically
-    # requires picking exactly one — "All" doesn't apply.
+    # to the params. The dropdown's options come from the DS_L1_ACCOUNTS
+    # companion (an unparameterized DISTINCT-accounts dataset), so the
+    # analyst sees the institution's actual accounts even though the
+    # summary/transactions datasets are now narrowed by the bridged
+    # `pL1DsAccount` param. `hidden_select_all=True` because SINGLE_SELECT
+    # semantically requires picking exactly one — "All" doesn't apply.
     daily_statement_sheet.add_parameter_dropdown(
         parameter=ds_account, title="Account",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues.from_column(summary_ds["account_id"]),
+        selectable_values=LinkedValues.from_column(
+            datasets[DS_L1_ACCOUNTS]["account_id"],
+        ),
         hidden_select_all=True,
     )
     daily_statement_sheet.add_parameter_datetime_picker(
@@ -2334,6 +2465,7 @@ def build_l1_dashboard_app(
     _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
+        l2_instance=l2_instance,
         drift_sheet=drift_sheet,
         drift_timelines_sheet=drift_timelines_sheet,
         overdraft_sheet=overdraft_sheet,
