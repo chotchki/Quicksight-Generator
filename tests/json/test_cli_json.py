@@ -147,11 +147,24 @@ def test_apply_with_execute_propagates_deploy_failure(tmp_path, monkeypatch):
 def test_apply_demo_database_url_auto_emits_datasource_json(
     tmp_path, monkeypatch,
 ):
-    """V.1.a — when ``demo_database_url`` is set, the deploy expects a
-    ``datasource.json`` next to the dataset JSONs. Without auto-emit,
-    a single-app deploy would orphan the shared datasource (the
-    bug #263 backlog item). Asserts the file lands; defers content
-    correctness to the build_datasource unit tests."""
+    """V.1.a — when ``demo_database_url`` is set (and no explicit
+    ``datasource_arn``), the derived ARN is one we own, so the deploy
+    expects a ``datasource.json`` next to the dataset JSONs. Without
+    auto-emit, a single-app deploy would orphan the shared datasource
+    (the bug #263 backlog item). Asserts the file lands; defers
+    content correctness to the build_datasource unit tests.
+
+    Strip the ``QS_GEN_DATASOURCE_ARN`` env fallback first: an ambient
+    value (``tests/audit/test_dashboard_extract.py`` sets one via
+    module-level ``os.environ.setdefault``, and pytest collects that
+    module before this one in a full run) would leak into the loader's
+    env-override path, populate ``cfg.datasource_arn`` from the env, and
+    flip ``datasource_arn_was_derived`` to False — so the auto-emit gate
+    wouldn't fire and the file wouldn't land. Same defensive pattern as
+    ``test_apply_no_demo_database_url_skips_datasource_emit`` below."""
+    from quicksight_gen.common.env_keys import QS_GEN_DATASOURCE_ARN
+    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
+
     cfg = _make_demo_yaml_config(tmp_path)
     out_dir = tmp_path / "out"
     _patch_generators(monkeypatch)
