@@ -61,7 +61,10 @@ class TestL1DatasetsExist:
                 f"L1 dataset {ds_id} not found"
             )
 
-    def test_dataset_count_matches_tree(self, l1_app, l1_dataset_ids):
-        """Tree-derived count: every dataset registered on the App tree
-        has a corresponding fixture entry. No hardcoded 5."""
-        assert len(l1_dataset_ids) == len(l1_app.datasets)
+    # test_dataset_count_matches_tree was redundant after v8.8.0a23
+    # made `l1_dataset_ids` itself derive from `l1_app.datasets` —
+    # the assertion `N == N` would always be true. The remaining
+    # `test_all_datasets_exist` above iterates the derived IDs and
+    # calls `describe_data_set` on each, which IS the meaningful
+    # check ("every tree-registered dataset is actually deployed in
+    # QS"). Test removed 2026-05-11 as a fixture-drift cleanup.

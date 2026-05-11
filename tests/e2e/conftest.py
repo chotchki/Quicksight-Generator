@@ -124,18 +124,32 @@ def qs_client(region):
     return boto3.client("quicksight", region_name=region)
 
 
-@pytest.fixture(scope="session")
-def inv_l2_prefix() -> str:
-    """The default L2 instance's prefix — the middle segment of every
-    Investigation resource ID under N.3.f (Investigation became L2-fed,
-    same default-institution YAML the L1 dashboard uses)."""
+def _resolve_test_l2_instance():  # type: ignore[no-untyped-def]: return-type annotation would force an L2Instance import at module scope, slowing collection
+    """Resolve the L2 instance the e2e tests should mirror.
+
+    Honors ``QS_GEN_TEST_L2_INSTANCE`` (the runner / release.yml inject
+    it per-variant / per-release); falls back to the bundled
+    ``default_l2_instance()`` (`spec_example`) when unset.
+
+    Used by both the ``*_l2_prefix`` fixtures (for ID-string
+    construction) and the ``*_app`` fixtures (so the tree the test
+    walks has the same L2 prefix as the deployed resources).
+    """
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
 
     override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
     if override is not None:
-        return str(load_instance(override).instance)
-    return str(default_l2_instance().instance)
+        return load_instance(override)
+    return default_l2_instance()
+
+
+@pytest.fixture(scope="session")
+def inv_l2_prefix() -> str:
+    """The default L2 instance's prefix — the middle segment of every
+    Investigation resource ID under N.3.f (Investigation became L2-fed,
+    same default-institution YAML the L1 dashboard uses)."""
+    return str(_resolve_test_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
@@ -149,23 +163,17 @@ def inv_analysis_id(resource_prefix, inv_l2_prefix) -> str:
 
 
 @pytest.fixture(scope="session")
-def inv_dataset_ids(resource_prefix, inv_l2_prefix) -> list[str]:
-    """Expected Investigation dataset IDs.
+def inv_dataset_ids(inv_app) -> list[str]:
+    """Investigation dataset IDs derived from the tree.
 
-    K.4.3 ships recipient-fanout. K.4.4 adds volume-anomalies (rolling
-    z-score matview). K.4.5 adds money-trail (recursive-CTE matview).
-    K.4.8 adds account-network (second wrapper over the K.4.5 matview)
-    and a narrow accounts dataset feeding only the anchor dropdown.
-    N.3.f added the L2 instance prefix as the middle segment.
+    Drift-resistant: the App's registered datasets ARE the source of
+    truth, no parallel hand-list to keep in sync. v8.8.0a23 hotfix
+    pivot — the prior hand-listed form silently miscounted when Y.2.g
+    added 3 new L1 companions; switched all three apps' fixtures to
+    ``[ds.arn.rsplit('/', 1)[-1] for ds in <app>.datasets]`` so the
+    next dataset addition Just Works.
     """
-    suffixes = [
-        "inv-recipient-fanout-dataset",
-        "inv-volume-anomalies-dataset",
-        "inv-money-trail-dataset",
-        "inv-account-network-dataset",
-        "inv-anetwork-accounts-dataset",
-    ]
-    return [f"{resource_prefix}-{inv_l2_prefix}-{s}" for s in suffixes]
+    return [ds.arn.rsplit("/", 1)[-1] for ds in inv_app.datasets]
 
 
 @pytest.fixture(scope="session")
@@ -173,13 +181,7 @@ def exec_l2_prefix() -> str:
     """The default L2 instance's prefix — the middle segment of every
     Executives resource ID under N.4.b (Executives became L2-fed,
     same default-institution YAML the L1 dashboard uses)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.common.l2 import load_instance
-
-    override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
-    if override is not None:
-        return str(load_instance(override).instance)
-    return str(default_l2_instance().instance)
+    return str(_resolve_test_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
@@ -193,16 +195,9 @@ def exec_analysis_id(resource_prefix, exec_l2_prefix) -> str:
 
 
 @pytest.fixture(scope="session")
-def exec_dataset_ids(resource_prefix, exec_l2_prefix) -> list[str]:
-    """Expected Executives dataset IDs (L.6.3).
-
-    N.4.b added the L2 instance prefix as the middle segment.
-    """
-    suffixes = [
-        "exec-transaction-summary-dataset",
-        "exec-account-summary-dataset",
-    ]
-    return [f"{resource_prefix}-{exec_l2_prefix}-{s}" for s in suffixes]
+def exec_dataset_ids(exec_app) -> list[str]:
+    """Executives dataset IDs derived from the tree (drift-resistant)."""
+    return [ds.arn.rsplit("/", 1)[-1] for ds in exec_app.datasets]
 
 
 # -- L1 dashboard fixtures (M.2c) --------------------------------------------
@@ -218,13 +213,7 @@ def exec_dataset_ids(resource_prefix, exec_l2_prefix) -> list[str]:
 def l1_l2_prefix() -> str:
     """The default L2 instance's prefix — the middle segment of every
     L1 resource ID per M.2d.3."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.common.l2 import load_instance
-
-    override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
-    if override is not None:
-        return str(load_instance(override).instance)
-    return str(default_l2_instance().instance)
+    return str(_resolve_test_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
@@ -238,43 +227,15 @@ def l1_analysis_id(resource_prefix, l1_l2_prefix) -> str:
 
 
 @pytest.fixture(scope="session")
-def l1_dataset_ids(resource_prefix, l1_l2_prefix) -> list[str]:
-    """Expected L1 dashboard dataset IDs.
+def l1_dataset_ids(l1_app) -> list[str]:
+    """L1 dashboard dataset IDs derived from the tree (drift-resistant).
 
-    M.2a.3 shipped drift + ledger_drift; M.2a.4 added overdraft;
-    M.2a.5 added limit_breach; M.2a.6 added the unified
-    todays_exceptions UNION dataset; M.2b.4 added daily_statement
-    summary + transactions for the per-account-day walk; M.2b.6 added
-    the 2 timeline pre-aggregations for the LineChart sheet.
-    M.2d.3 added the L2 prefix as the middle segment. Y.2.g added 3
-    companion datasets feeding the per-sheet pushdown dropdowns'
-    LinkedValues options (account_id / transfer_id / status+origin
-    facets).
+    Switched from the M.2c.1 hand-listed form after the v8.8.0a23
+    hotfix: Y.2.g.0 added 3 new L1 companion datasets and the prior
+    hand-list silently miscounted, taking down the e2e gate. Tree-walk
+    is the source of truth — the next dataset addition Just Works.
     """
-    suffixes = [
-        "l1-drift-dataset",
-        "l1-ledger-drift-dataset",
-        "l1-overdraft-dataset",
-        "l1-limit-breach-dataset",
-        "l1-todays-exceptions-dataset",
-        "l1-daily-statement-summary-dataset",
-        "l1-daily-statement-transactions-dataset",
-        "l1-transactions-dataset",
-        "l1-drift-timeline-dataset",
-        "l1-ledger-drift-timeline-dataset",
-        "l1-stuck-pending-dataset",
-        "l1-stuck-unbundled-dataset",
-        "l1-supersession-transactions-dataset",
-        "l1-supersession-daily-balances-dataset",
-        # Y.2.g — companion datasets for the data-value dropdowns.
-        "l1-accounts-dataset",
-        "l1-tx-ids-dataset",
-        "l1-tx-facets-dataset",
-        # M.4.4.5 / M.4.4.7 — App Info canary sheet datasets, per-app prefix.
-        "l1-app-info-liveness-dataset",
-        "l1-app-info-matviews-dataset",
-    ]
-    return [f"{resource_prefix}-{l1_l2_prefix}-{s}" for s in suffixes]
+    return [ds.arn.rsplit("/", 1)[-1] for ds in l1_app.datasets]
 
 
 # -- L2 Flow Tracing dashboard fixtures --------------------------------------
@@ -373,20 +334,32 @@ def l2ft_analysis_id(resource_prefix, l2ft_l2_prefix) -> str:
 
 @pytest.fixture(scope="session")
 def inv_app(cfg):
-    """Tree-built Investigation App (post-emit, auto-IDs resolved)."""
+    """Tree-built Investigation App (post-emit, auto-IDs resolved).
+
+    Honors ``QS_GEN_TEST_L2_INSTANCE`` so the tree's dataset ARNs
+    match the deployed resources' L2 prefix (release.yml's per-tag
+    ``rel_<tag>``, the runner's variant ``sp_pg_aw``, etc.). Without
+    this the hotfix-v8.8.0a23 derived-fixture pivot would have been
+    a step backward — IDs would drift on every non-default L2 run.
+    """
     from quicksight_gen.apps.investigation.app import build_investigation_app
 
-    app = build_investigation_app(cfg)
+    app = build_investigation_app(
+        cfg, l2_instance=_resolve_test_l2_instance(),
+    )
     app.emit_analysis()
     return app
 
 
 @pytest.fixture(scope="session")
 def exec_app(cfg):
-    """Tree-built Executives App (post-emit, auto-IDs resolved)."""
+    """Tree-built Executives App (post-emit, auto-IDs resolved).
+    See ``inv_app`` for the L2-instance-honoring rationale."""
     from quicksight_gen.apps.executives.app import build_executives_app
 
-    app = build_executives_app(cfg)
+    app = build_executives_app(
+        cfg, l2_instance=_resolve_test_l2_instance(),
+    )
     app.emit_analysis()
     return app
 
@@ -395,14 +368,17 @@ def exec_app(cfg):
 def l1_app(cfg):
     """Tree-built L1 Reconciliation Dashboard App.
 
-    Auto-loads `default_l2_instance()` (the canonical Sasquatch AR
-    fixture) — same default the CLI's `generate l1-dashboard` uses,
-    so the tree shape here matches the deployed dashboard's shape.
-    Post-emit so auto-IDs are resolved.
+    Honors ``QS_GEN_TEST_L2_INSTANCE`` — the same L2 the CLI's
+    ``json apply`` was driven with for the deployed resources. Tree
+    shape (and dataset ARNs) thus match the deployed shape exactly,
+    making derived ``l1_dataset_ids`` ↔ deployed-DataSetId comparisons
+    trivially correct. Post-emit so auto-IDs are resolved.
     """
     from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 
-    app = build_l1_dashboard_app(cfg)
+    app = build_l1_dashboard_app(
+        cfg, l2_instance=_resolve_test_l2_instance(),
+    )
     app.emit_analysis()
     return app
 
