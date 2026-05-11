@@ -44,7 +44,6 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_ANETWORK_INBOUND,
     FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_WINDOW,
-    FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
     FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
@@ -303,9 +302,12 @@ def test_recipient_fanout_sql_filters_recipient_to_leaf_internal_accounts():
 # ---------------------------------------------------------------------------
 
 def test_filter_groups_in_expected_order():
-    """Two K.4.3 fanout filter groups, then K.4.4 anomalies window
-    filter (Y.1.d dropped FG_INV_ANOMALIES_SIGMA — σ now lives in
-    the dataset SQL via ``<<$pInvAnomaliesSigma>>``), then the K.4.5
+    """K.4.3 fanout window filter (Y.3.a dropped FG_INV_FANOUT_THRESHOLD
+    — distinct_senders is now a dataset window column with the
+    threshold pushed into dataset SQL via
+    ``<<$pInvFanoutThreshold>>``), K.4.4 anomalies window filter
+    (Y.1.d dropped FG_INV_ANOMALIES_SIGMA — σ now lives in the
+    dataset SQL via ``<<$pInvAnomaliesSigma>>``), then the K.4.5
     money-trail window date-range filter (Y.2.a dropped the three
     parameter-bound K.4.5 FGs — root / hops / amount now live in the
     money-trail dataset SQL), then two K.4.8 account-network
@@ -318,7 +320,6 @@ def test_filter_groups_in_expected_order():
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
         FG_INV_FANOUT_WINDOW,
-        FG_INV_FANOUT_THRESHOLD,
         FG_INV_ANOMALIES_WINDOW,
         FG_INV_MONEY_TRAIL_WINDOW,  # Q.1.b
         # Y.2.b dropped FG_INV_ANETWORK_ANCHOR (broad anchor narrow now
@@ -330,18 +331,38 @@ def test_filter_groups_in_expected_order():
     ]
 
 
-def test_threshold_filter_is_parameter_bound_on_calc_field():
-    groups = {g.FilterGroupId: g for g in _filter_groups()}
-    threshold = groups[FG_INV_FANOUT_THRESHOLD]
-    nrf = threshold.Filters[0].NumericRangeFilter
-    assert nrf is not None
-    # Filter applies to the analysis-level calc field, not a physical column.
-    assert nrf.Column.ColumnName == CF_INV_FANOUT_DISTINCT_SENDERS
-    # Bound to the slider's parameter.
-    assert nrf.RangeMinimum is not None
-    assert nrf.RangeMinimum.Parameter == P_INV_FANOUT_THRESHOLD
-    assert nrf.RangeMaximum is None  # no upper bound
-    assert nrf.IncludeMinimum is True
+def test_fanout_threshold_pushed_into_dataset_sql():
+    """Y.3.a — the threshold lives in the dataset SQL as a window-column
+    pushdown (`WHERE distinct_senders >= <<$pInvFanoutThreshold>>`)
+    with a `MappedDataSetParameters` bridge; replaces the pre-Y.3
+    analysis-level `NumericRangeFilter` on the calc field that QS
+    applied but App2 didn't."""
+    from quicksight_gen.apps.investigation.datasets import (
+        build_recipient_fanout_dataset,
+    )
+    from quicksight_gen.common.dataset_contract import get_sql
+
+    ds = build_recipient_fanout_dataset(_TEST_CFG)
+    sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert (
+        f"WHERE dpr.distinct_senders >= <<${P_INV_FANOUT_THRESHOLD}>>"
+        in sql
+    ), "Y.3.a — threshold WHERE missing from QS-side dataset SQL"
+    # PG doesn't support COUNT(DISTINCT) OVER, so distinct_senders is
+    # computed via a `distinct_per_recipient` GROUP BY CTE that JOINs
+    # back to the per-leg `joined` rows. Same shape on Oracle + SQLite.
+    assert "COUNT(DISTINCT sender_account_id) AS distinct_senders" in sql, (
+        "Y.3.a — distinct_senders GROUP BY missing"
+    )
+    assert "JOIN distinct_per_recipient dpr" in sql, (
+        "Y.3.a — distinct_per_recipient JOIN missing"
+    )
+    # App2-side SQL is registered too (same string when no app2_sql=).
+    app2_sql = get_sql("inv-recipient-fanout-ds")
+    assert (
+        f"WHERE dpr.distinct_senders >= <<${P_INV_FANOUT_THRESHOLD}>>"
+        in app2_sql
+    )
 
 
 def test_window_filter_is_a_time_range_on_posted_at():
@@ -412,18 +433,18 @@ def test_fanout_sheet_carries_window_filter_and_threshold_slider():
 # K.4.3 — Calc field
 # ---------------------------------------------------------------------------
 
-def test_distinct_sender_calc_field_declared_at_analysis_level():
+def test_distinct_sender_calc_field_dropped_in_y3a():
+    """Y.3.a — distinct_senders is now a real dataset window column, no
+    longer an analysis-level CalcField. Test guards against the calc
+    field accidentally coming back via copy-paste."""
     analysis = build_analysis(_TEST_CFG)
-    cfs = {cf["Name"]: cf for cf in analysis.Definition.CalculatedFields or []}
-    cf = cfs.get(CF_INV_FANOUT_DISTINCT_SENDERS)
-    assert cf is not None
-    assert cf["DataSetIdentifier"] == DS_INV_RECIPIENT_FANOUT
-    # Windowed distinct count partitioned by recipient — every row of a
-    # recipient gets the same value, which is what the threshold filter
-    # narrows on.
-    assert "distinct_count" in cf["Expression"]
-    assert "{sender_account_id}" in cf["Expression"]
-    assert "{recipient_account_id}" in cf["Expression"]
+    cf_names = {
+        cf["Name"] for cf in analysis.Definition.CalculatedFields or []
+    }
+    assert CF_INV_FANOUT_DISTINCT_SENDERS not in cf_names, (
+        "Y.3.a — recipient_distinct_sender_count should be a dataset "
+        "column, not a CalcField"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -482,19 +503,22 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 6 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
+    # Top-level: 5 filter groups (Y.1.d dropped FG_INV_ANOMALIES_SIGMA
     # — σ now lives in dataset SQL; Y.2.a dropped the 3 parameter-bound
     # FGs for money-trail root/hops/amount; Y.2.b dropped the broad
-    # anchor + min-amount account-network FGs — all those now live in
-    # their dataset SQL — leaving 2 fanout + 1 anomalies window + 1
-    # money-trail window + 2 account network directional
-    # (inbound/outbound)), 4 calc fields (fanout distinct count +
-    # account-network is_inbound_edge + is_outbound_edge +
-    # counterparty_display — Y.2.b dropped is_anchor_edge as orphaned),
+    # anchor + min-amount account-network FGs; Y.3.a dropped
+    # FG_INV_FANOUT_THRESHOLD — distinct_senders is now a window column
+    # in dataset SQL, threshold pushed via <<$pInvFanoutThreshold>>
+    # — leaving 1 fanout window + 1 anomalies window + 1 money-trail
+    # window + 2 account network directional (inbound/outbound)).
+    # 3 calc fields (Y.3.a dropped fanout distinct_senders calc — now
+    # a dataset window column; account-network is_inbound_edge +
+    # is_outbound_edge + counterparty_display remain pending Y.3.b).
     # 7 parameters (fanout threshold + sigma + money-trail
-    # root/hops/amount + account-network anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 6
-    assert len(j["Definition"]["CalculatedFields"]) == 4
+    # root/hops/amount + account-network anchor/min-amount) — unchanged
+    # by Y.3.a since the threshold param still drives the slider.
+    assert len(j["Definition"]["FilterGroups"]) == 5
+    assert len(j["Definition"]["CalculatedFields"]) == 3
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
 

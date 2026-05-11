@@ -1,5 +1,73 @@
 # Release Notes
 
+## v8.8.0a24 — Y.2.h + Y.2.f + Y.3.a (closing out Y.2 + opening Y.3)
+
+Twenty-fourth alpha. Three landings on `y-2-h-executives-pushdown`:
+
+- **Y.2.h — Executives Active Accounts dataset split.** Splits
+  `exec-account-summary-ds` into a date-independent snapshot (drives
+  Total Open Accounts + Open-by-Type bar + the unaggregated detail
+  table) plus a new `exec-account-summary-active-ds` whose SQL bakes
+  `WHERE COALESCE(activity_count, 0) > 0` plus the X.2.g.1.b
+  `app2_date_filter` dual-SQL pattern. Replaces the visual-pinned
+  NumericRangeFilter (`activity_count >= 1`) that QS applied but
+  App2 didn't — same K.4.8k / Y.2.a roots-companion split-dataset
+  pattern. Re-points Active KPI + bar at the new dataset; drops
+  `_wire_account_coverage_filter_groups` + `_FG_EXEC_ACCT_ACTIVE_ONLY`
+  + the now-unused `_AutoSentinel` import; adds a `TimeRangeFilter`
+  FG scoping the active dataset's `last_activity_date`. Drops the
+  `@pytest.mark.xfail` from `test_date_filter_narrows_every_date_sensitive_count_kpi`.
+
+- **Y.2.f — L1 universal date-range pushdown (Option B: dual-SQL).**
+  Same `app2_date_filter` dual-SQL pattern as Y.2.h, applied to all
+  8 L1 datasets the analysis-level `TimeRangeFilter` family scopes
+  (drift, ledger_drift, drift_timeline ×2, overdraft, limit_breach,
+  todays_exceptions, transactions). Each builder converts to a
+  `sql_template` with a `{date_filter}` slot. QS gets `""` (zero
+  behavior change — analysis-level FG still does the date filtering);
+  App2 gets `app2_date_filter("<col>", cfg.dialect)` so when L1 lands
+  on App2 the date binds reach the SQL automatically. Stuck-pending
+  / stuck-unbundled / supersession / daily-statement intentionally
+  untouched (current-state matviews; date filter would diverge from
+  the audit PDF, breaking U.8.b's three-way agreement).
+
+- **Y.3.a — Recipient Fanout `distinct_senders` pushdown.** Pushes
+  the analysis-level `recipient_distinct_sender_count` CalcField down
+  to a real dataset column. PG doesn't support `COUNT(DISTINCT) OVER
+  (PARTITION BY)`, so the SQL uses a two-CTE pattern: `joined` (per-leg
+  cross product) + `distinct_per_recipient` (GROUP BY recipient,
+  COUNT(DISTINCT sender)) + JOIN back. Outer `WHERE distinct_senders
+  >= <<$pInvFanoutThreshold>>` does the threshold pushdown; the
+  analysis-level slider param bridges via `MappedDataSetParameters`.
+  Drops `CF_INV_FANOUT_DISTINCT_SENDERS` calc field +
+  `FG_INV_FANOUT_THRESHOLD` analysis-level NumericRangeFilter — both
+  QS and App2 now see one shape. The PG distinct-window limitation
+  was caught live by the `db`-layer SQL smoke verifier
+  (FeatureNotSupported in PG), validating the Y.2.b smoke layer's
+  value as a dialect-bug catcher.
+
+Plus an incidental test-harness fix: `_kpi_text_to_int` in
+`tests/e2e/test_html2_executives_live.py` now preserves decimal points
+(parses as float, scales by ×100 to integer cents). Previously stripped
+all non-digits, so a $57M narrowed value parsed as 5_739_816_624 looked
+larger than a $161M wide value parsed as 1_613_654_694, breaking the
+date-narrowing comparison on currency KPIs. Pre-existing latent bug
+that Y.3.a's chain run exposed.
+
+End-to-end verified on `sq_pg_lo` (sasquatch_pr × postgres × local):
+unit + db + app2 layers all green. AW deploy chain blocked on
+network-side Aurora endpoint reachability (RDS reports `available`
+but TCP times out from this network) — code is proven; deploy is an
+operator-environment follow-up.
+
+Y.2 fully closed (a, b, c, e, f, g, h all done; d was design-locked
+no-op in spec_example baseline). Y.3.a done; Y.3.b/d/e to follow on
+next branch.
+
+Y.2.f.2 (date day-inclusivity parity check across QS / App2 / SQL /
+Audit PDF) moved into X.2.j.dateparity for handling at the 4-way
+agreement gate.
+
 ## v8.8.0a23 — hotfix: l1_dataset_ids fixture catch-up for Y.2.g.0's 3 new companions
 
 Twenty-third alpha. Pure test-fixture fix; no production-code changes vs
