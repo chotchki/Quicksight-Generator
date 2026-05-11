@@ -614,13 +614,40 @@ def drop_matview_if_exists(name: str, dialect: Dialect) -> str:
     drops them as ordinary tables (``DROP TABLE IF EXISTS name;``).
     Returned string is **fully terminated** — same convention as
     ``drop_table_if_exists``.
+
+    Oracle half-dropped-state hardening (Y.7-followup): a
+    ``CREATE MATERIALIZED VIEW`` interrupted mid-flight (e.g. a
+    SIGTERM-killed schema apply) can leave the matview's *container
+    table* behind without the matview metadata — ``DROP MATERIALIZED
+    VIEW`` then swallows ORA-12003 ("no such matview") while the stray
+    table survives, and the next ``CREATE MATERIALIZED VIEW`` hits
+    ORA-00955 ("name already used"). So the Oracle branch emits a
+    ``DROP TABLE`` of the same name on the LINE AFTER the matview drop
+    (swallowing ORA-00942 = nothing there, and ORA-12083 = it's a live
+    container the matview drop already handled). On a healthy matview
+    the table drop is a harmless no-op; on a half-dropped one it's the
+    cleanup that makes the re-apply idempotent.
+
+    The two blocks are joined with ``\n`` (not a space): ``split_oracle
+    _script`` is a line scanner that treats a line beginning ``BEGIN``
+    / ``DECLARE`` and ending ``END;`` as one PL/SQL block — two blocks
+    on one line would be handed to ``cursor.execute`` as a single
+    ``BEGIN…END; BEGIN…END;`` string, which Oracle's PL/SQL parser
+    rejects (PLS-00103 on the second ``BEGIN``). All callers
+    ``"\n".join`` the drop strings, so an internal newline is fine.
     """
     if dialect is Dialect.POSTGRES:
         return f"DROP MATERIALIZED VIEW IF EXISTS {name};"
     if dialect is Dialect.SQLITE:
         return f"DROP TABLE IF EXISTS {name};"
-    return _oracle_drop_if_exists(
-        f"DROP MATERIALIZED VIEW {name}", ignore_codes=(-12003, -942),
+    return (
+        _oracle_drop_if_exists(
+            f"DROP MATERIALIZED VIEW {name}", ignore_codes=(-12003, -942),
+        )
+        + "\n"
+        + _oracle_drop_if_exists(
+            f"DROP TABLE {name} CASCADE CONSTRAINTS", ignore_codes=(-942, -12083),
+        )
     )
 
 

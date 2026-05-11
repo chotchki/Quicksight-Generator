@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from quicksight_gen.common.config import Config
 
 from quicksight_gen.common.env_keys import (
+    QS_E2E_PAGE_TIMEOUT,
     QS_E2E_USER_ARN,
     QS_GEN_CONFIG,
     QS_GEN_DEMO_DATABASE_URL,
@@ -727,7 +728,29 @@ def _layer_command(
             cmd += ["-k", opts.only]
         cmd += _cov_args
         cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "4"]
-        return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
+        # Y.7-followup — auto-retry a flaky browser test (`pytest-rerunfailures`,
+        # in the [dev] extra) instead of failing the whole chain on it. The
+        # browser tier walks a live QuickSight embed under `-n 4` worker
+        # contention; the structure tests ("every visual rendered, one
+        # snapshot budget") occasionally lose a visual from the DOM when QS
+        # is rate-limiting under the concurrent load (Oracle-`aw` worst:
+        # slower per-query latency = workers hold QS sessions longer = more
+        # concurrent pressure — the underlying queries are ~8 ms and the
+        # data returns; it's a render-timing flake, passes on re-run / in
+        # isolation). The rerun happens INSIDE this same pytest invocation
+        # (xdist re-runs on the same worker), not by restarting the chain —
+        # so a flake costs ~one test re-run, not a whole `unit→…→browser`
+        # cycle. A test that's genuinely broken fails 3× → still halts.
+        cmd += ["--reruns", "2", "--reruns-delay", "10"]
+        # Bump the per-page Playwright timeout for the browser layer to 60 s
+        # (matches the CI `e2e-pg-browser` job). The default 30 s
+        # (tests/e2e/conftest.py) is fine for a local-pg container but too
+        # tight for the `aw` target's remote Aurora / Oracle. Operator-set
+        # value wins.
+        browser_env = {**env_addl, QS_GEN_E2E.name: "1"}
+        if QS_E2E_PAGE_TIMEOUT.name not in os.environ:
+            browser_env[QS_E2E_PAGE_TIMEOUT.name] = "60000"
+        return (cmd, browser_env)
     # Fallthrough: unknown layer name. Return None so dispatch prints
     # `dispatch-skip` rather than crashing — easier-to-triage failure mode
     # if someone adds a layer to LAYERS without wiring its command.

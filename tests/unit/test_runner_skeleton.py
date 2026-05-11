@@ -14,6 +14,7 @@ import pytest
 
 from quicksight_gen._dev import runner
 from quicksight_gen.common.env_keys import (
+    QS_E2E_PAGE_TIMEOUT,
     QS_E2E_USER_ARN,
     QS_GEN_CONFIG,
     QS_GEN_DEMO_DATABASE_URL,
@@ -540,11 +541,14 @@ def test_layer_command_api_dispatches_pytest_marked_api() -> None:
     assert env.get(QS_GEN_E2E.name) == "1"
 
 
-def test_layer_command_browser_dispatches_pytest_marked_browser() -> None:
+def test_layer_command_browser_dispatches_pytest_marked_browser(monkeypatch: Any) -> None:
     """Y.2.gate.c.5.browser — pytest -m browser selects the Playwright
     files. QS_GEN_E2E=1; default `-n 4` for parallel runners (per existing
     `./run_e2e.sh` pattern). QS_E2E_USER_ARN comes through from the h.1
-    derivation in `_run_one_variant`'s variant_env."""
+    derivation in `_run_one_variant`'s variant_env. Y.7-followup: the
+    browser layer also gets `--reruns` (flaky live-cloud e2e auto-retry)
+    and a 60 s `QS_E2E_PAGE_TIMEOUT` default (operator override wins)."""
+    monkeypatch.delenv(QS_E2E_PAGE_TIMEOUT.name, raising=False)
     cmd_env = runner._layer_command("browser", Path("/tmp/run"))
     assert cmd_env is not None
     cmd, env = cmd_env
@@ -553,6 +557,16 @@ def test_layer_command_browser_dispatches_pytest_marked_browser() -> None:
     assert "tests/e2e/" in cmd
     assert env.get(QS_GEN_E2E.name) == "1"
     assert "-n" in cmd and "4" in cmd
+    # Y.7-followup — flaky-e2e retry + per-page timeout bump.
+    assert "--reruns" in cmd
+    assert env.get(QS_E2E_PAGE_TIMEOUT.name) == "60000"
+    # ...but an operator-set value wins (no env entry → subprocess
+    # inherits the operator's).
+    monkeypatch.setenv(QS_E2E_PAGE_TIMEOUT.name, "120000")
+    cmd_env2 = runner._layer_command("browser", Path("/tmp/run"))
+    assert cmd_env2 is not None
+    _cmd2, env2 = cmd_env2
+    assert QS_E2E_PAGE_TIMEOUT.name not in env2
 
 
 def test_app2_in_db_touching_layers() -> None:
