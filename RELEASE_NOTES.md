@@ -1,5 +1,62 @@
 # Release Notes
 
+## v8.8.0a26 — Y.3.b + Y.5.a + Y.6 (Investigation calc-field pushdown, app2_date_column refactor, perf verification)
+
+Twenty-sixth alpha. Three landings on `y-3-investigation-calc-pushdown`:
+
+**Y.3.b — Account Network calc fields pushed into dataset SQL.** New
+`ACCOUNT_NETWORK_CONTRACT` extends `MONEY_TRAIL_CONTRACT` with three
+DB-computed columns (`is_inbound_edge`, `is_outbound_edge`,
+`counterparty_display`) — three CASE expressions over the
+`<<$pInvANetworkAnchor>>` parameter in the dataset SELECT. The
+Investigation analysis tree now emits **zero** analysis-level
+CalcFields; the inbound/outbound Sankey FilterGroups target real
+columns; the walk-the-flow drill source reads `counterparty_display`
+directly. Both QS and App2 see one shape. (Y.3.c was a no-op — Volume
+Anomalies had no analysis-level CalcFields; Y.3.d/e folded into a/b.)
+
+**Y.5.a — `app2_sql=` → `app2_date_column=` refactor.** The raw-SQL
+escape hatch (10 callsites: 8 L1 + 2 Executives, each hand-rolling
+`app2_sql=template.format(date_filter=app2_date_filter("col", cfg.dialect))`)
+is replaced by a typed declaration: the dataset declares
+`app2_date_column="col"` and `build_dataset()` does both substitutions
++ registration internally. Operators forgetting the App2 variant used
+to silently produce dataset SQL that ignored the date filter — that
+footgun is gone. `app2_date_filter` is now imported only by
+`build_dataset()` (lazily, to avoid a circular dep).
+
+**Y.6 — Performance verification (the headline result).** Direct
+dataset-SQL timing on Aurora PG, seeded with 68,879 transactions over
+90 days. Compared **wide-open** (empty `:date_from`/`:date_to`;
+sentinel binds match every row — functionally equivalent to pre-Y,
+which had no WHERE at all and let QuickSight narrow in-engine) vs
+**narrow-7d** (analyst applies a 7-day date filter — Phase Y pushes
+that bind into the dataset WHERE; the DB returns the narrowed set):
+
+| | wide-open | narrow-7d | Δ |
+|---|---:|---:|---|
+| **Total rows on the wire** (36 datasets, 4 apps) | 423,757 | 358,940 | **−15.3%** |
+| **Total query time** (Aurora PG, 3-run median) | 43.1s | 39.4s | −8.5% |
+
+Time delta understates the SQL-execution win — network round-trip
+dominates the small datasets. **9 datasets see ≥80% row reduction.**
+Star: `l1-transactions-ds` (the L1 Transactions sheet's main table) —
+**68,865 → 5,423 rows (−92%)**, **5.3s → 1.4s (−74%)**. Also:
+ledger-drift / drift-timelines (90 → 8, −91%), `exec-transaction-summary-ds`
+(1,182 → 110, −91%), `l1-overdraft-ds` (100 → 12, −88%),
+`l1-todays-exceptions-ds` (32 → 4, −88%), `l1-drift-ds` /
+`l1-limit-breach-ds` (−80%).
+
+Non-narrowing datasets (correct): dimension-tag feeds (`l2ft-meta-values-ds`
+190k rows, `l2ft-postings-ds` 67k), dropdown enumerations
+(`inv-money-trail-roots-ds` 32k, `l1-tx-ids-ds` 35k), and the
+Investigation threshold-pushdown datasets (`inv-recipient-fanout-ds`,
+`inv-volume-anomalies-ds` — their own `pInvFanoutThreshold` /
+`pInvAnomaliesSigma` pushdowns exist but a date-only scenario doesn't
+fire them). None is a missed Phase-Y opportunity. Methodology +
+per-dataset table: `runs/y6/summary.md` (regenerable via
+`spike/y6/measure.py` + `spike/y6/diff.py`).
+
 ## v8.8.0a25 — hotfix: api-layer test catch-up for Y.2.h + Y.2.f + Y.3.a
 
 Twenty-fifth alpha. Pure test-fixture / assertion fix; no production-code
