@@ -1105,12 +1105,12 @@ _PLAYWRIGHT_LEAK_LEGACY: frozenset[str] = frozenset({
     "tests/e2e/test_html2_executives_live.py",
     "tests/e2e/test_html2_l2ft.py",
     "tests/e2e/test_html2_money_trail.py",
-    "tests/e2e/test_inv_dashboard_renders.py",
+    # test_inv_dashboard_renders.py — ported onto DashboardDriver (X.2.q.3)
     "tests/e2e/test_inv_drilldown.py",
     "tests/e2e/test_inv_filters.py",
     "tests/e2e/test_inv_sheet_visuals.py",
     "tests/e2e/test_l1_cross_sheet_drill_date_widening.py",
-    "tests/e2e/test_l1_dashboard_renders.py",
+    # test_l1_dashboard_renders.py — ported onto DashboardDriver (X.2.q.3)
     "tests/e2e/test_l1_filters.py",
     "tests/e2e/test_l1_sheet_visuals.py",
     "tests/e2e/test_l2ft_chains_dropdowns.py",
