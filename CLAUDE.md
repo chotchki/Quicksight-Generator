@@ -295,16 +295,29 @@ Analysis-level `FilterGroup`s (`with_category_filter` / `scope_visuals` / etc.) 
 
 ## E2E Test Conventions
 
-- Two layers: API (boto3) and browser (Playwright WebKit, headless). Both gated behind `QS_GEN_E2E=1`.
-- Embed URL must be generated against the **dashboard region** (not the QuickSight identity region us-east-1) and is **single-use** — fixtures are function-scoped.
-- DOM selectors rely on QuickSight's `data-automation-id` attributes: `analysis_visual`, `analysis_visual_title_label`, `selectedTab_sheet_name`, `sn-table-cell-{row}-{col}`, `date_picker_{0|1}`, `sheet_control_name`. Sheet tabs use `[role="tab"]`.
-- Tab switches are racy: `click_sheet_tab` snapshots prior visual titles and waits for them to disappear before callers query the new sheet.
-- Filter / drill-down assertions poll for the visual state to change rather than sleeping.
-- Below-the-fold tables virtualize their cells — call `scroll_visual_into_view(page, title, timeout_ms)` before asserting on cell content or clicking a row.
-- QS tables also virtualize vertically (~10 DOM rows at a time, regardless of page size). `count_table_rows` returns DOM-visible count, saturating at ~10. For filter-narrowing assertions where before/after may exceed the viewport, use `count_table_total_rows` + `wait_for_table_total_rows_to_change` (slower; bumps page size to 10000 and scroll-accumulates the true total).
-- Failure screenshots saved to `tests/e2e/screenshots/<app>/` (gitignored).
-- `QS_E2E_USER_ARN` is **required** (not a tunable) — `get_user_arn()` raises `RuntimeError` if unset. Export the ARN of the QuickSight user the embed URL should sign for: locally, your default-namespace IAM user; in CI, the `ci-bot` user. Tunables (with defaults): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
-- The `_harness_*` modules (under `tests/e2e/`) compose seed → deploy → planted-row assertions → cleanup as one fixture; every harness test (`test_harness_end_to_end.py`) runs that flow against a live DB + QuickSight account.
+### Browser e2e tests speak `DashboardDriver` — never raw Playwright (X.2.q)
+
+A browser e2e test drives a dashboard through the `DashboardDriver` protocol (`tests/e2e/_drivers/base.py`), NOT Playwright directly. The protocol is the test vocabulary — `open` / `goto_sheet` / `sheet_names` / `visual_titles` / `filter_labels` / `filter_options` / `wait_loaded` / `table_rows` / `table_row_count` / `kpi_value` / `pick_filter` / `set_date_range` / `set_slider` / `clear_filters` / `cross_link` / `drill_from_first_row` / `drill_from_first_row_via_menu` / `screenshot` / `close` — and every read returns plain Python (a `list[str]`, a `dict[str, str]`, an `int`), never a `Locator` or `Page`. Two impls:
+
+- **`QsEmbedDriver`** (`tests/e2e/_drivers/qs.py`) — the embedded QuickSight iframe. `QsEmbedDriver.embed(*, aws_account_id, aws_region, viewport=…)` is a `@contextmanager` classmethod that owns the WebKit page; `open(dashboard_id)` mints a fresh region-matched single-use embed URL. The conftest `qs_driver` fixture wraps it (skips cleanly when `QS_E2E_USER_ARN` is unset — the runner derives it from `cfg.auth.aws_profile`; export it yourself for a direct `pytest` run).
+- **`App2Driver`** (`tests/e2e/_drivers/app2.py`) — the self-hosted HTMX/d3 page. `App2Driver.smoke()` serves the bundled smoke app + stub fetcher; `App2Driver.serving(*, tree_app, sheet, data_fetcher, …)` serves any tree + fetcher (stub or live-DB via `make_live_db_fetcher_for_app`). `driver.page` / `driver.base_url` are the escape hatch for App2-internal wire-shape assertions (`page.route` for HTTP intercept, `page.expect_response` for refetch checks, `select_option` on `<select name="param_X">`) — the kind of thing the renderer-agnostic verbs deliberately don't expose.
+
+A QS-only check just uses `qs_driver`; an App2-only check uses `App2Driver`; an overlapping check ("every visual rendered", "filter narrows the table") is one body parametrized over both. "This verb isn't meaningful here" → the driver raises `NotImplementedError` (not skip) — the test skips the *param*, not the verb. **Enforced**: the `no-playwright-leak` AST lint (`tests/unit/test_typing_smells.py`) flags any `import playwright[.x]` / `from playwright[.x] import …` / `from quicksight_gen.common.browser.{helpers,screenshot} import …` in `tests/e2e/**` outside `tests/e2e/_drivers/` (the AWS-only `get_user_arn` / `generate_dashboard_embed_url` helpers are exempt). New e2e tests use `DashboardDriver`; they do NOT reach into `common/browser/helpers.py`.
+
+### What's sealed inside `QsEmbedDriver` (you don't touch these)
+
+- DOM selectors are QuickSight's `data-automation-id` attributes (`analysis_visual`, `analysis_visual_title_label`, `sn-table-cell-{row}-{col}`, `sn-table-column-N`, `date_picker_0`, `sheet_control_name`, `simplePagedDisplayNav_*`); sheet tabs are `[role="tab"]`. Lives in `common/browser/helpers.py`.
+- Tab switches are racy — `click_sheet_tab` snapshots prior visual titles and waits for them to disappear.
+- QS tables virtualize: ~10 DOM rows at a time regardless of page size, and below-the-fold visuals don't mount their cells at all. `table_rows()` returns the rendered window; `table_row_count()` does the page-size-bump-to-10000 + scroll-accumulate dance for the true post-filter total.
+- After a parameter write, the prior page's rows linger until the dataset re-query lands. The driver waits on QS's WebSocket data layer — `_QsWsActivityTracker` watches the `{"type":"START_VIS","cid":…}` / `{"type":"STOP_VIS","cids":[…]}` frames; `pick_filter` / `set_date_range` / `drill_from_first_row` block until `sent_START - sent_STOP` drains to zero + a 300 ms quiet window (X.2.r — `docs/audits/x_2_r_event_wait_spike.md`, quirks log §3.6). No fixed sleeps.
+- Embed URLs are single-use → `qs_driver` is function-scoped.
+- Failure diagnostics (screenshot / console / qs-error-overlay text / network / Playwright trace) auto-capture on exception via `webkit_page` — under the runner they land in `$QS_GEN_RUN_DIR/browser/<test_id>/`; in legacy direct-`pytest` mode in `tests/e2e/screenshots/_failures/<test_id>.*`.
+
+### Layers + env
+
+- Two layers: API (boto3 — `-m api`) and browser (Playwright WebKit, headless — `-m browser`). Both gated behind `QS_GEN_E2E=1`. The runner's `api` and `browser` chain layers dispatch them; `e2e.yml` keeps its per-renderer jobs (`e2e-pg-api` on push:main, `e2e-pg-browser` nightly-cron). The App2 `test_html2_*` tests run via the runner's `app2` layer (`./run_tests.sh up_to=app2 …`) — they spin local servers, no AWS.
+- `QS_E2E_USER_ARN` is **required** (not a tunable) for the QS leg — `get_user_arn()` raises `RuntimeError` if unset. The runner auto-derives it from `cfg.auth.aws_profile`; export it manually for a bare `pytest` run. Tunables (with defaults): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
+- The `_harness_*` modules (under `tests/e2e/`) compose seed → deploy → planted-row assertions → cleanup as one fixture; every harness test (`test_harness_end_to_end.py`) runs that flow against a live DB + QuickSight account. (Pre-driver-layer; an open follow-on is to fold its render-side checks onto `DashboardDriver`.)
 
 ### CI artifacts
 
