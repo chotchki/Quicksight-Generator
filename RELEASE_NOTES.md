@@ -1,5 +1,13 @@
 # Release Notes
 
+## v9.0.1 — fix: v9.0.0's release pipeline died at Tests
+
+v9.0.0's tag never reached PyPI — the release pipeline failed at its first job (`Tests + pyright strict`), so nothing published. v9.0.1 is the same content as v9.0.0 plus the one test fix that unblocks the pipeline. **No production-code change.**
+
+- **`test_apply_demo_database_url_auto_emits_datasource_json` — hardened.** v9.0.0's `datasource_arn_was_derived` gate (the "explicit `datasource_arn` wins" change) is correct, but the test exercising the auto-emit path passed in isolation and failed in a full-suite run: `tests/audit/test_dashboard_extract.py` sets `QS_GEN_DATASOURCE_ARN` via a module-level `os.environ.setdefault`, pytest collects that module before `tests/json/`, and the leaked env value populated `cfg.datasource_arn` from the env override — flipping `datasource_arn_was_derived` to `False`, so the auto-emit gate didn't fire and `out/datasource.json` wasn't written. The test now `delenv`s the fallback up front (same defensive pattern as the sibling skip-emit test).
+
+(Everything below is unchanged from the v9.0.0 notes.)
+
 ## v9.0.0 — Phase Y: SQL-level parameter pushdown (QuickSight + self-hosted renderer converge)
 
 Major version. The headline is **convergence**: the QuickSight renderer and the self-hosted (App 2 / HTMX) renderer now do filtering the same way — a `<<$paramName>>` placeholder (or a `{date_filter}` slot) in the dataset's CustomSql, substituted at fetch time. QuickSight bridges an analysis parameter into the CustomSql via `MappedDataSetParameters`; the self-hosted renderer translates the same placeholder to a `:param_name` bind. One SQL, one narrowing path, two renderers — and the rows fetched shrink at the database instead of being pulled in full and filtered in-engine. Analysis-level `FilterGroup`s are deprecated for filter intent (kept only for the universal date control and the rare highlight-without-narrowing case).
