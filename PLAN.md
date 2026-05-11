@@ -611,10 +611,10 @@ The new authoring pattern needs to be the canonical one for any future filter / 
 
 ### Y.10 — Cut release
 
-- [ ] **Y.10.a — Bump version (likely v9.0.0 — major architectural shift).**
-- [ ] **Y.10.b — RELEASE_NOTES entry: convergence + perf wins headlined.**
-- [ ] **Y.10.c — Tag + push.**
-- [ ] **Y.10.d — Verify release pipeline runs green** (the existing `e2e-against-testpypi` gate already covers this).
+- [x] **Y.10.a — Bumped __version__ → v9.0.0 (2026-05-11).** Major: Phase Y converged the QuickSight + self-hosted (App2) renderers on SQL-level parameter pushdown; the customer-facing artifacts (CLI, config, L2 YAML) are unchanged but the internal filter architecture is a clean break, so a major bump.
+- [x] **Y.10.b — RELEASE_NOTES v9.0.0 entry written (2026-05-11).** Headlines: dialect convergence (one `<<$param>>`/`{date_filter}` SQL per dataset, two renderers); the date-pushdown perf win (-15.3% rows on the wire, l1-transactions -92% on a narrowed view); Oracle e2e clean (Y.7-followup); the explicit-`datasource_arn` precedence fix; migration note (customer config.yaml / L2 YAML unaffected).
+- [x] **Y.10.c — Tagged v9.0.0 + pushed (2026-05-11).**
+- [x] **Y.10.d — Release pipeline verified (2026-05-11).** Tests+pyright → Build → Smoke wheel → TestPyPI publish → TestPyPI verify → e2e-against-testpypi (PG) → PyPI publish (manual approval gate) → PyPI verify.
 
 ### Q.6 — CLI shape revisit: cfg ⇄ L2 dual-yaml factoring  _(moved out of Phase Y → Phase Q continuation, 2026-05-11; v9.0.0 = "Phase Y done" cuts without it — it's CLI ergonomics, not part of the SQL-pushdown convergence; folds into the standing "Phase Q — CLI/yaml ergonomics" thread)_
 
