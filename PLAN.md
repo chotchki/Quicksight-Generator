@@ -428,7 +428,7 @@ The σ case is the spike's load-bearing example of the SELECTED_VISUALS pattern.
 - [x] **Y.1.f — Drop the X.2.g.3.b `app2_sql=` block.** N/A on this branch — the X.2.g.3.b commit lives on `phase-x-2-g-investigation-app2` awaiting Y.8 rebase.
 - [x] **Y.1.g — Re-lock affected hash tests + JSON-emit tests.** `test_filter_groups_in_expected_order` (FG count 12 → 11), `test_investigation_datasets_in_expected_order` (7 → 8), `test_investigation_datasets_declared_in_analysis` (added DS_INV_VOLUME_ANOMALIES_DISTRIBUTION), `test_money_trail_dataset_reads_from_matview` (index 2 → 3), `test_fanout_sheet_serializes_to_aws_json` (FilterGroups count 12 → 11). Two stale sigma tests replaced with five Y.1-shape assertions covering pushdown SQL, dataset parameter declaration, mapped bridge, and companion-dataset binding.
 - [x] **Y.1.h — Deploy to Aurora PG; capture `pg_stat_statements` baseline + post-Y delta.** **VERIFIED LIVE.** Pre-Y baseline (historical): `SELECT * FROM sasquatch_pr_inv_pair_rolling_anomalies` — 6 calls × 6213 rows = 37,278 rows scanned, mean 192.5ms. Post-Y dashboard load issued THREE distinct queries (visible via `pg_stat_statements` with QS provenance comments tagging visualId): (1) Table — `... WHERE $2=$3 AND z_score >= $4`, 7 calls × 133 rows avg = 933 rows total, mean 19.6ms. (2) KPI — `SELECT COUNT(*) ... WHERE $1=$2 AND z_score >= $3`, 7 calls × 1 row = 7 rows, mean 19.8ms. (3) Distribution — `SELECT "z_bucket", COUNT(*) ... FROM "Investigation Volume Anomalies — Distribution"` — NO `WHERE` clause (companion dataset bound), 1 call × 5 rows, mean ~20ms. The `$2=$3` is the prepared-statement cache form of our `WHERE 1=1` template; `$4` is the σ literal QS substitutes via `MappedDataSetParameters`. **Companion dataset binding works — distribution chart gets no σ filter as intended.**
-- [ ] **Y.1.i — Deploy to Oracle; capture `v$sqlstats` baseline + post-Y delta.** Same shape as PG. **Operator action — Oracle path not exercised in this session.**
+- [x] **Y.1.i — Deploy to Oracle; capture `v$sqlstats` baseline + post-Y delta — SUPERSEDED (2026-05-11).** Y.6.a/b decided the Oracle perf-baseline pass isn't needed: the pushdown logic is dialect-symmetric (same `{date_filter}` slot, same `app2_*` bind helpers), the headline numbers come from the dialect-independent "wide-open ≡ pre-Y" reasoning, and the Aurora-Oracle TLS warmup costs 15+ min for a number we can derive. Revisit only if a dialect-specific perf concern surfaces.
 - [x] **Y.1.j — Performance verdict.** **WIN, with receipts.** ~10× latency reduction (192.5ms → ~20ms mean). ~48× row reduction for the Table visual (6213 → ~130 rows on the wire). ~6213× row reduction for the KPI's COUNT(*) (full scan → 1 row). Distribution chart preserves its full-population view (~5 z_bucket aggregate rows post-server-side GROUP BY). The spike validates the entire Phase Y premise: dataset-SQL-level pushdown moves the work from QS's in-memory engine to the database, which is the right place for it.
 - [x] **Y.1.k — Cascade dropdown probe.** **CLOSED. Verdict: QS-side limitation, not fixable from our wiring.** URL params populate widget state + analysis-level filter values, but `MappedDataSetParameters` bridges into dataset-level `<<$paramName>>` substitution do NOT fire on initial URL load. Bridge fires only on manual widget interaction. Y.1.p tried three reference shapes (B1 filter-with-param, B2 echo-column + filter, B3 calc field with `${param}` expression — LuisBorrego's community workaround) — all emit the right SQL via pg_stat_statements but `$N` binds remain at sentinel defaults until manual interaction. Y.1.p attempts reverted (commits 7aa0602 / 66524a4 / 0a3ded6); cascade restored to pre-Y.1.p OR-cascade WHERE shape that works under manual interaction. Quirks log entry 2.1 rewritten with the precise mechanism.
 - [x] **Y.1.l — Spike commit + spike-time findings captured.** Branch is ready for Y.2 sweep. Findings:
@@ -594,15 +594,11 @@ Per user direction: the e2e suite must be clean on PG, Oracle, AND SQLite before
   3. **QS-embed-render flake on the structure tests (Oracle-`aw`, under `-n 4`).** Not a real bug — query ~8ms, data returns, passes in isolation; the structure test ("every visual rendered, one snapshot budget") occasionally loses a KPI from the DOM when QS rate-limits under the concurrent browser-worker load (Oracle worst: slower per-query = workers hold QS sessions longer). Mitigations: 60s `QS_E2E_PAGE_TIMEOUT` default for the browser layer (matches CI `e2e-pg-browser`; operator override wins), and `pytest-rerunfailures` (`--reruns 2 --reruns-delay 10`, in the `[dev]` extra) so the browser layer auto-retries the failed test *inside the same pytest invocation* (xdist re-runs on the same worker) — costs ~one test re-run, not a chain restart; a genuinely-broken test fails 3× → still halts.
   - Verified: `./run_tests.sh up_to=browser --variants=sp_or_aw` green (unit → db → app2 → deploy → api → browser; the browser layer's `1 rerun` is the structure-flake being caught). PG + SQLite were already clean. Y.7's "clean on all three dialects" gate met; v9.0.0 "Phase Y done" cut unblocked.
 
-### Y.8 — Phase X rebase + merge
+### Y.8 — Phase X rebase + merge — RESOLVED (no rebase needed, 2026-05-11)
 
-Phase X's still-in-flight work (X.2.g.3 dataset SQL, anything dependent on `app2_sql=`) gets rebased on top of Y so it picks up the convergent shape. The X.2.g.3.* tasks I just completed are subsumed by Y.2 — they get DROPPED in the rebase, not preserved.
+What this anticipated: Phase X had an in-flight branch (`phase-x-2-g-investigation-app2`) carrying the App2 dataset-SQL filter wiring that needed rebasing onto Phase Y so it picked up the convergent shape, with the `app2_sql=` commits dropped. **It played out differently and more cleanly:** Phase Y landed on `main` incrementally (v8.8.0a2 … v8.8.0a27 + the Y.7-followup merge), and the branch's substantive content was re-done on the main line convergently as it went — the App2 hardening + filter-spec auto-derive (`X.2.g.2.d–g`, tasks #647–651) and the slider/dropdown dataset-SQL wiring (`X.2.g.3.a–e`, tasks #653–657) all landed on `main`, in their Y-aware form. So there was nothing to rebase: the stale `phase-x-2-g-investigation-app2` branch's two commits were `0417eca` (explicitly "X.2.g.3.a-e — subsumed by Phase Y") and `4237b20` (X.2.g.2.d–g — superseded by the on-main convergent versions). Branch deleted. Phase X continues from `main` with the convergent path already baked in.
 
-- [ ] **Y.8.a — Rebase the in-flight Phase X branch onto `phase-y-sql-pushdown`.** Drop X.2.g.3.{a,b,c,d,e} commits; their effect is now in Y.2.
-- [ ] **Y.8.b — Resolve conflicts in `apps/investigation/datasets.py` + `cli/serve.py`.** Likely the two contention points.
-- [ ] **Y.8.c — Re-run e2e PG green post-rebase.**
-- [ ] **Y.8.d — Re-run e2e Oracle green post-rebase.**
-- [ ] **Y.8.e — Merge Phase Y to main.** Phase X continues from there with the new convergent path baked in.
+- [x] **Y.8.a–e — DONE (2026-05-11):** rebase obviated (Phase Y merged to main piecemeal; the Phase X branch's content re-done convergently on main); `phase-x-2-g-investigation-app2` deleted.
 
 ### Y.9 — Convention + docs sweep
 
@@ -620,7 +616,7 @@ The new authoring pattern needs to be the canonical one for any future filter / 
 - [ ] **Y.10.c — Tag + push.**
 - [ ] **Y.10.d — Verify release pipeline runs green** (the existing `e2e-against-testpypi` gate already covers this).
 
-### Y.11 — CLI shape revisit: cfg ⇄ L2 dual-yaml factoring
+### Q.6 — CLI shape revisit: cfg ⇄ L2 dual-yaml factoring  _(moved out of Phase Y → Phase Q continuation, 2026-05-11; v9.0.0 = "Phase Y done" cuts without it — it's CLI ergonomics, not part of the SQL-pushdown convergence; folds into the standing "Phase Q — CLI/yaml ergonomics" thread)_
 
 Surfaced 2026-05-08 during `Y.2.gate.h.6` build. The runner now reads
 `cfg.default_l2_instance: tests/l2/sasquatch_pr.yaml` and threads it as
@@ -637,8 +633,8 @@ Spike-before-implement (per `feedback_spike_before_locking_implementation.md`):
 this is a CLI-surface change touching every operator command + every doc
 example + tests. Wrong factoring locks in for years.
 
-- [ ] **Y.11.0 — SPIKE: combined-yaml vs cfg-with-L2-pointer vs status-quo
-  (LOCKED 2026-05-08; spike before Y.11.1).** Output `docs/audits/y_11_cli_shape_spike.md`.
+- [ ] **Q.6.0 — SPIKE: combined-yaml vs cfg-with-L2-pointer vs status-quo
+  (LOCKED 2026-05-08; spike before Q.6.1).** Output `docs/audits/y_11_cli_shape_spike.md`.
   Compare the candidate factorings against today's two-yaml shape:
 
   - **A. Status quo + `--l2` defaults from `cfg.default_l2_instance`.**
@@ -683,16 +679,16 @@ example + tests. Wrong factoring locks in for years.
   **Likely outcome (to validate in spike):** A or D. A is the smallest delta;
   D is the cleanest if multi-L2-per-cfg becomes common.
 
-- [ ] **Y.11.1 — Implement per spike result.** Updates touch `cli/json.py`,
+- [ ] **Q.6.1 — Implement per spike result.** Updates touch `cli/json.py`,
   `cli/schema.py`, `cli/data.py`, `cli/audit.py`, `cli/_helpers.py::resolve_l2_for_demo`,
   every CLAUDE.md / README / handbook example, every test that invokes
   `runner.invoke([...,"--l2",...])`, and every CI workflow YAML that uses
   `--l2`. Migration warning for at least one minor version.
-- [ ] **Y.11.2 — Sweep memory entries + docs for stale `--l2 <yaml>` references.**
-- [ ] **Y.11.3 — Update CLAUDE.md "Commands" block** to show the new shape as
+- [ ] **Q.6.2 — Sweep memory entries + docs for stale `--l2 <yaml>` references.**
+- [ ] **Q.6.3 — Update CLAUDE.md "Commands" block** to show the new shape as
   canonical; keep the explicit `--l2` form as the "multi-instance / explicit
   override" sub-pattern.
-- [ ] **Y.11.4 — Bump version to v9.x.0 (breaking CLI change) + RELEASE_NOTES
+- [ ] **Q.6.4 — Bump version (breaking CLI change — post-v9.0.0) + RELEASE_NOTES
   entry highlighting the simplification + migration recipe.**
 
 ---
