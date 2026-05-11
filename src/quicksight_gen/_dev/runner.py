@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from quicksight_gen.common.config import Config
 
 from quicksight_gen.common.env_keys import (
+    QS_E2E_PAGE_TIMEOUT,
     QS_E2E_USER_ARN,
     QS_GEN_CONFIG,
     QS_GEN_DEMO_DATABASE_URL,
@@ -727,7 +728,20 @@ def _layer_command(
             cmd += ["-k", opts.only]
         cmd += _cov_args
         cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "4"]
-        return (cmd, {**env_addl, QS_GEN_E2E.name: "1"})
+        # Y.7-followup — bump the per-page Playwright timeout for the browser
+        # layer to 60 s (matches the CI `e2e-pg-browser` job). The default
+        # 30 s (tests/e2e/conftest.py) is fine for a local-pg container but
+        # too tight for the `aw` target's remote Aurora / Oracle: KPI visuals
+        # do an extra COUNT-aggregation round-trip on top of the dataset's
+        # parameter-substituted SQL, and under `-n 4` worker contention they
+        # occasionally hadn't finished rendering when TreeValidator snapshots
+        # the visual-title set → spurious "missing visual" structure-mismatch
+        # failures (passes clean on re-run / with the longer timeout).
+        # Operator-set value wins.
+        browser_env = {**env_addl, QS_GEN_E2E.name: "1"}
+        if QS_E2E_PAGE_TIMEOUT.name not in os.environ:
+            browser_env[QS_E2E_PAGE_TIMEOUT.name] = "60000"
+        return (cmd, browser_env)
     # Fallthrough: unknown layer name. Return None so dispatch prints
     # `dispatch-skip` rather than crashing — easier-to-triage failure mode
     # if someone adds a layer to LAYERS without wiring its command.
