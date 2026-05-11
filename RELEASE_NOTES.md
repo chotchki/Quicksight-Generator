@@ -1,5 +1,96 @@
 # Release Notes
 
+## v8.8.0a27 — Y.7 e2e gate (PG + SQLite clean) + two e2e-test fixes
+
+Twenty-seventh alpha. Bundles a26's content (Y.3.b + Y.5.a + Y.6) plus the
+Y.7 e2e verification pass and the two fixes it surfaced:
+
+- **`test_date_filter_narrows_every_date_sensitive_count_kpi` — fixed.**
+  Y.2.h removed this test's xfail expecting the date pushdown to make it
+  pass, but only validated against `sp_pg_aw` (which happened to). It
+  fails on every other dialect: the test picked a 2-day narrow window
+  *inside* the 90-day seed, where the baseline generator touches every
+  account every day, so the Active Accounts distinct-count KPI doesn't
+  shrink for any in-seed window. Moved the narrow window to ~400 days
+  pre-seed → every date-sensitive count KPI narrows to ~0 → still a
+  valid proof the `:date_from` bind reached the SQL.
+- **`test_invariant_three_way_agreement[postgres-supersession]` — fixed.**
+  The strict `dashboard_count == pdf_count` assert is structurally
+  invalid for supersession: the PDF's section is a count-by-table+category
+  aggregate (≈3 rows); the dashboard's "Transactions Audit" table is
+  per-row (≈34 at the live data density). It "passed" at m.5.d only
+  because the density then happened to give exactly 3 supersession txns.
+  Gated the strict-equality assert to `invariant == "drift"` (where the
+  PDF section and the dashboard table are genuinely the same shape); the
+  `>= expected` producer-side asserts still cover every invariant.
+  Follow-up tracked: widen to row-identity matching for the
+  divergent-shape invariants.
+
+**Y.7 status:** PG (`sp_pg_lo` + `sp_pg_aw`) clean unit→db→app2→deploy→api→browser;
+SQLite (`sp_sl_lo`) clean through app2; Oracle (`sp_or_lo`) clean db+app2,
+`sp_or_aw` clean db+deploy+api but the **Oracle browser layer has 7
+failures + 6 errors** (structural `*_dashboard_structure_matches_tree` +
+dropdown-narrow tests) — deferred to a focused Oracle-browser triage
+before the v9.0.0 "Phase Y done" cut. NOT in this release pipeline's
+scope (`release.yml::e2e-against-testpypi` runs PG only).
+
+## v8.8.0a26 — Y.3.b + Y.5.a + Y.6 (Investigation calc-field pushdown, app2_date_column refactor, perf verification)
+
+Twenty-sixth alpha. Three landings on `y-3-investigation-calc-pushdown`:
+
+**Y.3.b — Account Network calc fields pushed into dataset SQL.** New
+`ACCOUNT_NETWORK_CONTRACT` extends `MONEY_TRAIL_CONTRACT` with three
+DB-computed columns (`is_inbound_edge`, `is_outbound_edge`,
+`counterparty_display`) — three CASE expressions over the
+`<<$pInvANetworkAnchor>>` parameter in the dataset SELECT. The
+Investigation analysis tree now emits **zero** analysis-level
+CalcFields; the inbound/outbound Sankey FilterGroups target real
+columns; the walk-the-flow drill source reads `counterparty_display`
+directly. Both QS and App2 see one shape. (Y.3.c was a no-op — Volume
+Anomalies had no analysis-level CalcFields; Y.3.d/e folded into a/b.)
+
+**Y.5.a — `app2_sql=` → `app2_date_column=` refactor.** The raw-SQL
+escape hatch (10 callsites: 8 L1 + 2 Executives, each hand-rolling
+`app2_sql=template.format(date_filter=app2_date_filter("col", cfg.dialect))`)
+is replaced by a typed declaration: the dataset declares
+`app2_date_column="col"` and `build_dataset()` does both substitutions
++ registration internally. Operators forgetting the App2 variant used
+to silently produce dataset SQL that ignored the date filter — that
+footgun is gone. `app2_date_filter` is now imported only by
+`build_dataset()` (lazily, to avoid a circular dep).
+
+**Y.6 — Performance verification (the headline result).** Direct
+dataset-SQL timing on Aurora PG, seeded with 68,879 transactions over
+90 days. Compared **wide-open** (empty `:date_from`/`:date_to`;
+sentinel binds match every row — functionally equivalent to pre-Y,
+which had no WHERE at all and let QuickSight narrow in-engine) vs
+**narrow-7d** (analyst applies a 7-day date filter — Phase Y pushes
+that bind into the dataset WHERE; the DB returns the narrowed set):
+
+| | wide-open | narrow-7d | Δ |
+|---|---:|---:|---|
+| **Total rows on the wire** (36 datasets, 4 apps) | 423,757 | 358,940 | **−15.3%** |
+| **Total query time** (Aurora PG, 3-run median) | 43.1s | 39.4s | −8.5% |
+
+Time delta understates the SQL-execution win — network round-trip
+dominates the small datasets. **9 datasets see ≥80% row reduction.**
+Star: `l1-transactions-ds` (the L1 Transactions sheet's main table) —
+**68,865 → 5,423 rows (−92%)**, **5.3s → 1.4s (−74%)**. Also:
+ledger-drift / drift-timelines (90 → 8, −91%), `exec-transaction-summary-ds`
+(1,182 → 110, −91%), `l1-overdraft-ds` (100 → 12, −88%),
+`l1-todays-exceptions-ds` (32 → 4, −88%), `l1-drift-ds` /
+`l1-limit-breach-ds` (−80%).
+
+Non-narrowing datasets (correct): dimension-tag feeds (`l2ft-meta-values-ds`
+190k rows, `l2ft-postings-ds` 67k), dropdown enumerations
+(`inv-money-trail-roots-ds` 32k, `l1-tx-ids-ds` 35k), and the
+Investigation threshold-pushdown datasets (`inv-recipient-fanout-ds`,
+`inv-volume-anomalies-ds` — their own `pInvFanoutThreshold` /
+`pInvAnomaliesSigma` pushdowns exist but a date-only scenario doesn't
+fire them). None is a missed Phase-Y opportunity. Methodology +
+per-dataset table: `runs/y6/summary.md` (regenerable via
+`spike/y6/measure.py` + `spike/y6/diff.py`).
+
 ## v8.8.0a25 — hotfix: api-layer test catch-up for Y.2.h + Y.2.f + Y.3.a
 
 Twenty-fifth alpha. Pure test-fixture / assertion fix; no production-code

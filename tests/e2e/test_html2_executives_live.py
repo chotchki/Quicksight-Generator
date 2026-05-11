@@ -337,16 +337,28 @@ def test_date_filter_narrows_every_date_sensitive_count_kpi(
     )
 
     # Date windows are relative to today — the seed anchors to
-    # ``date.today()`` (see ``common/l2/seed.py``) so a hardcoded
-    # year-range would land outside the data. Wide captures the
-    # whole seed (90-day baseline + plants); narrow is a 2-day slice
-    # near the start of the seed. The 2-day slice MUST contain less
-    # data than the full window for any sum/count KPI; if it doesn't,
-    # the date filter is a no-op.
+    # ``date.today()`` (see ``common/l2/seed.py``: 90-day baseline
+    # back from today + plants). Wide captures the whole seed; narrow
+    # is a 2-day slice WELL BEFORE the seed range starts (~400 days
+    # back), so it contains zero data.
+    #
+    # Why pre-seed and not "early in the seed"? The baseline generator
+    # touches every account on every day (~24 txns/account/day across
+    # the 90-day window). So a 2-day slice INSIDE the seed still hits
+    # all 27-44 accounts → the Active Accounts KPI (a COUNT of
+    # accounts-with-activity, i.e. a distinct-account count bounded by
+    # the total account roster) does NOT shrink with an in-seed
+    # window. It only shrinks when the window excludes all activity.
+    # Transaction-count KPIs (l1-transactions, exec-transaction-summary)
+    # would narrow with an in-seed slice, but the per-KPI assertion
+    # below is a single window for all targets — so the window has to
+    # be one that narrows ALL of them. A pre-seed window narrows every
+    # date-sensitive count KPI to ~0, which is exactly the proof we
+    # want: the bind reached the SQL and the WHERE clause applied.
     today = date.today()
     wide_from = today - timedelta(days=365)
     wide_to = today + timedelta(days=1)
-    narrow_from = today - timedelta(days=89)
+    narrow_from = today - timedelta(days=400)
     narrow_to = narrow_from + timedelta(days=1)
 
     failures: list[str] = []

@@ -41,7 +41,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
-from quicksight_gen.common.sql import app2_date_filter, to_date
+from quicksight_gen.common.sql import to_date
 from quicksight_gen.common.sql.dialect import Dialect
 
 
@@ -165,12 +165,10 @@ GROUP BY posted_date, transfer_type"""
         cfg.prefixed("exec-transaction-summary-dataset"),
         "Executives Transaction Summary",
         "exec-transaction-summary",
-        sql_template.format(date_filter=""),
+        sql_template,
         EXEC_TRANSACTION_SUMMARY_CONTRACT,
         visual_identifier=DS_EXEC_TRANSACTION_SUMMARY,
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("t.posting", cfg.dialect),
-        ),
+        app2_date_column="t.posting",
     )
 
 
@@ -267,24 +265,22 @@ def build_account_summary_active_dataset(cfg: Config) -> DataSet:
     App2 (``:date_from`` / ``:date_to`` URL binds).
     """
     p = _require_prefix(cfg)
-    template = _account_summary_sql_template(p, cfg.dialect)
-    sql = template.format(
-        date_filter="",
-        active_only="WHERE COALESCE(act.activity_count, 0) > 0",
-    )
-    app2_sql = template.format(
-        date_filter=app2_date_filter("t.posting", cfg.dialect),
-        active_only="WHERE COALESCE(act.activity_count, 0) > 0",
+    # Pre-substitute the {active_only} slot (identical on both QS + App2
+    # sides), leaving {date_filter} for build_dataset's app2_date_column
+    # path to fill in per dialect. .replace (not .format) — leaves the
+    # remaining {date_filter} placeholder intact for build_dataset.
+    template = _account_summary_sql_template(p, cfg.dialect).replace(
+        "{active_only}", "WHERE COALESCE(act.activity_count, 0) > 0",
     )
     return build_dataset(
         cfg,
         cfg.prefixed("exec-account-summary-active-dataset"),
         "Executives Account Summary — Active",
         "exec-account-summary-active",
-        sql,
+        template,
         EXEC_ACCOUNT_SUMMARY_CONTRACT,
         visual_identifier=DS_EXEC_ACCOUNT_SUMMARY_ACTIVE,
-        app2_sql=app2_sql,
+        app2_date_column="t.posting",
     )
 
 
