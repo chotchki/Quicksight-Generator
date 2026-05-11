@@ -25,11 +25,19 @@ that have clean helpers — ``pick_filter`` (multi-select dropdown),
 ``clear_filters`` (re-mint the embed URL). Still ``NotImplementedError``:
 ``set_slider`` (no DOM helper for ``ParameterSliderControl`` yet) and
 ``cross_link`` (the cross-sheet-drill click) — both X.2.q follow-ons.
+
+Post-write settle (X.2.r): ``_settle_after_param_change()`` keys off
+QS's WebSocket data layer (``_QsWsActivityTracker`` watches
+``START_VIS`` / ``STOP_VIS`` frames). No fixed sleeps — see
+``docs/audits/x_2_r_event_wait_spike.md`` for the wire-shape capture
+that drove the design.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
+import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -63,6 +71,86 @@ _DEFAULT_PAGE_TIMEOUT_MS = 30_000
 _DEFAULT_VISUAL_TIMEOUT_MS = 15_000
 
 
+class _QsWsActivityTracker:
+    """X.2.r — track QuickSight's WebSocket data layer for event-driven settle.
+
+    Per the X.2.r spike (``docs/audits/x_2_r_event_wait_spike.md``), QS
+    embedded dashboards run every dataset query as a JSON text frame
+    over a single long-lived WebSocket. The wire shape:
+
+    - Client → server, start a visual's query:
+      ``{"type":"START_VIS","cid":"<uuid>","request":{...}}``
+    - Client → server, visual finished — tear down server-side state:
+      ``{"type":"STOP_VIS","cids":["<uuid>", ...]}``
+
+    The client sends ``STOP_VIS`` only after it's processed the response
+    + torn down its rendering pipeline for that visual — so the set
+    difference ``sent_START - sent_STOP`` is exactly the in-flight
+    re-query count.
+
+    This tracker hooks ``page.on("websocket")`` + ``ws.on("framesent")``
+    at driver construction, parses every text frame, and maintains:
+
+    - ``pending: set[str]`` — cids currently in-flight (START sent, no
+      matching STOP yet)
+    - ``total_starts: int`` — monotonic counter of START_VIS frames
+      seen since construction (the baseline a settle compares against)
+    - ``last_start_at: float`` — wall-clock of the most recent START
+      (the "no new START in N ms" guard against the two-burst case)
+
+    Best-effort: malformed payloads, binary frames, or missing keys
+    are swallowed (the tracker degrades to "saw nothing" — better than
+    crashing the test).
+    """
+
+    def __init__(self, page: Any) -> None:
+        self._pending: set[str] = set()
+        self._total_starts: int = 0
+        self._last_start_at: float = 0.0
+        page.on("websocket", self._on_ws)
+
+    def _on_ws(self, ws: Any) -> None:
+        ws.on("framesent", self._on_frame)
+
+    def _on_frame(self, payload: Any) -> None:
+        # Bytes / non-JSON frames: silently ignore. QS sends JSON text
+        # for the data-layer protocol; binary frames are likely
+        # heartbeats or something we don't care about.
+        if not isinstance(payload, str):
+            return
+        try:
+            msg = json.loads(payload)
+        except (ValueError, TypeError):
+            return
+        kind = msg.get("type") if isinstance(msg, dict) else None
+        if kind == "START_VIS":
+            cid = msg.get("cid")
+            if isinstance(cid, str):
+                self._pending.add(cid)
+                self._total_starts += 1
+                self._last_start_at = time.monotonic()
+        elif kind == "STOP_VIS":
+            cids = msg.get("cids", [])
+            if isinstance(cids, list):
+                for cid in cids:
+                    if isinstance(cid, str):
+                        self._pending.discard(cid)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
+
+    @property
+    def total_starts(self) -> int:
+        return self._total_starts
+
+    @property
+    def ms_since_last_start(self) -> float:
+        if self._last_start_at == 0.0:
+            return float("inf")
+        return (time.monotonic() - self._last_start_at) * 1000.0
+
+
 class QsEmbedDriver:
     """``DashboardDriver`` over the embedded QuickSight iframe + a WebKit
     page.
@@ -92,6 +180,11 @@ class QsEmbedDriver:
         self._visual_timeout = visual_timeout_ms
         self._dashboard: str | None = None
         self._sheet: str | None = None
+        # X.2.r — hook QS's WebSocket data layer at driver construction
+        # so the activity tracker captures every START_VIS / STOP_VIS
+        # frame from now on. Used by ``_settle_after_param_change`` for
+        # event-driven settle (no sleeps / DOM polls).
+        self._ws_tracker = _QsWsActivityTracker(page)
 
     # -- factories -------------------------------------------------------
 
@@ -267,46 +360,67 @@ class QsEmbedDriver:
     # -- writes ----------------------------------------------------------
 
     def _settle_after_param_change(self, *, timeout_ms: int = 18_000) -> None:
-        """Block until the active sheet's table visuals have re-fetched
-        after a parameter write.
+        """Block until QS's WebSocket data layer has settled after a
+        parameter write.
 
-        QS gives no clean network signal for the post-parameter dataset
-        re-query, and the prior page's rows linger in the DOM until the
-        re-fetch lands — so a naive "wait for ``sn-table-cell-0-0``"
-        returns on the *stale* rows, then they get cleared, and the next
-        read sees the spinner gap (zero rows) → spurious "filter emptied
-        the table". Instead: (1) give the re-fetch ~1.2s to *start*
-        clearing the old rows, (2) then poll the tables' first few cell
-        texts until they hold steady across two ~0.7s-apart reads (the
-        re-fetch has landed and stopped mutating the DOM). Best-effort —
-        capped and swallowed: a pathologically-slow QS shouldn't hard-fail
-        the write verb (callers re-read afterward and surface a real
-        empty result themselves)."""
-        page = self._page
-        page.wait_for_timeout(1_200)
-        snapshot_js = """() => Array.from(
-            document.querySelectorAll('[data-automation-id="analysis_visual"]')
-        ).map((v) => {
-            let s = '';
-            for (let r = 0; r < 3; r++) {
-                const c = v.querySelector(
-                    `[data-automation-id="sn-table-cell-${r}-0"]`);
-                s += (c ? c.innerText.trim() : '\\u2205') + '~';
-            }
-            return s;
-        }).join('||')"""
-        prev = page.evaluate(snapshot_js)
-        stable = 0
-        for _ in range(max(1, timeout_ms // 700)):
-            page.wait_for_timeout(700)
-            cur = page.evaluate(snapshot_js)
-            if cur == prev:
-                stable += 1
-                if stable >= 2:
-                    return
-            else:
-                stable = 0
-                prev = cur
+        X.2.r — keys off the START_VIS / STOP_VIS frames QS sends over
+        its long-lived WebSocket (see ``docs/audits/x_2_r_event_wait_spike.md``
+        for the wire shape + capture). The ``_QsWsActivityTracker``
+        attached at driver construction maintains a ``pending`` set
+        (sent START minus sent STOP — the in-flight re-query count) and
+        a monotonic ``total_starts`` counter.
+
+        Algorithm:
+
+        1. Snapshot ``baseline = total_starts`` *before* the caller's
+           action fires.
+        2. Spin (Playwright ``wait_for_function`` would be tighter but
+           tracker state lives in Python; the Python-side spin polls
+           cheap in-process state, no IPC). Each iteration sleeps a
+           tiny ``120 ms`` and checks:
+
+           - **Re-fetch fired**: ``total_starts > baseline``. If we
+             never see this within ``timeout_ms``, the write didn't
+             trigger a re-query — caller's read will surface what's
+             actually on screen, swallow.
+           - **Drained**: ``pending_count == 0``.
+           - **Settled past the burst**: ``ms_since_last_start >= 300``
+             (the X.2.r spike caught a two-burst pattern: pick →
+             immediate START_VIS round, then debounced follow-up ~2 s
+             later. The 300 ms guard waits past both bursts before
+             returning).
+
+        3. When all three are true, return. Capped at ``timeout_ms``
+           (default 18 s — same budget as the X.2.q.3 sleep-and-poll
+           it replaces); swallowed on timeout (best-effort contract —
+           callers re-read).
+
+        Replaces the X.2.q.3 sleep-and-poll heuristic (1.2 s upfront +
+        700 ms-spaced cell-text-stability poll, capped 18 s) which was
+        a content-stabilization workaround for the lack of an event
+        signal. Now we have one.
+        """
+        # NOTE: this MUST be called AFTER the caller's mutating action
+        # fires the START_VIS frames. The baseline is captured here
+        # because even a STOP_VIS-only burst from leftover prior work
+        # could fool a pre-action snapshot.
+        baseline = self._ws_tracker.total_starts
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        # Quiet window (ms) the tracker must show with no new START
+        # before we accept "settled". 300 ms straddles the two-burst
+        # case the X.2.r spike caught.
+        quiet_ms = 300.0
+        while time.monotonic() < deadline:
+            if (
+                self._ws_tracker.total_starts > baseline
+                and self._ws_tracker.pending_count == 0
+                and self._ws_tracker.ms_since_last_start >= quiet_ms
+            ):
+                return
+            # Tight in-process loop — no IPC. The tracker state mutates
+            # on Playwright's event-loop callback; this short sleep
+            # gives that loop room to deliver any queued frames.
+            self._page.wait_for_timeout(80)
 
     def pick_filter(self, label: str, values: Sequence[str]) -> None:
         # Post-Y.2.g the L1 / L2FT dropdowns are multi-select
