@@ -17,8 +17,6 @@ Substep landmarks:
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
     ColumnShape,
@@ -37,7 +35,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
-from quicksight_gen.common.sql import Dialect, app2_date_filter, date_trunc_day
+from quicksight_gen.common.sql import Dialect, date_trunc_day
 
 
 def l1_matview_specs(l2_instance: L2Instance) -> list[tuple[str, str | None]]:
@@ -558,7 +556,7 @@ def build_drift_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
     return build_dataset(
         cfg, cfg.prefixed("l1-drift-dataset"),
         "L1 Drift", "l1-drift",
-        sql_template.format(date_filter=""), DRIFT_CONTRACT,
+        sql_template, DRIFT_CONTRACT,
         visual_identifier=DS_DRIFT,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_DRIFT_ACCOUNT, P_L1_DRIFT_ACCOUNT,
@@ -569,9 +567,7 @@ def build_drift_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day_start", cfg.dialect),
-        ),
+        app2_date_column="business_day_start",
     )
 
 
@@ -597,7 +593,7 @@ def build_ledger_drift_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-ledger-drift-dataset"),
         "L1 Ledger Drift", "l1-ledger-drift",
-        sql_template.format(date_filter=""), LEDGER_DRIFT_CONTRACT,
+        sql_template, LEDGER_DRIFT_CONTRACT,
         visual_identifier=DS_LEDGER_DRIFT,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_DRIFT_ACCOUNT, P_L1_DRIFT_ACCOUNT,
@@ -608,9 +604,7 @@ def build_ledger_drift_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day_start", cfg.dialect),
-        ),
+        app2_date_column="business_day_start",
     )
 
 
@@ -649,7 +643,7 @@ def build_overdraft_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-overdraft-dataset"),
         "L1 Overdraft", "l1-overdraft",
-        sql_template.format(date_filter=""), OVERDRAFT_CONTRACT,
+        sql_template, OVERDRAFT_CONTRACT,
         visual_identifier=DS_OVERDRAFT,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_OVERDRAFT_ACCOUNT,
@@ -660,9 +654,7 @@ def build_overdraft_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day_start", cfg.dialect),
-        ),
+        app2_date_column="business_day_start",
     )
 
 
@@ -691,7 +683,7 @@ def build_limit_breach_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-limit-breach-dataset"),
         "L1 Limit Breach", "l1-limit-breach",
-        sql_template.format(date_filter=""), LIMIT_BREACH_CONTRACT,
+        sql_template, LIMIT_BREACH_CONTRACT,
         visual_identifier=DS_LIMIT_BREACH,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_LIMIT_BREACH_ACCOUNT,
@@ -702,9 +694,7 @@ def build_limit_breach_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day", cfg.dialect),
-        ),
+        app2_date_column="business_day",
     )
 
 
@@ -749,7 +739,7 @@ def build_todays_exceptions_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-todays-exceptions-dataset"),
         "L1 Today's Exceptions", "l1-todays-exceptions",
-        sql_template.format(date_filter=""), TODAYS_EXCEPTIONS_CONTRACT,
+        sql_template, TODAYS_EXCEPTIONS_CONTRACT,
         visual_identifier=DS_TODAYS_EXCEPTIONS,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_TODAYS_EXC_CHECK_TYPE,
@@ -763,9 +753,7 @@ def build_todays_exceptions_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day", cfg.dialect),
-        ),
+        app2_date_column="business_day",
     )
 
 
@@ -908,7 +896,7 @@ def build_transactions_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-transactions-dataset"),
         "L1 Transactions", "l1-transactions",
-        sql_template.format(date_filter=""), TRANSACTIONS_CONTRACT,
+        sql_template, TRANSACTIONS_CONTRACT,
         visual_identifier=DS_TRANSACTIONS,
         dataset_parameters=[
             _mv_dataset_param(_DSP_L1_TX_ACCOUNT, P_L1_TX_ACCOUNT,
@@ -925,9 +913,7 @@ def build_transactions_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("posting", cfg.dialect),
-        ),
+        app2_date_column="posting",
     )
 
 
@@ -961,7 +947,7 @@ def build_drift_timeline_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-drift-timeline-dataset"),
         "L1 Drift Timeline", "l1-drift-timeline",
-        sql_template.format(date_filter=""), DRIFT_TIMELINE_CONTRACT,
+        sql_template, DRIFT_TIMELINE_CONTRACT,
         visual_identifier=DS_DRIFT_TIMELINE,
         dataset_parameters=[
             _mv_dataset_param(
@@ -970,9 +956,7 @@ def build_drift_timeline_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day_end", cfg.dialect),
-        ),
+        app2_date_column="business_day_end",
     )
 
 
@@ -1001,7 +985,7 @@ def build_ledger_drift_timeline_dataset(
     return build_dataset(
         cfg, cfg.prefixed("l1-ledger-drift-timeline-dataset"),
         "L1 Ledger Drift Timeline", "l1-ledger-drift-timeline",
-        sql_template.format(date_filter=""), DRIFT_TIMELINE_CONTRACT,
+        sql_template, DRIFT_TIMELINE_CONTRACT,
         visual_identifier=DS_LEDGER_DRIFT_TIMELINE,
         dataset_parameters=[
             _mv_dataset_param(
@@ -1010,9 +994,7 @@ def build_ledger_drift_timeline_dataset(
                 or [PUSHDOWN_NO_MATCH_SENTINEL],
             ),
         ],
-        app2_sql=sql_template.format(
-            date_filter=app2_date_filter("business_day_end", cfg.dialect),
-        ),
+        app2_date_column="business_day_end",
     )
 
 

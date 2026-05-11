@@ -382,7 +382,8 @@ def build_dataset(
     contract: DatasetContract,
     visual_identifier: str,
     dataset_parameters: list[DatasetParameter] | None = None,
-    app2_sql: str | None = None,
+    *,
+    app2_date_column: str | None = None,
 ) -> DataSet:
     """Build an AWS-shape DataSet.
 
@@ -391,17 +392,37 @@ def build_dataset(
     syntax at QuickSight query time. Bridge to analysis params via
     ``MappedDataSetParameters`` on the analysis ParameterDeclaration.
 
-    ``app2_sql`` (X.2.g.1.b): optional App2-dialect SQL variant
-    registered for the HTMX dialect's tree fetcher (X.2.g.0). QS
-    uses the ``<<$paramName>>`` substitution mechanism for filter
-    values; App2's executor (``_sql_executor``) uses ``:name``-style
-    bind placeholders. They're incompatible at the SQL-string level,
-    so apps that need filter-bound SQL provide both: the QS variant
-    in ``sql`` (hits ``CustomSql.SqlQuery``); the App2 variant in
-    ``app2_sql`` (hits the registry that ``make_tree_db_fetcher``
-    consumes). When omitted, both dialects see the same ``sql``.
+    ``app2_date_column`` (Y.5.a, replaced raw ``app2_sql=``): name of
+    the date column the universal date-range filter narrows on. When
+    set, ``sql`` is treated as a template containing a literal
+    ``{date_filter}`` placeholder, and ``build_dataset`` emits both
+    SQL variants:
+
+    - QS gets ``sql.format(date_filter="")`` — the analysis-level
+      ``TimeRangeFilter`` narrows after-the-fact.
+    - App2 gets ``sql.format(date_filter=app2_date_filter(
+      app2_date_column, cfg.dialect))`` — the ``:date_from`` /
+      ``:date_to`` URL binds narrow at the DB.
+
+    Pre-Y.5.a callers passed an already-formatted ``app2_sql=`` string
+    plus an empty ``{date_filter}`` substitution into ``sql``. That
+    repeated boilerplate (``sql_template.format(date_filter=
+    app2_date_filter("col", cfg.dialect))``) at every call site and
+    silently broke when the operator forgot the App2 variant. The
+    new shape lets the dataset declare *the date column*, and
+    ``build_dataset`` handles substitution + registration.
     """
-    sql = _oracle_lowercase_alias_wrapper(sql, contract, cfg)
+    if app2_date_column is not None:
+        # Y.5.a — sql is a template with a {date_filter} slot.
+        from quicksight_gen.common.sql import app2_date_filter
+        qs_sql = sql.format(date_filter="")
+        app2_sql: str | None = sql.format(
+            date_filter=app2_date_filter(app2_date_column, cfg.dialect),
+        )
+    else:
+        qs_sql = sql
+        app2_sql = None
+    sql = _oracle_lowercase_alias_wrapper(qs_sql, contract, cfg)
     # X.2.g.0 / X.2.g.1.b — register the dialect-correct SQL so the
     # App2 tree fetcher can resolve a Visual's dataset SQL by
     # visual_identifier. App2-specific variant wins when provided
