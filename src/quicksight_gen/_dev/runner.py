@@ -728,16 +728,25 @@ def _layer_command(
             cmd += ["-k", opts.only]
         cmd += _cov_args
         cmd += ["-n", str(opts.parallel) if opts.parallel > 1 else "4"]
-        # Y.7-followup — bump the per-page Playwright timeout for the browser
-        # layer to 60 s (matches the CI `e2e-pg-browser` job). The default
-        # 30 s (tests/e2e/conftest.py) is fine for a local-pg container but
-        # too tight for the `aw` target's remote Aurora / Oracle: KPI visuals
-        # do an extra COUNT-aggregation round-trip on top of the dataset's
-        # parameter-substituted SQL, and under `-n 4` worker contention they
-        # occasionally hadn't finished rendering when TreeValidator snapshots
-        # the visual-title set → spurious "missing visual" structure-mismatch
-        # failures (passes clean on re-run / with the longer timeout).
-        # Operator-set value wins.
+        # Y.7-followup — auto-retry a flaky browser test (`pytest-rerunfailures`,
+        # in the [dev] extra) instead of failing the whole chain on it. The
+        # browser tier walks a live QuickSight embed under `-n 4` worker
+        # contention; the structure tests ("every visual rendered, one
+        # snapshot budget") occasionally lose a visual from the DOM when QS
+        # is rate-limiting under the concurrent load (Oracle-`aw` worst:
+        # slower per-query latency = workers hold QS sessions longer = more
+        # concurrent pressure — the underlying queries are ~8 ms and the
+        # data returns; it's a render-timing flake, passes on re-run / in
+        # isolation). The rerun happens INSIDE this same pytest invocation
+        # (xdist re-runs on the same worker), not by restarting the chain —
+        # so a flake costs ~one test re-run, not a whole `unit→…→browser`
+        # cycle. A test that's genuinely broken fails 3× → still halts.
+        cmd += ["--reruns", "2", "--reruns-delay", "10"]
+        # Bump the per-page Playwright timeout for the browser layer to 60 s
+        # (matches the CI `e2e-pg-browser` job). The default 30 s
+        # (tests/e2e/conftest.py) is fine for a local-pg container but too
+        # tight for the `aw` target's remote Aurora / Oracle. Operator-set
+        # value wins.
         browser_env = {**env_addl, QS_GEN_E2E.name: "1"}
         if QS_E2E_PAGE_TIMEOUT.name not in os.environ:
             browser_env[QS_E2E_PAGE_TIMEOUT.name] = "60000"

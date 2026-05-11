@@ -102,6 +102,12 @@ serve = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    # Y.7-followup — the runner's browser layer passes `--reruns 1` so a
+    # genuinely-flaky live-cloud e2e (QS embed-render under -n 4 worker
+    # contention occasionally drops a visual from the DOM at snapshot
+    # time — passes on re-run) auto-retries once before halting the
+    # chain. A test that's broken (not flaky) fails twice → still halts.
+    "pytest-rerunfailures>=14.0",
     "boto3>=1.34",
     # botocore[crt] pulls awscrt — required for the SSO / login
     # credential provider, which trips MissingDependencyException at
