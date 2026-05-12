@@ -453,6 +453,30 @@ jobs:
           test -f /tmp/portable-site/index.html
           test -f /tmp/portable-site/handbook/l1.html
 
+      - name: docs serve starts from installed wheel (X.2.s.1)
+        # `docs serve` must run mkdocs with cwd = the bundled
+        # mkdocs.yml's dir so mkdocs-macros's `include_dir: docs/_macros`
+        # resolves — from a non-editable install the default cwd has no
+        # `docs/_macros` and mkdocs dies on the initial build before it
+        # can serve. mkdocs serve has no build-and-exit mode, so run it
+        # under a short timeout, then assert it (a) didn't hit the
+        # macros-path error and (b) reached "Serving on".
+        run: |
+          set +e
+          cd /tmp  # ensure cwd has no docs/_macros — the failure cwd
+          timeout 30 /tmp/portable-test-venv/bin/quicksight-gen docs serve \
+              -p 8765 > /tmp/serve.log 2>&1
+          set -e
+          echo "--- docs serve output ---"; cat /tmp/serve.log
+          if grep -qi "_macros.*does not exist\|does not exist.*_macros" /tmp/serve.log; then
+            echo "::error::docs serve hit the X.2.s.1 macros-path regression"
+            exit 1
+          fi
+          grep -qi "Serving on" /tmp/serve.log || {
+            echo "::error::docs serve never reached 'Serving on'"
+            exit 1
+          }
+
   coverage-badge:
     needs: coverage
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
