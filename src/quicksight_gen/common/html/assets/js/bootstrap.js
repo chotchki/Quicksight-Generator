@@ -1094,6 +1094,7 @@
     el.dataset.widgetWired = "1";
     var rangeLo = Number(el.dataset.min);
     var rangeHi = Number(el.dataset.max);
+    var startMin = el.dataset.startMin ? Number(el.dataset.startMin) : rangeLo;
     // Single-handle mode (X.2.u.4.e — a ParameterSlider-bound named
     // param): one handle writing back into a single
     // <input name="param_X">. Marked by data-value-input. Two-handle
@@ -1102,17 +1103,14 @@
     var valueInput = el.dataset.valueInput
       ? scope.querySelector('input[name="' + el.dataset.valueInput + '"]')
       : null;
+    var sopts = {
+      start: [startMin],
+      connect: [true, false],
+      range: { min: rangeLo, max: rangeHi },
+      tooltips: true,
+    };
+    if (el.dataset.step) sopts.step = Number(el.dataset.step);
     if (valueInput) {
-      var startVal = el.dataset.startMin
-        ? Number(el.dataset.startMin)
-        : rangeLo;
-      var sopts = {
-        start: [startVal],
-        connect: [true, false],
-        range: { min: rangeLo, max: rangeHi },
-        tooltips: true,
-      };
-      if (el.dataset.step) sopts.step = Number(el.dataset.step);
       noUiSlider.create(el, sopts);
       el.noUiSlider.on("change", function (values) {
         valueInput.value = values[0];
@@ -1126,11 +1124,9 @@
     var maxInput = scope.querySelector(
       'input[name="' + el.dataset.maxInput + '"]',
     );
+    var startMax = el.dataset.startMax ? Number(el.dataset.startMax) : rangeHi;
     var opts = {
-      start: [
-        el.dataset.startMin ? Number(el.dataset.startMin) : rangeLo,
-        el.dataset.startMax ? Number(el.dataset.startMax) : rangeHi,
-      ],
+      start: [startMin, startMax],
       connect: true,
       range: { min: rangeLo, max: rangeHi },
       tooltips: true,
