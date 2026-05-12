@@ -392,7 +392,9 @@ def test_rails_sheet_parameter_controls_titled_for_analyst() -> None:
 def _chains_dataset_sql_against(yaml_path: Path) -> str:
     """Pull the SQL string out of the Chains dataset against a chosen
     L2 instance. Used by tests that want to assert non-empty CTEs
-    (sasquatch_pr.yaml has 6 chains; spec_example has 0)."""
+    (sasquatch_pr.yaml has 6 chains; spec_example has 1). The
+    empty-chains CTE path is exercised separately with a synthesized
+    chains-stripped instance."""
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_chains_dataset,
     )
@@ -412,8 +414,8 @@ def test_chains_dataset_targets_prefixed_current_transactions() -> None:
 def test_chains_dataset_inlines_l2_chain_entries() -> None:
     """The declared edges CTE inlines every ChainEntry as a SQL
     string-literal SELECT row joined by N-1 UNION ALLs.
-    sasquatch_pr.yaml has 6 chains; spec_example has 0 (the empty
-    path is exercised in another test)."""
+    sasquatch_pr.yaml has 6 chains; the empty-chains path is
+    exercised in another test with a synthesized instance."""
     inst = load_instance(SASQUATCH_PR_YAML)
     sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
     assert "WITH declared AS" in sql
@@ -479,11 +481,18 @@ def test_chains_dataset_contract_columns_match_builder() -> None:
 
 
 def test_chains_dataset_handles_empty_chains_list() -> None:
-    """spec_example.yaml has zero chains; the empty CTE path
-    (WHERE 1=0) keeps the SQL valid + visual harmless."""
-    sql = _chains_dataset_sql_against(
-        Path(__file__).parent.parent / "l2" / "spec_example.yaml"
+    """An L2 instance with zero chains exercises the empty-CTE path
+    (WHERE 1=0) — the SQL stays valid and the visual harmless. (Every
+    bundled L2 declares at least one chain now, so synthesize the
+    no-chains case by stripping ``chains`` off a loaded instance.)"""
+    from dataclasses import replace
+
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chains_dataset,
     )
+    no_chains = replace(default_l2_instance(), chains=())
+    aws_ds = build_chains_dataset(_CFG, no_chains)
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
     assert "WHERE 1=0" in sql
     assert "WITH declared AS" in sql
 
@@ -591,14 +600,17 @@ def test_chain_instances_dataset_declares_cascade_and_pushdown_parameters() -> N
         chain_completion_status_values()
     )
     # Instance WITHOUT chains → sentinel fallback (not an empty list).
-    sp = load_instance(Path(__file__).parent.parent / "l2" / "spec_example.yaml")
-    assert not declared_chain_parents(sp)
-    sp_params = build_chain_instances_dataset(_CFG, sp).DatasetParameters
-    assert sp_params is not None
-    sp_by_name = {
-        p.StringDatasetParameter.Name: p.StringDatasetParameter for p in sp_params
+    # (Every bundled L2 declares ≥1 chain now — synthesize the empty
+    # case by stripping ``chains`` off a loaded instance.)
+    from dataclasses import replace
+    no_chains = replace(load_instance(SASQUATCH_PR_YAML), chains=())
+    assert not declared_chain_parents(no_chains)
+    nc_params = build_chain_instances_dataset(_CFG, no_chains).DatasetParameters
+    assert nc_params is not None
+    nc_by_name = {
+        p.StringDatasetParameter.Name: p.StringDatasetParameter for p in nc_params
     }
-    assert sp_by_name["pL2ftChainsChain"].DefaultValues.StaticValues == [
+    assert nc_by_name["pL2ftChainsChain"].DefaultValues.StaticValues == [
         PUSHDOWN_NO_MATCH_SENTINEL,
     ]
 

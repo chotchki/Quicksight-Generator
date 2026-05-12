@@ -302,16 +302,16 @@ def l2ft_l2_instance():
 # arbitrary metadata cascades, … — is optional. So an L2FT browser test that
 # exercises a deployed-matview surface keyed off an optional feature should
 # `pytest.skip` cleanly when the L2 targeted by this session doesn't declare
-# that feature (spec_example declares zero chains; a fuzz seed may declare
-# neither). The no-feature case rendering clean — empty table, vacuous
-# dropdown, no QS error overlay — is already covered by the L2FT render
-# tests, so no coverage is lost.
+# that feature (spec_example declares both chains and templates; a fuzz seed
+# or operator-supplied L2 may declare neither). The no-feature case rendering
+# clean — empty table, vacuous dropdown, no QS error overlay — is already
+# covered by the L2FT render tests, so no coverage is lost.
 #
 # Note: a non-empty *declared* list is necessary but not sufficient for the
-# matview to have rows — e.g. spec_example declares a transfer template but
-# the baseline/plant seed fires no instances of it. Tests therefore ALSO
-# keep their downstream "table started empty → skip"; this just fast-exits
-# the obvious `declared zero` case (and documents the principle).
+# matview to have rows — a fuzz seed could declare a transfer template the
+# auto-scenario can't materialize a firing for. Tests therefore ALSO keep
+# their downstream "table started empty → skip"; this just fast-exits the
+# obvious `declared zero` case (and documents the principle).
 _L2FT_FEATURE_DECLARED = {
     "chains": "declared_chain_parents",
     "templates": "declared_template_names",

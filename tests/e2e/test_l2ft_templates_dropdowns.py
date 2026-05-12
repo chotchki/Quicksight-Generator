@@ -6,9 +6,10 @@ the Template Instances table (built from tt-instances); the table is the
 more sensitive instrument (the Sankey has no row-count primitive), so
 that's what ``walk_dropdown`` asserts on. See ``_l2ft_dropdown_walk``
 for the shared mechanics. Parametrized over ``[qs, app2]`` (X.2.u.3) via
-``l2ft_dashboard_driver``. (spec_example declares one template but the
-seed fires no instances, so ``walk_dropdown``'s "table started empty →
-skip" is the real guard there.)
+``l2ft_dashboard_driver``. spec_example declares two templates — one
+SingleLegRail-first (every firing 'Imbalanced') and one TwoLegRail-first
+chain-parent (firings 'Complete'/'Orphaned') — so the auto-scenario fires
+template instances covering all three Completion outcomes (X.2.u.3.fix.demo).
 """
 
 from __future__ import annotations
@@ -24,9 +25,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 @pytest.fixture(autouse=True)
 def _require_templates(l2ft_l2_instance) -> None:
     # Fast-exit when the deployed L2 declares zero transfer templates —
-    # see `conftest.require_l2ft_feature`. spec_example declares one but the
-    # seed fires no instances, so `walk_dropdown`'s "table started empty →
-    # skip" is the real guard for that case.
+    # see `conftest.require_l2ft_feature`. (A fuzz seed or operator-supplied
+    # L2 may declare none; spec_example declares two.)
     from tests.e2e.conftest import require_l2ft_feature
     require_l2ft_feature(l2ft_l2_instance, "templates")
 
@@ -37,7 +37,12 @@ def test_templates_dropdown_narrows_does_not_empty(
 ) -> None:
     """Each declared Template name — and each Completion status
     (Complete / Imbalanced / Orphaned) — must leave the Template
-    Instances table with > 0 rows when picked alone."""
+    Instances table with > 0 rows when picked alone.
+
+    Strict (``require_all_advertised`` default ``True``): spec_example's
+    pair of templates is designed to exercise every Completion outcome
+    (X.2.u.3.fix.demo). A value that empties the table is a regression —
+    stale enum, missing plants, or a pushdown break."""
     driver, dashboard_arg = l2ft_dashboard_driver
     driver.open(dashboard_arg, sheet="Transfer Templates")
     walk_dropdown(
@@ -45,9 +50,4 @@ def test_templates_dropdown_narrows_does_not_empty(
         sheet_label="Transfer Templates",
         dropdown_title=dropdown_title,
         table_title="Template Instances",
-        # "Completion" is a universal-outcome enum (Complete / Imbalanced /
-        # Orphaned) — which occur depends on the template's structure (a
-        # SingleLegRail-first template only ever fires 'Imbalanced'); require
-        # ≥1, not all. "Template" is an L2-declared name → strict.
-        require_all_advertised=(dropdown_title != "Completion"),
     )
