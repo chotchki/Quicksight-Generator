@@ -48,15 +48,18 @@ _BOOTSTRAP_JS_PATH = (
     / "bootstrap.js"
 )
 
+# X.2.p — the widget libs are served from /static/vendor/... (committed
+# dist files), not a CDN. (Provenance: assets/vendor/vendor.lock;
+# offline-contract guard: tests/unit/test_vendor_assets.py.)
 _VENDOR_CSS_MARKERS = (
-    "tom-select@2.3.1/dist/css/tom-select.min.css",
-    "flatpickr@4.6.13/dist/flatpickr.min.css",
-    "nouislider@15.7.1/dist/nouislider.min.css",
+    "/static/vendor/css/tom-select.min.css",
+    "/static/vendor/css/flatpickr.min.css",
+    "/static/vendor/css/nouislider.min.css",
 )
 _VENDOR_JS_MARKERS = (
-    "tom-select@2.3.1/dist/js/tom-select.complete.min.js",
-    "flatpickr@4.6.13/dist/flatpickr.min.js",
-    "nouislider@15.7.1/dist/nouislider.min.js",
+    "/static/vendor/js/tom-select.complete.min.js",
+    "/static/vendor/js/flatpickr.min.js",
+    "/static/vendor/js/nouislider.min.js",
 )
 
 
@@ -100,13 +103,13 @@ def test_page_shell_pulls_filter_widget_js() -> None:
             assert marker in shell, marker
 
 
-def test_existing_cdn_libs_still_present() -> None:
-    """Folding htmx / d3 / d3-sankey into the vendor-JS block must not
-    drop any of them."""
+def test_existing_runtime_libs_still_present() -> None:
+    """htmx / d3 / d3-sankey are in the vendor-JS block too (X.2.p:
+    served from /static/vendor/, not a CDN — must not drop any)."""
     for shell in _shells():
-        assert "htmx.org@2.0.3" in shell
-        assert "d3@7.9.0/dist/d3.min.js" in shell
-        assert "d3-sankey@0.12.3" in shell
+        assert "/static/vendor/js/htmx.min.js" in shell
+        assert "/static/vendor/js/d3.min.js" in shell
+        assert "/static/vendor/js/d3-sankey.min.js" in shell
 
 
 def test_vendor_css_before_theme_style_before_vendor_js() -> None:

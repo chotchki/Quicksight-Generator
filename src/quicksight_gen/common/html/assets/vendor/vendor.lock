@@ -1,0 +1,85 @@
+{
+  "_comment": [
+    "App 2's vendored third-party browser libs (X.2.p) — committed so a",
+    "`pip install quicksight-gen[serve] && quicksight-gen serve app2 apply`",
+    "works with zero internet. The page shell (common/html/render.py)",
+    "loads these from /static/vendor/... off the existing assets/ static",
+    "mount; package_data ships them inside the wheel.",
+    "",
+    "These are pre-built minified dist files (the exact bytes the CDNs",
+    "served) — NOT source. No bundler/esbuild: opaque already-minified",
+    "UMD, nothing to bundle or tree-shake. See",
+    "docs/audits/x_2_p_offline_bundle_spike.md.",
+    "",
+    "To bump a version: edit the version + source_url here (and set",
+    "sha256 to null), then run `python scripts/vendor_js_deps.py --update`",
+    "— it re-downloads, writes the file, and fills in the sha256. CI's",
+    "tests/unit/test_vendor_assets.py asserts every committed file's",
+    "sha256 matches this lock (same model as tests/data/_locked_seeds/)."
+  ],
+  "deps": [
+    {
+      "name": "htmx",
+      "version": "2.0.3",
+      "source_url": "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js",
+      "sha256": "491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e",
+      "dest": "js/htmx.min.js"
+    },
+    {
+      "name": "d3",
+      "version": "7.9.0",
+      "source_url": "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+      "sha256": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539",
+      "dest": "js/d3.min.js"
+    },
+    {
+      "name": "d3-sankey",
+      "version": "0.12.3",
+      "source_url": "https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js",
+      "sha256": "8286db5d6aa049cc6e8a546708943b79dfb4daaefb0ccf42af674ec0ee4c86be",
+      "dest": "js/d3-sankey.min.js"
+    },
+    {
+      "name": "tom-select",
+      "version": "2.3.1",
+      "source_url": "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js",
+      "sha256": "28d785eb15b9a3fb56d6869ee57952e0908d003a0cf911eaae7a14a8bea9bc76",
+      "dest": "js/tom-select.complete.min.js"
+    },
+    {
+      "name": "flatpickr",
+      "version": "4.6.13",
+      "source_url": "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js",
+      "sha256": "1eeab1cb779471a0b0aaa93dd91c2eb1aa537d696f01ab05ea9dabc55e8525a1",
+      "dest": "js/flatpickr.min.js"
+    },
+    {
+      "name": "nouislider",
+      "version": "15.7.1",
+      "source_url": "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js",
+      "sha256": "995d5e01bd25ecc38eab3aa72df6ebcabdc6959b693ea1a4901c2a18ca6e36a6",
+      "dest": "js/nouislider.min.js"
+    },
+    {
+      "name": "tom-select-css",
+      "version": "2.3.1",
+      "source_url": "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css",
+      "sha256": "e861558167bb999292d22ad24c55304db9f330ee90872f5bbc93af7ebf1f9b26",
+      "dest": "css/tom-select.min.css"
+    },
+    {
+      "name": "flatpickr-css",
+      "version": "4.6.13",
+      "source_url": "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css",
+      "sha256": "1b34a42552c96f10e4dfaaa4a367276b03868aacff63c1ac42ffe331352bc754",
+      "dest": "css/flatpickr.min.css"
+    },
+    {
+      "name": "nouislider-css",
+      "version": "15.7.1",
+      "source_url": "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css",
+      "sha256": "9dc9155cfd6331d1f5629881ac0bc63928243fa4c1d83b17ce4921b5200be0ae",
+      "dest": "css/nouislider.min.css"
+    }
+  ]
+}

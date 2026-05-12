@@ -112,15 +112,16 @@ def test_get_dashboards_lists_wired_dashboard() -> None:
 
 def test_get_dashboard_returns_full_sheet_html() -> None:
     """``GET /dashboards/{id}`` renders the page shell + the served
-    Sheet inline (HTMX + d3 + d3-sankey scripts, filter form,
-    one section per visual)."""
+    Sheet inline (HTMX + d3 + d3-sankey scripts served from
+    ``/static/vendor/...`` per X.2.p, filter form, one section per
+    visual)."""
     client = _make_test_app()
     resp = client.get(_DASHBOARD_PATH)
     assert resp.status_code == 200
     body = resp.text
-    assert "htmx.org" in body
-    assert "d3@7" in body or "d3.min.js" in body
-    assert "d3-sankey" in body
+    assert "/static/vendor/js/htmx.min.js" in body
+    assert "/static/vendor/js/d3.min.js" in body
+    assert "/static/vendor/js/d3-sankey.min.js" in body
     assert 'id="filter-form"' in body
     assert 'name="date_from"' in body
     assert 'name="date_to"' in body
