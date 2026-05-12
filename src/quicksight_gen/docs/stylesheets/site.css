@@ -1,8 +1,21 @@
 /*
- * Sasquatch National Bank — site palette overrides.
+ * Handbook site styling — colors derive from the active L2 instance's
+ * theme: block, not hard-coded here.
  *
- * Palette tokens mirror src/quicksight_gen/common/theme.py
- * (SASQUATCH_BANK_AR_PRESET). Keep these in sync if the preset moves.
+ * The `--qs-*` semantic tokens below carry NEUTRAL fallbacks (mirroring
+ * common/theme.py::DEFAULT_PRESET — the blues/greys QuickSight CLASSIC
+ * would otherwise pick). When the L2 YAML carries a `theme:` block,
+ * main.py::_apply_l2_theme_css writes a generated
+ * stylesheets/_l2_theme.css that overrides these tokens with the
+ * institution palette; it's registered on `extra_css` AFTER this file,
+ * so it wins. Material's `--md-*` brand vars are mapped onto `--qs-*`,
+ * so that one generated override file re-skins both Material's chrome
+ * (header / tabs / links) AND the `.snb-*` / `.qs-*` rules below.
+ *
+ * The `.snb-*` class names are markup hooks used by the handbook pages
+ * (hero block, walkthrough card grids, section labels) — kept as-is;
+ * they're stylesheet artifacts, not persona prose. Only the colors are
+ * theme-driven.
  */
 
 /*
@@ -20,47 +33,47 @@
 }
 
 :root {
-  /* AR — valley green / harvest gold / earth */
-  --snb-valley-deep: #2B4A2E;
-  --snb-valley-green: #4A7C3F;
-  --snb-meadow: #7BA96B;
-  --snb-pale-meadow: #D6E6C8;
-  --snb-harvest-gold: #D4A017;
-  --snb-wheat: #E8C77A;
-  --snb-soil-brown: #6B4423;
-  --snb-barn-red: #8B3A2A;
-  --snb-cream: #FBF7EE;
-  --snb-dark-earth: #3A2E24;
-  --snb-stone: #8C7A66;
-  --snb-link-tint: #EAF2E1;
-
-  /* PR — forest greens (used on PR walkthroughs in H.7) */
-  --snb-pr-forest: #2D6A4F;
-  --snb-pr-bank-gold: #C49A2A;
+  /* Neutral fallbacks — mirror common/theme.py::DEFAULT_PRESET. An L2
+   * instance YAML's theme: block overrides these via the generated
+   * stylesheets/_l2_theme.css (main.py::_apply_l2_theme_css). The
+   * comments name the ThemePreset field each maps to. */
+  --qs-accent:        #2E5090;   /* theme.accent — header bar, links, brand */
+  --qs-accent-light:  #4A7DC7;   /* theme.dimension — tab bar, hover states */
+  --qs-accent-dark:   #1B2A4A;   /* theme.measure — Material's --dark variant */
+  --qs-accent-fg:     #FFFFFF;   /* theme.accent_fg — text on the accent bar */
+  --qs-fg:            #2D2D2D;   /* theme.primary_fg — card body text */
+  --qs-fg-muted:      #4A4A4A;   /* theme.secondary_fg — captions / labels */
+  --qs-surface:       #FFFFFF;   /* theme.primary_bg — card / control bg */
+  --qs-surface-muted: #F5F6FA;   /* theme.secondary_bg — hero block bg */
+  --qs-tint:          #E8EFF9;   /* theme.link_tint — pale accent (borders/hover) */
+  --qs-warning:       #E65100;   /* theme.warning — secondary focus highlight */
+  --qs-shadow:        rgba(0, 0, 0, 0.12);  /* neutral elevation — not brand-tied */
 }
 
-/* MkDocs Material custom palette overrides — applied when
- * mkdocs.yml uses palette: { primary: custom, accent: custom }. */
+/* MkDocs Material custom palette mapping — applied when mkdocs.yml uses
+ * palette: { primary: custom, accent: custom }. Everything routes
+ * through the --qs-* tokens above, so overriding those (via the
+ * generated _l2_theme.css) re-themes Material's chrome too. */
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color:        var(--snb-valley-deep);
-  --md-primary-fg-color--light: var(--snb-valley-green);
-  --md-primary-fg-color--dark:  #1f3621;
-  --md-primary-bg-color:        #ffffff;
-  --md-primary-bg-color--light: var(--snb-cream);
+  --md-primary-fg-color:        var(--qs-accent);
+  --md-primary-fg-color--light: var(--qs-accent-light);
+  --md-primary-fg-color--dark:  var(--qs-accent-dark);
+  --md-primary-bg-color:        var(--qs-accent-fg);
+  --md-primary-bg-color--light: var(--qs-surface-muted);
 
-  --md-accent-fg-color:         var(--snb-harvest-gold);
-  --md-accent-fg-color--transparent: rgba(212, 160, 23, 0.1);
-  --md-accent-bg-color:         #ffffff;
+  --md-accent-fg-color:         var(--qs-accent);
+  --md-accent-fg-color--transparent: var(--qs-tint);
+  --md-accent-bg-color:         var(--qs-surface);
 
-  --md-typeset-a-color:         var(--snb-valley-green);
+  --md-typeset-a-color:         var(--qs-accent);
 }
 
 /* Header accents */
 .md-header {
-  background-color: var(--snb-valley-deep);
+  background-color: var(--qs-accent);
 }
 .md-tabs {
-  background-color: var(--snb-valley-green);
+  background-color: var(--qs-accent-light);
 }
 
 /* Site logo sizing */
@@ -71,12 +84,12 @@
 }
 
 /*
- * Hero block — used on index.md and the (future) handbook landing pages.
+ * Hero block — used on index.md and the handbook landing pages.
  * Markup: <div class="snb-hero"> ... </div>
  */
 .snb-hero {
-  background: linear-gradient(135deg, var(--snb-cream) 0%, var(--snb-pale-meadow) 100%);
-  border-left: 6px solid var(--snb-valley-green);
+  background-color: var(--qs-surface-muted);
+  border-left: 6px solid var(--qs-accent);
   border-radius: 4px;
   padding: 2.4rem 2rem;
   margin: 1.2rem 0 2rem;
@@ -89,18 +102,18 @@
 }
 .snb-hero h1,
 .snb-hero h2 {
-  color: var(--snb-valley-deep);
+  color: var(--qs-accent);
   margin: 0.2rem 0;
   border-bottom: none;
 }
 .snb-hero p.snb-hero__tagline {
-  color: var(--snb-soil-brown);
+  color: var(--qs-fg-muted);
   font-size: 1.1rem;
   margin: 0.4rem 0 0;
 }
 
 /*
- * Walkthrough card grid — used on the handbook landing pages (H.5).
+ * Walkthrough card grid — used on the handbook landing pages.
  * Markup:
  *   <div class="snb-card-grid">
  *     <a class="snb-card" href="...">
@@ -118,34 +131,34 @@
 .snb-card {
   display: block;
   padding: 1rem 1.2rem;
-  border: 1px solid var(--snb-pale-meadow);
-  border-left: 4px solid var(--snb-valley-green);
+  border: 1px solid var(--qs-tint);
+  border-left: 4px solid var(--qs-accent);
   border-radius: 4px;
-  background-color: #ffffff;
-  color: var(--snb-dark-earth);
+  background-color: var(--qs-surface);
+  color: var(--qs-fg);
   text-decoration: none;
   transition: box-shadow 120ms ease, transform 120ms ease;
 }
 .snb-card:hover {
-  box-shadow: 0 4px 12px rgba(43, 74, 46, 0.12);
+  box-shadow: 0 4px 12px var(--qs-shadow);
   transform: translateY(-1px);
   text-decoration: none;
 }
 .snb-card h3 {
-  color: var(--snb-valley-deep);
+  color: var(--qs-accent);
   margin: 0 0 0.4rem;
   font-size: 1.05rem;
 }
 .snb-card p {
   margin: 0;
-  color: var(--snb-soil-brown);
+  color: var(--qs-fg-muted);
   font-size: 0.9rem;
   line-height: 1.4;
 }
 
 /* Section labels above card groups (e.g., "Morning checks") */
 .snb-section-label {
-  color: var(--snb-soil-brown);
+  color: var(--qs-fg-muted);
   font-size: 0.85rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -167,8 +180,8 @@ figure.qs-diagram[data-zoomable="true"] {
 }
 figure.qs-diagram[data-zoomable="true"]:hover,
 figure.qs-diagram[data-zoomable="true"]:focus-visible {
-  box-shadow: 0 2px 10px rgba(43, 74, 46, 0.18);
-  outline: 2px solid var(--snb-valley-green);
+  box-shadow: 0 2px 10px var(--qs-shadow);
+  outline: 2px solid var(--qs-accent);
   outline-offset: 2px;
 }
 figure.qs-diagram[data-zoomable="true"] svg {
@@ -190,7 +203,7 @@ figure.qs-diagram[data-zoomable="true"] svg {
 .qs-lightbox__backdrop {
   position: absolute;
   inset: 0;
-  background-color: rgba(20, 25, 22, 0.82);
+  background-color: rgba(15, 18, 22, 0.82);
 }
 .qs-lightbox__viewport {
   position: relative;
@@ -228,9 +241,9 @@ figure.qs-diagram[data-zoomable="true"] svg {
 }
 .qs-lightbox__btn {
   appearance: none;
-  border: 1px solid var(--snb-pale-meadow);
-  background: #ffffff;
-  color: var(--snb-valley-deep);
+  border: 1px solid var(--qs-tint);
+  background: var(--qs-surface);
+  color: var(--qs-accent);
   font-size: 1rem;
   line-height: 1;
   padding: 0.45rem 0.7rem;
@@ -240,10 +253,10 @@ figure.qs-diagram[data-zoomable="true"] svg {
   min-width: 2.2rem;
 }
 .qs-lightbox__btn:hover {
-  background: var(--snb-pale-meadow);
+  background: var(--qs-tint);
 }
 .qs-lightbox__btn:focus-visible {
-  outline: 2px solid var(--snb-harvest-gold);
+  outline: 2px solid var(--qs-warning);
   outline-offset: 1px;
 }
 body.qs-lightbox-open {

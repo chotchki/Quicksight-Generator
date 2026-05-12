@@ -45,11 +45,14 @@ def test_writes_css_with_l2_accent_palette(
     css = css_path.read_text()
     accent = spec_example_theme.accent
     accent_fg = spec_example_theme.accent_fg
-    # Both Material brand-color custom properties consume the L2 accent.
-    assert f"--md-primary-fg-color: {accent};" in css
-    assert f"--md-accent-fg-color: {accent};" in css
-    # Text-on-primary background uses accent_fg.
-    assert f"--md-primary-bg-color: {accent_fg};" in css
+    # The shim overrides the --qs-* design tokens site.css declares;
+    # site.css maps Material's --md-* brand vars onto those, so the L2
+    # accent reaches Material's chrome AND the .snb-* / .qs-* rules.
+    assert "--qs-accent:" in css and accent in css
+    assert "--qs-accent-fg:" in css and accent_fg in css
+    # It overrides the --qs-* tokens, not Material's --md-* directly
+    # (the pre-X.2.s.2 shape that left site.css's rules hard-coded).
+    assert "--md-primary-fg-color" not in css
 
 
 def test_registers_css_in_extra_css(

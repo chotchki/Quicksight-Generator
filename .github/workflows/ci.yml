@@ -453,6 +453,26 @@ jobs:
           test -f /tmp/portable-site/index.html
           test -f /tmp/portable-site/handbook/l1.html
 
+      - name: Portable docs carry the L2 theme + site.css is persona-neutral (X.2.s.2)
+        # main.py::_apply_l2_theme_css writes stylesheets/_l2_theme.css from
+        # the bundled spec_example L2's theme: block (accent #2E5090), and
+        # site.css must route all colors through the --qs-* tokens it
+        # overrides — no hard-coded SNB palette (`--snb-*` / the old
+        # `#2B4A2E` valley-deep hex). The unit test exercises the
+        # distinctive-accent path; this is the non-editable-wheel guard.
+        run: |
+          set -e
+          L2=/tmp/portable-site/stylesheets/_l2_theme.css
+          SITE=/tmp/portable-site/stylesheets/site.css
+          test -f "$L2" || { echo "::error::_l2_theme.css not generated — theming code didn't run"; exit 1; }
+          grep -q -- '--qs-accent:' "$L2" || { echo "::error::_l2_theme.css doesn't set --qs-accent"; exit 1; }
+          grep -qi '#2E5090' "$L2"        || { echo "::error::_l2_theme.css missing the bundled L2 accent"; exit 1; }
+          grep -q 'stylesheets/_l2_theme.css' /tmp/portable-site/index.html || { echo "::error::index.html doesn't link _l2_theme.css"; exit 1; }
+          grep -q 'var(--qs-accent)' "$SITE" || { echo "::error::site.css doesn't route through --qs-accent"; exit 1; }
+          if grep -qi -- '--snb-\|2B4A2E' "$SITE"; then
+            echo "::error::site.css still hard-codes the SNB palette (X.2.s.2 regression)"; exit 1
+          fi
+
       - name: docs serve starts from installed wheel (X.2.s.1)
         # `docs serve` must run mkdocs with cwd = the bundled
         # mkdocs.yml's dir so mkdocs-macros's `include_dir: docs/_macros`
