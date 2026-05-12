@@ -183,23 +183,32 @@ class TreeValidator:
         """Walk this sheet's `filter_controls` + `parameter_controls`
         and assert each control's title is in the rendered DOM.
 
-        Datetime-picker controls (``add_parameter_datetime_picker`` /
-        ``FilterDateTimePicker``, ``_AUTO_KIND == "datetime"``) are
-        excluded from the cross-renderer comparison: QS renders one
-        widget per declared picker titled by ``.title`` ("Date From" /
-        "Date To" / "Business Day"); App2 collapses the universal date
-        range into a single "Date range" widget and doesn't render bare
-        datetime pickers at all (X.2.u.4.d). Their behaviour is covered
-        by the filter tests' ``set_date_range`` verb, not here.
+        Two control kinds are excluded from the cross-renderer
+        comparison because they have renderer-specific presentation:
+
+        - **datetime pickers** (``add_parameter_datetime_picker`` /
+          ``FilterDateTimePicker``, ``_AUTO_KIND == "datetime"``) — QS
+          renders one widget per declared picker titled by ``.title``
+          ("Date From" / "Date To" / "Business Day"); App2 collapses the
+          universal date range into a single "Date range" widget and
+          renders no bare datetime pickers (X.2.u.4.d). Covered by the
+          filter tests' ``set_date_range`` verb.
+        - **sliders** (``ParameterSlider`` / ``FilterSlider``,
+          ``_AUTO_KIND == "slider"``) — QS renders a slider widget;
+          App2 has no slider-bound-named-parameter filter widget yet
+          (the SQL pushdown still works, so the visuals narrow — see
+          ``PLAN`` X.2.l.4.d for the App2 slider widget follow-on).
+          Covered by the SQL-pushdown unit tests + ``test_html2_*``.
         """
         filter_ctrls = getattr(sheet, "filter_controls", None) or []
         param_ctrls = getattr(sheet, "parameter_controls", None) or []
-        non_datetime = [
+        _renderer_divergent = {"datetime", "slider"}
+        comparable = [
             c
             for c in (*filter_ctrls, *param_ctrls)
-            if getattr(c, "_AUTO_KIND", None) != "datetime"
+            if getattr(c, "_AUTO_KIND", None) not in _renderer_divergent
         ]
-        expected = {t for t in (_control_title(c) for c in non_datetime) if t}
+        expected = {t for t in (_control_title(c) for c in comparable) if t}
         if not expected:
             return
         rendered = set(self.driver.filter_labels())

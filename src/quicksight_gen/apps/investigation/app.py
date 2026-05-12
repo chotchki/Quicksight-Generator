@@ -1050,6 +1050,17 @@ def build_investigation_app(
     if cfg.l2_instance_prefix is None:
         cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
 
+    # Register every dataset's CustomSQL + contract in the SQL registry
+    # (matches build_l1_dashboard_app / build_executives_app, which call
+    # their build_all_*_datasets here). The CLI also calls this before
+    # build_investigation_app — re-registration is identity-idempotent.
+    # Without it the App2 tree fetcher's get_sql() raises for any dataset
+    # whose SQL the per-sheet builders don't themselves register
+    # (inv-recipient-fanout-ds, inv-money-trail-roots-ds, inv-anetwork-
+    # accounts-ds — X.2.u.4.f).
+    from quicksight_gen.apps.investigation.datasets import build_all_datasets
+    build_all_datasets(cfg, l2_instance)
+
     # N.3.g / N.4.k: theme from the L2 instance, coerced to the
     # registry default for in-canvas accent colors when the instance
     # declares no inline ``theme:`` block. The CLI uses the un-coerced
