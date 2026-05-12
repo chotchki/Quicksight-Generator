@@ -65,7 +65,8 @@ def test_shape_table_basic() -> None:
         rows=[("a", 1), ("b", 2), ("c", 3)],
         columns=["letter", "n"],
     )
-    assert out["columns"] == ["letter", "n"]
+    # Column *objects* ({name}) — renderTable reads col.name.
+    assert out["columns"] == [{"name": "letter"}, {"name": "n"}]
     assert out["rows"] == [["a", 1], ["b", 2], ["c", 3]]
     assert out["page_offset"] == 0
     assert out["page_size"] == 3
@@ -132,41 +133,35 @@ def test_shape_line_chart_single_series_default() -> None:
         rows=[("2030-01-01", 10), ("2030-01-02", 15), ("2030-01-03", 12)],
         columns=["day", "volume"],
     )
+    # Parallel x_values + series[].values — the shape renderLineChart reads.
+    assert out["x_values"] == ["2030-01-01", "2030-01-02", "2030-01-03"]
     assert len(out["series"]) == 1
     assert out["series"][0]["name"] == "volume"
-    assert out["series"][0]["points"] == [
-        {"x": "2030-01-01", "y": 10},
-        {"x": "2030-01-02", "y": 15},
-        {"x": "2030-01-03", "y": 12},
-    ]
+    assert out["series"][0]["values"] == [10, 15, 12]
     assert out["x_label"] == "day"
     assert out["y_label"] == "volume"
 
 
 def test_shape_line_chart_multi_series_buckets_by_series_column() -> None:
-    """``series_column`` index splits rows into series. First-seen
-    ordering — matches LineChart's legend order."""
+    """``series_column`` index splits rows into series. The shared x
+    axis is first-seen-ordered; each series' ``values`` is index-aligned
+    to ``x_values`` (``None`` where that series has no point)."""
     out = shape_line_chart(
         rows=[
             ("2030-01-01", "open", 10),
             ("2030-01-01", "closed", 5),
             ("2030-01-02", "open", 15),
-            ("2030-01-02", "closed", 6),
+            ("2030-01-03", "closed", 6),  # 'open' has no 2030-01-03 point
         ],
         columns=["day", "status", "count"],
         series_column=1,
     )
+    assert out["x_values"] == ["2030-01-01", "2030-01-02", "2030-01-03"]
     assert len(out["series"]) == 2
     open_series = next(s for s in out["series"] if s["name"] == "open")
     closed_series = next(s for s in out["series"] if s["name"] == "closed")
-    assert open_series["points"] == [
-        {"x": "2030-01-01", "y": 10},
-        {"x": "2030-01-02", "y": 15},
-    ]
-    assert closed_series["points"] == [
-        {"x": "2030-01-01", "y": 5},
-        {"x": "2030-01-02", "y": 6},
-    ]
+    assert open_series["values"] == [10, 15, None]
+    assert closed_series["values"] == [5, None, 6]
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +221,7 @@ def test_shape_for_kind_dispatches_by_class_name() -> None:
     out = shape_for_kind(
         "Table", rows=[("a", 1)], columns=["c", "n"],
     )
-    assert out["columns"] == ["c", "n"]
+    assert out["columns"] == [{"name": "c"}, {"name": "n"}]
 
 
 def test_shape_for_kind_raises_on_unknown() -> None:

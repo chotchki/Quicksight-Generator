@@ -943,10 +943,12 @@
 
   document.addEventListener("htmx:afterSwap", (evt) => {
     hydrate(evt.detail.target);
+    wireFilterWidgets(evt.detail.target);
   });
   document.addEventListener("DOMContentLoaded", () => {
     hydrate(document.body);
     wireCategoryFilters(document);
+    wireFilterWidgets(document);
     wireFilterAutoRefresh();
   });
 
@@ -974,12 +976,17 @@
     });
   }
 
-  // X.2.d — CategoryFilter sync. Each .category-filter wrapper holds
-  // a hidden input + a set of checkboxes. HTMX serializes only named
-  // inputs, so the checkboxes (intentionally unnamed) only feed the
-  // hidden input via this listener. We use ``data-wired`` to make
-  // re-binding idempotent — safe to call after htmx:afterSwap if
-  // future phases re-render the filter form.
+  // X.2.d / X.2.l.4 — CategoryFilter sync. Each .category-filter wrapper
+  // holds a hidden ``<input name="filter_<col>">`` (the wire element —
+  // HTMX serializes named inputs only) plus an un-named
+  // ``<select multiple data-category-select>`` that Tom Select enhances.
+  // This listener keeps the hidden input's value = the select's selected
+  // option values joined by comma (the ``?filter_<col>=v1,v2,v3`` shape
+  // the data fetcher consumes). The ``<select>``'s ``change`` event —
+  // re-fired by Tom Select's onChange in wireTomSelect — runs ``update``
+  // first (target phase) then bubbles to #filter-form (bubble phase),
+  // where wireFilterAutoRefresh sees the now-updated hidden input. So no
+  // extra dispatch is needed. ``data-wired`` makes this idempotent.
   function wireCategoryFilters(root) {
     var scope = root || document;
     var wrappers = scope.querySelectorAll(".category-filter");
@@ -987,18 +994,151 @@
       if (div.dataset.wired === "1") return;
       div.dataset.wired = "1";
       var hidden = div.querySelector('input[type="hidden"]');
-      var checkboxes = div.querySelectorAll('input[type="checkbox"]');
-      if (!hidden) return;
-      function update() {
-        var checked = [];
-        checkboxes.forEach(function (cb) {
-          if (cb.checked) checked.push(cb.value);
-        });
-        hidden.value = checked.join(",");
-      }
-      checkboxes.forEach(function (cb) {
-        cb.addEventListener("change", update);
+      var select = div.querySelector("select[data-category-select]");
+      if (!hidden || !select) return;
+      select.addEventListener("change", function () {
+        var vals = Array.prototype.map.call(
+          select.selectedOptions,
+          function (o) {
+            return o.value;
+          },
+        );
+        hidden.value = vals.join(",");
       });
+    });
+  }
+
+  // X.2.l.4 — fancy filter widgets. The renderer (render.py) emits a
+  // plain <select>/<input> carrying a data-widget="<kind>" attribute;
+  // this enhances each one with Tom Select / Flatpickr / noUiSlider
+  // (CDN-loaded in the page shell). The enhanced widget writes back
+  // into the underlying element's .value and dispatches a bubbling
+  // `change` so wireFilterAutoRefresh's #filter-form listener picks it
+  // up — i.e. the HTMX wire shape (URL keys, form serialization) is
+  // unchanged; only the chrome differs. data-widget-wired makes the
+  // call idempotent, so it's safe to re-run after htmx:afterSwap.
+  //
+  // If a lib failed to load (offline, CDN blip), the typeof guard
+  // leaves the plain <select>/<input> in place — degraded chrome, but
+  // the filter still works. (X.2.p will bundle the libs locally so
+  // there's no CDN to miss.)
+  //
+  // Markup contract (see render.py, X.2.l.4.b):
+  //   <select  data-widget="tomselect" [multiple] ...>
+  //   <input   data-widget="flatpickr-range" ...>  — siblings
+  //       <input name="date_from"> / <input name="date_to"> get synced
+  //   <div     data-widget="nouislider"
+  //            data-min/data-max/[data-start-min]/[data-start-max]/[data-step]
+  //            data-min-input="min_<col>" data-max-input="max_<col>">
+  //       — two-handle range; those two number inputs get synced
+  //   <div     data-widget="nouislider"
+  //            data-min/data-max/[data-start-min]/[data-step]
+  //            data-value-input="param_<name>">
+  //       — single-handle parameter slider (X.2.u.4.e); that one
+  //         <input name="param_<name>"> gets synced
+  function wireFilterWidgets(root) {
+    var scope = root || document;
+    scope.querySelectorAll("[data-widget]").forEach(function (el) {
+      if (el.dataset.widgetWired === "1") return;
+      var kind = el.dataset.widget;
+      if (kind === "tomselect") {
+        wireTomSelect(el);
+      } else if (kind === "flatpickr-range") {
+        wireFlatpickrRange(el, scope);
+      } else if (kind === "nouislider") {
+        wireNoUiSlider(el, scope);
+      }
+    });
+  }
+
+  function wireTomSelect(el) {
+    if (typeof TomSelect === "undefined") return;
+    el.dataset.widgetWired = "1";
+    new TomSelect(el, {
+      plugins: el.multiple ? ["remove_button"] : [],
+      // Tom Select syncs the underlying <select>'s selected options but
+      // doesn't always re-fire a native `change` on it — do it
+      // explicitly so wireFilterAutoRefresh sees the new value.
+      onChange: function () {
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+    });
+  }
+
+  function wireFlatpickrRange(el, scope) {
+    if (typeof flatpickr === "undefined") return;
+    el.dataset.widgetWired = "1";
+    var fromInput = scope.querySelector('input[name="date_from"]');
+    var toInput = scope.querySelector('input[name="date_to"]');
+    flatpickr(el, {
+      mode: "range",
+      dateFormat: "Y-m-d",
+      onChange: function (selectedDates, _dateStr, instance) {
+        var lo = selectedDates[0]
+          ? instance.formatDate(selectedDates[0], "Y-m-d")
+          : "";
+        var hi = selectedDates[1]
+          ? instance.formatDate(selectedDates[1], "Y-m-d")
+          : "";
+        if (fromInput) fromInput.value = lo;
+        if (toInput) toInput.value = hi;
+        if (fromInput) {
+          fromInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      },
+    });
+  }
+
+  function wireNoUiSlider(el, scope) {
+    if (typeof noUiSlider === "undefined") return;
+    el.dataset.widgetWired = "1";
+    var rangeLo = Number(el.dataset.min);
+    var rangeHi = Number(el.dataset.max);
+    var startMin = el.dataset.startMin ? Number(el.dataset.startMin) : rangeLo;
+    // Single-handle mode (X.2.u.4.e — a ParameterSlider-bound named
+    // param): one handle writing back into a single
+    // <input name="param_X">. Marked by data-value-input. Two-handle
+    // mode (a column NumericRangeSpec): min/max handles → the
+    // min_<col>/max_<col> number inputs (data-min-input/data-max-input).
+    var valueInput = el.dataset.valueInput
+      ? scope.querySelector('input[name="' + el.dataset.valueInput + '"]')
+      : null;
+    var sopts = {
+      start: [startMin],
+      connect: [true, false],
+      range: { min: rangeLo, max: rangeHi },
+      tooltips: true,
+    };
+    if (el.dataset.step) sopts.step = Number(el.dataset.step);
+    if (valueInput) {
+      noUiSlider.create(el, sopts);
+      el.noUiSlider.on("change", function (values) {
+        valueInput.value = values[0];
+        valueInput.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      return;
+    }
+    var minInput = scope.querySelector(
+      'input[name="' + el.dataset.minInput + '"]',
+    );
+    var maxInput = scope.querySelector(
+      'input[name="' + el.dataset.maxInput + '"]',
+    );
+    var startMax = el.dataset.startMax ? Number(el.dataset.startMax) : rangeHi;
+    var opts = {
+      start: [startMin, startMax],
+      connect: true,
+      range: { min: rangeLo, max: rangeHi },
+      tooltips: true,
+    };
+    if (el.dataset.step) opts.step = Number(el.dataset.step);
+    noUiSlider.create(el, opts);
+    el.noUiSlider.on("change", function (values) {
+      if (minInput) minInput.value = values[0];
+      if (maxInput) maxInput.value = values[1];
+      if (minInput) {
+        minInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     });
   }
 
@@ -1025,6 +1165,7 @@
       ensureToastContainer: ensureToastContainer,
       wireCategoryFilters: wireCategoryFilters,
       wireFilterAutoRefresh: wireFilterAutoRefresh,
+      wireFilterWidgets: wireFilterWidgets,
     };
   }
 })();

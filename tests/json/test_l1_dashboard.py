@@ -946,19 +946,33 @@ def test_pending_aging_sheet_has_kpi_bar_table() -> None:
     assert bar.orientation == "HORIZONTAL"
 
 
-def test_pending_aging_uses_calc_field_for_buckets() -> None:
-    """The 5 aging buckets come from a per-dataset CalcField on
-    `age_seconds`. Number-prefixed labels keep the QS bar chart sort
-    stable without an explicit sort_by override."""
-    app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    by_name = {c.name: c for c in app.analysis.calc_fields}
-    assert "stuck_pending_aging_bucket" in by_name
-    expr = by_name["stuck_pending_aging_bucket"].expression
-    # Each of the 5 bucket labels appears in the expression.
+def test_pending_aging_buckets_computed_in_dataset_sql() -> None:
+    """The 5 aging buckets are a portable ``CASE`` over ``age_seconds``
+    in the dataset SQL aliased ``stuck_pending_aging_bucket`` (Y.3.e —
+    the analysis-level CalcField was dropped when the buckets moved into
+    the SQL). Number-prefixed labels keep the QS bar chart sort stable
+    without an explicit sort_by override."""
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_stuck_pending_dataset,
+    )
+
+    sql = next(iter(
+        build_stuck_pending_dataset(_CFG, default_l2_instance())
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    assert "CASE" in sql and "age_seconds" in sql
+    assert "AS stuck_pending_aging_bucket" in sql
     for label in ("'1: 0-6h'", "'2: 6-24h'", "'3: 1-3d'",
                   "'4: 3-7d'", "'5: >7d'"):
-        assert label in expr, f"missing bucket label {label}"
+        assert label in sql, f"missing bucket label {label}"
+
+    # The bucket is no longer an analysis-level CalcField.
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    assert "stuck_pending_aging_bucket" not in {
+        c.name for c in app.analysis.calc_fields
+    }
 
 
 def test_pending_aging_drill_to_transactions() -> None:
@@ -977,8 +991,10 @@ def test_pending_aging_drill_to_transactions() -> None:
 
 
 def test_pending_aging_dataset_registered() -> None:
-    """DS_STUCK_PENDING dataset registers on the App tree + its SQL
-    targets the prefixed `<prefix>_stuck_pending` matview."""
+    """DS_STUCK_PENDING registers on the App tree + its SQL is the
+    bucket-CASE SELECT over the prefixed `<prefix>_stuck_pending` matview
+    with the Y.2.g pushdown WHERE (account_id data-value + transfer_type
+    / rail_name enums via `<<$pL1Pending*>>`)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_PENDING,
@@ -986,14 +1002,17 @@ def test_pending_aging_dataset_registered() -> None:
     )
 
     app = build_l1_dashboard_app(_CFG)
-    registered_ids = {ds.identifier for ds in app.datasets}
-    assert DS_STUCK_PENDING in registered_ids
+    assert DS_STUCK_PENDING in {ds.identifier for ds in app.datasets}
 
     instance = default_l2_instance()
     sp_ds = build_stuck_pending_dataset(_CFG, instance)
     sql_obj = next(iter(sp_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
-    assert sql_obj.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_stuck_pending")
+    sql = sql_obj.SqlQuery
+    assert sql.startswith("SELECT t.*,")
+    assert f"FROM {instance.instance}_stuck_pending t" in sql
+    assert "<<$pL1PendingType>>" in sql and "<<$pL1PendingRail>>" in sql
+    assert sp_ds.DatasetParameters  # the pushdown dataset params are wired
 
 
 # -- Unbundled Aging sheet (M.2b.11) -----------------------------------------
@@ -1027,17 +1046,25 @@ def test_unbundled_aging_sheet_has_kpi_bar_table() -> None:
 
 def test_unbundled_aging_uses_4_buckets() -> None:
     """Aging buckets are coarser than Pending Aging (4 vs 5 bands) —
-    `max_unbundled_age` is typically days, not hours."""
-    app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    by_name = {c.name: c for c in app.analysis.calc_fields}
-    assert "stuck_unbundled_aging_bucket" in by_name
-    expr = by_name["stuck_unbundled_aging_bucket"].expression
+    `max_unbundled_age` is typically days, not hours. Same SQL-side
+    CASE-over-`age_seconds` shape (Y.3.e), aliased
+    `stuck_unbundled_aging_bucket`."""
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_stuck_unbundled_dataset,
+    )
+
+    sql = next(iter(
+        build_stuck_unbundled_dataset(_CFG, default_l2_instance())
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    assert "CASE" in sql and "age_seconds" in sql
+    assert "AS stuck_unbundled_aging_bucket" in sql
     for label in ("'1: <1d'", "'2: 1-2d'", "'3: 2-7d'", "'4: >7d'"):
-        assert label in expr, f"missing bucket label {label}"
-    # No 6h or 24h buckets here (those are Pending Aging's).
-    assert "0-6h" not in expr
-    assert "6-24h" not in expr
+        assert label in sql, f"missing bucket label {label}"
+    # No 6h or 24h hour-grained buckets here (those are Pending Aging's).
+    assert "0-6h" not in sql
+    assert "6-24h" not in sql
 
 
 def test_unbundled_aging_drill_to_transactions() -> None:
@@ -1055,7 +1082,9 @@ def test_unbundled_aging_drill_to_transactions() -> None:
 
 
 def test_unbundled_aging_dataset_registered() -> None:
-    """DS_STUCK_UNBUNDLED dataset registers + targets prefixed matview."""
+    """DS_STUCK_UNBUNDLED registers + its SQL is the bucket-CASE SELECT
+    over the prefixed `<prefix>_stuck_unbundled` matview with the Y.2.g
+    pushdown WHERE (`<<$pL1Unbundled*>>`)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_UNBUNDLED,
@@ -1063,14 +1092,17 @@ def test_unbundled_aging_dataset_registered() -> None:
     )
 
     app = build_l1_dashboard_app(_CFG)
-    registered_ids = {ds.identifier for ds in app.datasets}
-    assert DS_STUCK_UNBUNDLED in registered_ids
+    assert DS_STUCK_UNBUNDLED in {ds.identifier for ds in app.datasets}
 
     instance = default_l2_instance()
     su_ds = build_stuck_unbundled_dataset(_CFG, instance)
     sql_obj = next(iter(su_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
-    assert sql_obj.SqlQuery.startswith(f"SELECT * FROM {instance.instance}_stuck_unbundled")
+    sql = sql_obj.SqlQuery
+    assert sql.startswith("SELECT t.*,")
+    assert f"FROM {instance.instance}_stuck_unbundled t" in sql
+    assert "<<$pL1UnbundledType>>" in sql and "<<$pL1UnbundledRail>>" in sql
+    assert su_ds.DatasetParameters
 
 
 # -- Supersession Audit sheet (M.2b.12) --------------------------------------

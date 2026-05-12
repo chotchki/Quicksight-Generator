@@ -96,10 +96,22 @@ class ParameterDropdownSpec:
     Renders as a ``<select name="param_<name>">`` with a blank
     leading option (the empty string round-trips as "no
     selection"). URL key on submit: ``?param_<name>=<value>``.
+
+    ``options_dataset`` / ``options_column`` (X.2.u.4.b): when the
+    option universe is a dataset column rather than a static list (a
+    tree ``ParameterDropdown(type="SINGLE_SELECT",
+    selectable_values=LinkedValues(...))``), the spec carries the
+    source instead of inlined ``options`` (which stays ``()`` until
+    the server resolves it — `server.py::_resolve_linked_options`
+    runs ``SELECT DISTINCT <col> FROM (<dataset SQL>)`` and replaces
+    ``options`` before rendering). When ``options_dataset`` is None
+    the static ``options`` are authoritative.
     """
     name: str
     label: str
     options: tuple[str, ...]
+    options_dataset: str | None = None
+    options_column: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,16 +132,48 @@ class CategoryFilterSpec:
 
 @dataclass(frozen=True)
 class NumericRangeSpec:
-    """Two number inputs for a numeric column.
+    """Min/max range filter for a numeric column.
 
-    Renders as two ``<input type="number">`` named
-    ``min_<column>`` + ``max_<column>``. Empty inputs serialize
-    as empty strings (the data fetcher treats either as
-    open-ended on that side). URL keys on submit:
-    ``?min_<column>=N&max_<column>=M``.
+    Renders two ``<input type="number">`` named ``min_<column>`` +
+    ``max_<column>`` (empty = open-ended on that side); URL keys on
+    submit: ``?min_<column>=N&max_<column>=M``. When ``lo`` + ``hi``
+    bounds are supplied, a noUiSlider two-handle widget is also emitted
+    over the inputs (X.2.l.4) — ``step`` is the optional snap interval.
+    Bounds are caller-supplied (a column min/max query, or sensible
+    defaults); without them the widget is number-inputs-only since a
+    slider needs a range.
     """
     column: str
     label: str
+    lo: float | None = None
+    hi: float | None = None
+    step: float | None = None
+
+
+@dataclass(frozen=True)
+class ParameterNumberSpec:
+    """Single numeric value bound to a named parameter — the App2
+    counterpart of a tree ``ParameterSlider`` node (X.2.u.4.e).
+
+    Renders an ``<input type="number" name="param_<name>">`` (the wire
+    element — submits a single ``?param_<name>=<value>`` key, which
+    ``_sql_executor`` translates to a ``:param_<name>`` *scalar* bind for
+    a ``<<$pName>>`` placeholder; NOT the repeated-key shape
+    ``ParameterMultiSelectSpec`` produces) plus a one-handle noUiSlider
+    over it (``wireNoUiSlider``'s single-handle mode — driven by
+    ``data-value-input`` rather than the two-handle ``data-min-input`` /
+    ``data-max-input``). The widget's initial value is ``default`` when
+    set, else ``minimum`` — which for the Investigation thresholds is the
+    no-narrowing position (σ≥1 / hop≥$0). Empty → no key → the executor's
+    static-default fallback (= the dataset param's declared default),
+    mirroring QuickSight's "slider untouched ⇒ analysis default".
+    """
+    name: str
+    label: str
+    minimum: float
+    maximum: float
+    step: float
+    default: float | None = None
 
 
 @dataclass(frozen=True)
@@ -146,18 +190,27 @@ class ParameterMultiSelectSpec:
     dataset param's declared-value default (= no narrowing), matching
     QuickSight's "empty the dropdown reverts to default" behaviour
     (Y.2.c.0). This is the App2 counterpart of a tree ``ParameterDropdown(
-    type="MULTI_SELECT", selectable_values=StaticValues(...))`` node —
-    derived from the tree by ``make_filter_specs_for_sheet``.
+    type="MULTI_SELECT", selectable_values=StaticValues(...) | LinkedValues(...))``
+    node — derived from the tree by ``make_filter_specs_for_sheet``.
+
+    ``options_dataset`` / ``options_column`` (X.2.u.4.b): for a
+    ``LinkedValues`` source the spec carries the dataset identifier +
+    column instead of an inlined ``options`` list (which stays ``()``
+    until ``server.py::_resolve_linked_options`` runs ``SELECT DISTINCT
+    <col> FROM (<dataset SQL>)`` and replaces ``options`` pre-render).
     """
     name: str
     label: str
     options: tuple[str, ...]
+    options_dataset: str | None = None
+    options_column: str | None = None
 
 
 FilterSpec = (
     ParameterDropdownSpec
     | CategoryFilterSpec
     | NumericRangeSpec
+    | ParameterNumberSpec
     | ParameterMultiSelectSpec
 )
 
@@ -166,6 +219,54 @@ _HTMX_SRC = "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
 _D3_SRC = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
 _D3_SANKEY_SRC = (
     "https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"
+)
+
+# X.2.l.4 — filter-widget libs, CDN-loaded (same pattern as htmx / d3
+# above; X.2.p later vendors + bundles them so a `pip install` App 2
+# works offline). Each *enhances an existing* ``<select>`` / ``<input>``
+# and keeps its ``.value`` in sync — so the HTMX wire shape (URL keys,
+# form serialization) is unchanged; only the widget chrome changes.
+#
+#   - Tom Select  — multi-select chips + search (replaces the native
+#                   ``<select multiple>`` and the checkbox group; QS's
+#                   multi-select is the widget App 2 was furthest from)
+#                   and single-select with typeahead.
+#   - Flatpickr   — date-range popover + preset shortcuts (replaces the
+#                   two browser-native ``<input type="date">``).
+#   - noUiSlider  — draggable two-handle min/max slider with value
+#                   bubbles (over the native number inputs).
+_TOM_SELECT_CSS = (
+    "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css"
+)
+_TOM_SELECT_JS = (
+    "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/"
+    "tom-select.complete.min.js"
+)
+_FLATPICKR_CSS = "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
+_FLATPICKR_JS = "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
+_NOUISLIDER_CSS = (
+    "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css"
+)
+_NOUISLIDER_JS = (
+    "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"
+)
+
+# Built once at import: the full ``<head>`` asset blocks. ``_VENDOR_CSS``
+# lands right after ``output.css`` (so the per-instance ``:root`` theme
+# ``<style>`` — which follows it — still wins the cascade for the
+# ``--color-*`` vars these libs read; the X.2.l.4.c override sheet then
+# maps the libs' own hooks onto those vars). ``_VENDOR_JS`` lands at the
+# bottom of ``<head>`` where htmx / d3 already loaded.
+_VENDOR_CSS = "\n".join(
+    f'  <link rel="stylesheet" href="{href}">'
+    for href in (_TOM_SELECT_CSS, _FLATPICKR_CSS, _NOUISLIDER_CSS)
+)
+_VENDOR_JS = "\n".join(
+    f'  <script src="{src}"></script>'
+    for src in (
+        _HTMX_SRC, _D3_SRC, _D3_SANKEY_SRC,
+        _TOM_SELECT_JS, _FLATPICKR_JS, _NOUISLIDER_JS,
+    )
 )
 
 # X.2.a.1 — JS lives in standalone .js files under assets/js/ so biome
@@ -199,10 +300,10 @@ _PAGE_SHELL = """\
   <title>{title}</title>
 {dev_log_meta}
   <link rel="stylesheet" href="/static/output.css">
+{vendor_css}
+  <link rel="stylesheet" href="/static/widgets-theme.css">
 {theme_style}
-  <script src="{htmx_src}"></script>
-  <script src="{d3_src}"></script>
-  <script src="{d3_sankey_src}"></script>
+{vendor_js}
 </head>
 <body class="bg-surface-bg text-primary-fg font-sans antialiased">
 {body}
@@ -272,12 +373,25 @@ _DATE_INPUT_CLASS = _FORM_INPUT_CLASS + " cursor-pointer"
 _DATE_INPUT_STYLE = "min-width: 10rem;"
 
 
+# X.2.l.4 — ``data-widget="..."`` attributes mark the elements that
+# ``wireFilterWidgets`` (bootstrap.js) enhances with Tom Select /
+# Flatpickr / noUiSlider. The underlying ``<select>`` / ``<input>`` is
+# still the wire element (HTMX serializes it; the URL keys are
+# unchanged) — the widget is chrome that writes back into it. If a lib
+# fails to load the plain control stays.
+_TOM_SELECT_ATTR = ' data-widget="tomselect"'
+_TS_SELECT_CLASS = _FORM_INPUT_CLASS + " min-w-48"
+
+
 def _render_parameter_dropdown(spec: ParameterDropdownSpec) -> str:
-    """Single-select ``<select name="param_<name>">``."""
+    """Single-select ``<select name="param_<name>">`` enhanced by Tom
+    Select (search + clear). The blank leading option round-trips as
+    "no selection" (``?param_<name>=``)."""
     name = html.escape(spec.name)
     parts = [
         f'    <label class="{_FORM_LABEL_CLASS}">{html.escape(spec.label)} '
-        f'<select name="param_{name}" class="{_FORM_INPUT_CLASS}">'
+        f'<select name="param_{name}" class="{_TS_SELECT_CLASS}"'
+        f'{_TOM_SELECT_ATTR}>'
         f'<option value=""></option>'
     ]
     for opt in spec.options:
@@ -288,49 +402,49 @@ def _render_parameter_dropdown(spec: ParameterDropdownSpec) -> str:
 
 
 def _render_category_filter(spec: CategoryFilterSpec) -> str:
-    """Multi-select check group + hidden joined-input the JS keeps
-    in sync. The ``data-filter-name`` attribute lets the JS find
-    the wrapper without coupling it to a specific column name."""
+    """Multi-select column filter: a ``<select multiple>`` (Tom Select
+    chips + search) with NO ``name`` — HTMX won't serialize it — feeding
+    a hidden ``<input name="filter_<column>">`` that ``wireCategoryFilters``
+    keeps as the comma-joined selected values. URL key on submit:
+    ``?filter_<column>=v1,v2,v3``. (Distinct from ``ParameterMultiSelectSpec``,
+    whose ``<select multiple name="param_X">`` serializes as repeated keys
+    for ``_sql_executor``'s IN-bind expansion.)"""
     name = html.escape(f"filter_{spec.column}")
     wrapper_class = (
         "category-filter flex items-center gap-2 text-sm "
         "text-primary-fg flex-wrap"
     )
-    cb_label_class = "inline-flex items-center gap-1"
-    cb_class = "accent-accent"
     parts = [
         f'    <div class="{wrapper_class}" data-filter-name="{name}">'
         f'<span class="font-medium">{html.escape(spec.label)}</span>'
         f'<input type="hidden" name="{name}" value="">'
+        f'<select multiple class="{_TS_SELECT_CLASS}" data-category-select'
+        f'{_TOM_SELECT_ATTR}>'
     ]
     for opt in spec.options:
         esc = html.escape(opt)
-        parts.append(
-            f'<label class="{cb_label_class}">'
-            f'<input type="checkbox" value="{esc}" class="{cb_class}"> {esc}'
-            f'</label>'
-        )
-    parts.append('</div>')
+        parts.append(f'<option value="{esc}">{esc}</option>')
+    parts.append('</select></div>')
     return "".join(parts)
 
 
 def _render_parameter_multiselect(spec: ParameterMultiSelectSpec) -> str:
-    """Multi-select ``<select multiple name="param_<name>">``.
+    """Multi-select ``<select multiple name="param_<name>">`` enhanced by
+    Tom Select (chips + search).
 
     No blank leading option — for a multi-select, "nothing selected"
-    already means "all" (the executor's static-default fallback). The
-    ``size`` caps the visible rows so a long option list doesn't dominate
-    the filter bar. ``change`` events bubble to the form, which
-    ``wireFilterAutoRefresh`` debounces into a ``refresh`` broadcast.
+    already means "all" (the executor's static-default fallback). Each
+    selected option serializes as its own ``param_<name>=<value>`` pair
+    (repeated key — the shape ``_sql_executor``'s multi-valued
+    dataset-param expansion consumes). ``change`` events bubble to the
+    form, which ``wireFilterAutoRefresh`` debounces into a ``refresh``.
     """
     name = html.escape(spec.name)
-    size = min(max(len(spec.options), 2), 6)
-    select_class = _FORM_INPUT_CLASS + " min-w-40"
     parts = [
-        f'    <label class="{_FORM_LABEL_CLASS} items-start">'
+        f'    <label class="{_FORM_LABEL_CLASS}">'
         f'{html.escape(spec.label)} '
-        f'<select name="param_{name}" multiple size="{size}" '
-        f'class="{select_class}">'
+        f'<select name="param_{name}" multiple class="{_TS_SELECT_CLASS}"'
+        f'{_TOM_SELECT_ATTR}>'
     ]
     for opt in spec.options:
         esc = html.escape(opt)
@@ -340,16 +454,74 @@ def _render_parameter_multiselect(spec: ParameterMultiSelectSpec) -> str:
 
 
 def _render_numeric_range(spec: NumericRangeSpec) -> str:
-    """Two ``<input type="number">`` named min_<col> + max_<col>."""
+    """``min_<col>`` / ``max_<col>`` number inputs. When the spec carries
+    ``lo`` + ``hi`` bounds, also emit a noUiSlider ``<div>`` over them
+    (two draggable handles + value bubbles; ``wireNoUiSlider`` syncs the
+    number inputs on drag and vice-versa). Without bounds we can't size a
+    slider, so it's number-inputs-only — still functional, just plainer.
+    Empty inputs serialize as ``""`` (open-ended on that side)."""
     col = html.escape(spec.column)
     narrow_input = _FORM_INPUT_CLASS + " w-24"
-    return (
-        f'    <label class="{_FORM_LABEL_CLASS}">{html.escape(spec.label)} '
+    inputs = (
         f'<input type="number" step="any" name="min_{col}" '
         f'placeholder="min" class="{narrow_input}"> '
         f'<input type="number" step="any" name="max_{col}" '
         f'placeholder="max" class="{narrow_input}">'
-        f'</label>'
+    )
+    if spec.lo is None or spec.hi is None:
+        return (
+            f'    <label class="{_FORM_LABEL_CLASS}">'
+            f'{html.escape(spec.label)} {inputs}</label>'
+        )
+    step_attr = f' data-step="{spec.step}"' if spec.step is not None else ""
+    slider = (
+        f'<div data-widget="nouislider" data-min="{spec.lo}" '
+        f'data-max="{spec.hi}" data-min-input="min_{col}" '
+        f'data-max-input="max_{col}"{step_attr} '
+        f'style="width: 10rem; margin: 0 1.25rem;"></div>'
+    )
+    return (
+        f'    <label class="{_FORM_LABEL_CLASS} items-center">'
+        f'{html.escape(spec.label)} {slider} {inputs}</label>'
+    )
+
+
+def _num_attr(value: float) -> str:
+    """Render a numeric DOM-attribute value without a spurious trailing
+    ``.0`` — so ``?param_<name>=4`` matches the integer literal shape QS
+    substitutes for the same parameter (and the bind round-trips clean
+    through the SQL executor)."""
+    f = float(value)
+    return str(int(f)) if f.is_integer() else repr(f)
+
+
+def _render_parameter_number(spec: ParameterNumberSpec) -> str:
+    """``<input type="number" name="param_<name>">`` + a one-handle
+    noUiSlider over it (``wireNoUiSlider`` single-handle mode via
+    ``data-value-input``). Initial value = ``default`` else ``minimum``.
+    The number input is the wire element (HTMX serializes it); the
+    slider writes back into it on drag. If noUiSlider fails to load the
+    number input stays usable (degraded, not broken)."""
+    name = html.escape(spec.name)
+    start = spec.default if spec.default is not None else spec.minimum
+    lo, hi, step, val = (
+        _num_attr(spec.minimum), _num_attr(spec.maximum),
+        _num_attr(spec.step), _num_attr(start),
+    )
+    narrow_input = _FORM_INPUT_CLASS + " w-24"
+    number_input = (
+        f'<input type="number" name="param_{name}" '
+        f'min="{lo}" max="{hi}" step="{step}" value="{val}" '
+        f'class="{narrow_input}">'
+    )
+    slider = (
+        f'<div data-widget="nouislider" data-min="{lo}" data-max="{hi}" '
+        f'data-start-min="{val}" data-value-input="param_{name}" '
+        f'data-step="{step}" style="width: 10rem; margin: 0 1.25rem;"></div>'
+    )
+    return (
+        f'    <label class="{_FORM_LABEL_CLASS} items-center">'
+        f'{html.escape(spec.label)} {slider} {number_input}</label>'
     )
 
 
@@ -375,15 +547,19 @@ def _render_filter_form(
         "bg-surface rounded-lg shadow-sm border border-surface-border"
     )
     parts = [f'  <form id="filter-form" class="{form_class}">']
+    # X.2.l.4 — one Flatpickr range popover (the visible, un-named text
+    # input) feeding two hidden ``date_from`` / ``date_to`` inputs (the
+    # wire-serialized ones — URL keys unchanged). ``readonly`` so the
+    # field can't take typed garbage; Flatpickr opens it on click. If
+    # Flatpickr fails to load the text input just sits inert and the
+    # hidden inputs stay empty → no date narrowing (degraded, not broken).
     parts.append(
-        f'    <label class="{_FORM_LABEL_CLASS}">From '
-        f'<input type="date" name="date_from" class="{_DATE_INPUT_CLASS}"'
+        f'    <label class="{_FORM_LABEL_CLASS}">Date range '
+        f'<input type="text" data-widget="flatpickr-range" readonly '
+        f'placeholder="All dates" class="{_DATE_INPUT_CLASS}"'
         f' style="{_DATE_INPUT_STYLE}"></label>'
-    )
-    parts.append(
-        f'    <label class="{_FORM_LABEL_CLASS}">To '
-        f'<input type="date" name="date_to" class="{_DATE_INPUT_CLASS}"'
-        f' style="{_DATE_INPUT_STYLE}"></label>'
+        f'<input type="hidden" name="date_from" value="">'
+        f'<input type="hidden" name="date_to" value="">'
     )
     for spec in filter_specs:
         if isinstance(spec, ParameterDropdownSpec):
@@ -392,6 +568,8 @@ def _render_filter_form(
             parts.append(_render_category_filter(spec))
         elif isinstance(spec, NumericRangeSpec):
             parts.append(_render_numeric_range(spec))
+        elif isinstance(spec, ParameterNumberSpec):
+            parts.append(_render_parameter_number(spec))
         elif isinstance(spec, ParameterMultiSelectSpec):
             parts.append(_render_parameter_multiselect(spec))
     parts.append('  </form>')
@@ -460,9 +638,8 @@ def emit_dashboards_list(
     return _PAGE_SHELL.format(
         title="Dashboards",
         body="\n".join(body_parts),
-        htmx_src=_HTMX_SRC,
-        d3_src=_D3_SRC,
-        d3_sankey_src=_D3_SANKEY_SRC,
+        vendor_css=_VENDOR_CSS,
+        vendor_js=_VENDOR_JS,
         bootstrap_js=_BOOTSTRAP_JS,
         dev_log_js=_DEV_LOG_JS,
         dev_log_meta="",
@@ -538,9 +715,8 @@ def emit_error_page(
     return _PAGE_SHELL.format(
         title=html.escape(headline),
         body="\n".join(body_parts),
-        htmx_src=_HTMX_SRC,
-        d3_src=_D3_SRC,
-        d3_sankey_src=_D3_SANKEY_SRC,
+        vendor_css=_VENDOR_CSS,
+        vendor_js=_VENDOR_JS,
         bootstrap_js=_BOOTSTRAP_JS,
         dev_log_js=_DEV_LOG_JS,
         dev_log_meta="",
@@ -820,9 +996,8 @@ def emit_html(
     return _PAGE_SHELL.format(
         title=html.escape(sheet.title),
         body="\n".join(body_parts),
-        htmx_src=_HTMX_SRC,
-        d3_src=_D3_SRC,
-        d3_sankey_src=_D3_SANKEY_SRC,
+        vendor_css=_VENDOR_CSS,
+        vendor_js=_VENDOR_JS,
         bootstrap_js=_BOOTSTRAP_JS,
         dev_log_js=_DEV_LOG_JS,
         dev_log_meta=(

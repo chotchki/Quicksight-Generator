@@ -124,6 +124,28 @@ def qs_client(region):
     return boto3.client("quicksight", region_name=region)
 
 
+@pytest.fixture
+def qs_driver(cfg, region, account_id):  # type: ignore[no-untyped-def]: return-type annotation would force a QsEmbedDriver import at module scope
+    """X.2.q — ``QsEmbedDriver`` over a fresh WebKit page, for browser
+    e2e tests that drive a deployed QuickSight dashboard through the
+    ``DashboardDriver`` protocol (``open(dashboard_id)`` mints the embed
+    URL). Skips cleanly when ``QS_E2E_USER_ARN`` is unset (the runner
+    derives it from ``cfg.auth.aws_profile``; export it for a direct
+    ``pytest`` run). Function-scoped — embed URLs are single-use.
+    """
+    from quicksight_gen.common.browser.helpers import get_user_arn
+    from tests.e2e._drivers import QsEmbedDriver
+
+    try:
+        get_user_arn()
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+    with QsEmbedDriver.embed(
+        aws_account_id=account_id, aws_region=region,
+    ) as d:
+        yield d
+
+
 def _resolve_test_l2_instance():  # type: ignore[no-untyped-def]: return-type annotation would force an L2Instance import at module scope, slowing collection
     """Resolve the L2 instance the e2e tests should mirror.
 
@@ -280,16 +302,16 @@ def l2ft_l2_instance():
 # arbitrary metadata cascades, … — is optional. So an L2FT browser test that
 # exercises a deployed-matview surface keyed off an optional feature should
 # `pytest.skip` cleanly when the L2 targeted by this session doesn't declare
-# that feature (spec_example declares zero chains; a fuzz seed may declare
-# neither). The no-feature case rendering clean — empty table, vacuous
-# dropdown, no QS error overlay — is already covered by the L2FT render
-# tests, so no coverage is lost.
+# that feature (spec_example declares both chains and templates; a fuzz seed
+# or operator-supplied L2 may declare neither). The no-feature case rendering
+# clean — empty table, vacuous dropdown, no QS error overlay — is already
+# covered by the L2FT render tests, so no coverage is lost.
 #
 # Note: a non-empty *declared* list is necessary but not sufficient for the
-# matview to have rows — e.g. spec_example declares a transfer template but
-# the baseline/plant seed fires no instances of it. Tests therefore ALSO
-# keep their downstream "table started empty → skip"; this just fast-exits
-# the obvious `declared zero` case (and documents the principle).
+# matview to have rows — a fuzz seed could declare a transfer template the
+# auto-scenario can't materialize a firing for. Tests therefore ALSO keep
+# their downstream "table started empty → skip"; this just fast-exits the
+# obvious `declared zero` case (and documents the principle).
 _L2FT_FEATURE_DECLARED = {
     "chains": "declared_chain_parents",
     "templates": "declared_template_names",
@@ -381,6 +403,124 @@ def l1_app(cfg):
     )
     app.emit_analysis()
     return app
+
+
+@pytest.fixture(scope="session")
+def l2ft_app(cfg):
+    """Tree-built L2 Flow Tracing App (post-emit, auto-IDs resolved).
+    See ``inv_app`` for the L2-instance-honoring rationale.
+    ``build_l2_flow_tracing_app`` registers its datasets' CustomSQL +
+    contracts internally (``build_all_l2_flow_tracing_datasets``)."""
+    from quicksight_gen.apps.l2_flow_tracing.app import (
+        build_l2_flow_tracing_app,
+    )
+
+    app = build_l2_flow_tracing_app(
+        cfg, l2_instance=_resolve_test_l2_instance(),
+    )
+    app.emit_analysis()
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Parametrized [qs, app2] driver fixtures (X.2.u)
+# ---------------------------------------------------------------------------
+#
+# One body × two renderers. Each `<app>_dashboard_driver` fixture is
+# parametrized over `["qs", "app2"]` and yields `(driver, dashboard_arg)`:
+#
+#   - `qs`   — drives the *deployed* dashboard (`<resource_prefix>-<l2>-
+#     <app>-...`), real data via the QS datasource. `dashboard_arg` is
+#     the deployed dashboard ID. Skips when `QS_E2E_USER_ARN` is unset
+#     (no embed signer) or the dashboard isn't deployed.
+#   - `app2` — drives a *locally-spun* App 2 server built from the same
+#     `<app>_app` tree, reading the same DB (`cfg.demo_database_url`) via
+#     `make_live_db_fetcher_for_app` — the "output" slot of the
+#     `scenario → DB → output` pipeline. `dashboard_arg` is the local
+#     slug. Skips when `cfg.demo_database_url` is unset.
+#
+# Function-scoped: the QS embed URL is single-use; the App 2 server spins
+# in ~1–2 s, acceptable. See docs/audits/x_2_u_parametrized_driver_spike.md.
+
+
+def _parametrized_dashboard_driver(  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
+    request, *, cfg, region, account_id, dashboard_id, app, short,
+):
+    if request.param == "qs":
+        from quicksight_gen.common.browser.helpers import get_user_arn
+        from tests.e2e._drivers import QsEmbedDriver
+
+        try:
+            get_user_arn()
+        except RuntimeError as exc:
+            pytest.skip(str(exc))
+        import boto3
+
+        qs = boto3.client("quicksight", region_name=region)
+        try:
+            qs.describe_dashboard(
+                AwsAccountId=account_id, DashboardId=dashboard_id,
+            )
+        except qs.exceptions.ResourceNotFoundException:
+            pytest.skip(
+                f"dashboard {dashboard_id!r} not deployed in "
+                f"{account_id}/{region} — deploy it first"
+            )
+        with QsEmbedDriver.embed(
+            aws_account_id=account_id, aws_region=region,
+        ) as driver:
+            yield driver, dashboard_id
+    else:  # app2
+        if not getattr(cfg, "demo_database_url", None):
+            pytest.skip(
+                "no cfg.demo_database_url — the app2 leg reads the same DB "
+                "the deployed dashboard does"
+            )
+        from tests.e2e._drivers import App2Driver
+        from tests.e2e._harness_html2 import make_live_db_fetchers_for_app
+
+        assert app.analysis is not None
+        data_fetcher, options_fetcher = make_live_db_fetchers_for_app(
+            tree_app=app, cfg=cfg,
+        )
+        with App2Driver.serving(
+            tree_app=app, sheet=app.analysis.sheets[0],
+            data_fetcher=data_fetcher, options_fetcher=options_fetcher,
+            dashboard_id=short, dashboard_title=f"{short} (live)",
+        ) as driver:
+            yield driver, short
+
+
+@pytest.fixture(params=["qs", "app2"])
+def l1_dashboard_driver(request, cfg, region, account_id, l1_dashboard_id, l1_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
+    yield from _parametrized_dashboard_driver(
+        request, cfg=cfg, region=region, account_id=account_id,
+        dashboard_id=l1_dashboard_id, app=l1_app, short="l1",
+    )
+
+
+@pytest.fixture(params=["qs", "app2"])
+def inv_dashboard_driver(request, cfg, region, account_id, inv_dashboard_id, inv_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
+    yield from _parametrized_dashboard_driver(
+        request, cfg=cfg, region=region, account_id=account_id,
+        dashboard_id=inv_dashboard_id, app=inv_app, short="inv",
+    )
+
+
+@pytest.fixture(params=["qs", "app2"])
+def exec_dashboard_driver(request, cfg, region, account_id, exec_dashboard_id, exec_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
+    yield from _parametrized_dashboard_driver(
+        request, cfg=cfg, region=region, account_id=account_id,
+        dashboard_id=exec_dashboard_id, app=exec_app, short="exec",
+    )
+
+
+@pytest.fixture(params=["qs", "app2"])
+def l2ft_dashboard_driver(request, cfg, region, account_id, l2ft_dashboard_id, l2ft_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
+    yield from _parametrized_dashboard_driver(
+        request, cfg=cfg, region=region, account_id=account_id,
+        dashboard_id=l2ft_dashboard_id, app=l2ft_app, short="l2ft",
+    )
 
 
 @pytest.fixture(scope="session")

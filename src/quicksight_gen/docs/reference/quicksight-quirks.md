@@ -404,6 +404,56 @@ in the docs (today it's only discoverable by experiment).
 
 ---
 
+### 3.6 After a parameter write, the prior page's table rows linger in
+the DOM until the re-query lands
+
+**Observed.** Pick a value in a `ParameterDropDownControl` (or set a
+date picker) bound to a dataset parameter, and QS fires a fresh dataset
+query. But the table visual keeps showing the *previous* result's
+`sn-table-cell-*` rows until that query returns — only then does it
+briefly clear (the spinner gap) and repopulate. So a Playwright e2e
+that does "set the filter, then wait for `sn-table-cell-0-0`, then read
+the rows" returns on the **stale** rows; if it instead waits a beat and
+reads, it can catch the spinner gap (zero rows) → spurious "the filter
+emptied the table". Worse under a load-warmed Aurora where the re-query
+is slow (a warm-then-busy cluster widens the spinner gap past a 10–12s
+"wait for cells" budget). (Verified X.2.q.3 against the deployed
+`sasquatch_pr` L2FT dashboard — the L2FT dropdown e2e flaked exactly
+this way until the workaround landed.)
+
+**Workaround.** It turns out QS *does* expose a usable signal — just
+not where you'd expect. The embedded dashboard runs every dataset
+query as a JSON text frame over a single long-lived WebSocket
+(`wss://<region>.quicksight.aws.amazon.com/embed/<id>/websocket/?mbtc=…`):
+the client sends `{"type":"START_VIS","cid":"<uuid>","request":{…}}` to
+kick off a visual's query and `{"type":"STOP_VIS","cids":[…]}` once
+it's processed the response + torn down the rendering pipeline. So
+`sent_START − sent_STOP` is the in-flight re-query count, and watching
+that drain to zero (after at least one fresh START fired, and a ~300 ms
+quiet window — the pick triggers two bursts: an immediate one and a
+debounced follow-up ~2 s later) is the "data layer is done" signal.
+`QsEmbedDriver._settle_after_param_change` in `tests/e2e/_drivers/qs.py`
+does this via `_QsWsActivityTracker` (hooks `page.on("websocket")` +
+`ws.on("framesent")` at driver construction); `pick_filter` /
+`set_date_range` / `drill_from_first_row` call it so a read after a
+write sees the post-filter state, not the spinner gap. No fixed sleeps.
+(X.2.r — full capture + design at `docs/audits/x_2_r_event_wait_spike.md`.
+Pre-X.2.r the workaround was a sleep-and-poll content-stability
+heuristic; it worked but was a smell.)
+
+Note: Playwright's WebKit channel surfaced only `framesent` frames in
+the X.2.r capture, never `framereceived` — the server's data responses
+came through some other channel (or WebKit just doesn't expose inbound
+WS frames). The client-sent `STOP_VIS` is sufficient anyway: the client
+wouldn't tear down a visual without having processed its response.
+
+**Suggested fix.** Document the WebSocket data-layer protocol (or
+expose a per-visual "query in flight / query complete" event on the
+embedding SDK), so callers don't have to reverse-engineer `START_VIS` /
+`STOP_VIS` frame semantics.
+
+---
+
 ## 4. Data type / shape quirks
 
 ### 4.1 `DateDimensionField` vs `CategoricalDimensionField` — column

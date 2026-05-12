@@ -687,7 +687,13 @@ def right_click_first_row_of_visual(
     page.locator('[data-e2e-target="1"]').first.click(
         button="right", timeout=timeout_ms,
     )
-    page.wait_for_timeout(800)
+    # Confirm the contextmenu actually popped (vs. a fixed sleep). Two
+    # wins: returns the moment the menu mounts (no fixed 800ms), and
+    # fails *here* with "waiting for [role=menu]" if no DATA_POINT_MENU
+    # drill is wired on this visual — instead of the caller's
+    # ``click_context_menu_item`` timing out 30s later on the absent
+    # menu *item*.
+    page.wait_for_selector('[role="menu"]', timeout=timeout_ms, state="visible")
     page.evaluate(
         """() => document.querySelectorAll('[data-e2e-target]').forEach(
             e => e.removeAttribute('data-e2e-target')
@@ -921,12 +927,15 @@ def expand_all_tables_on_sheet(page: Page, *, timeout_ms: int = 10_000) -> int:
         )
         if not clicked:
             continue
-        # Brief settle for the page-size dropdown to mount.
-        page.wait_for_timeout(800)
+        # Wait for the page-size dropdown to mount after the focus-click
+        # (instead of a fixed 800ms + a 1.5s wait_for_selector). The
+        # 2.5s budget = the deleted 800ms head start + the original
+        # 1.5s wait; ``wait_for_selector`` returns the moment it
+        # appears, so this is strictly faster-or-equal.
         try:
             page.wait_for_selector(
                 '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]',
-                timeout=1500, state="visible",
+                timeout=2500, state="visible",
             )
         except Exception:
             # No pagination — KPI / chart / line / bar / sankey. Skip.
@@ -1013,17 +1022,19 @@ def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> in
         visual_title,
     )
     assert clicked, f"No visual with title {visual_title!r}"
-    # Brief settle — QS takes a beat to mount the paging controls after focus.
-    page.wait_for_timeout(1500)
-    # If the pagination controls mounted (focus took), bump page size to
-    # 10000 so every row lives on one page. On repeat calls the controls
-    # often don't re-mount (focus already consumed, or lost to a prior
-    # filter interaction) — skip the resize and rely on the page size
-    # set by the first successful call persisting through the session.
+    # Wait for the paging controls to mount after the focus-click
+    # (instead of a fixed 1.5s + a 3s wait_for_selector). The 4.5s
+    # budget = the deleted 1.5s head start + the original 3s wait;
+    # ``wait_for_selector`` returns the moment it appears, so this is
+    # strictly faster-or-equal. On repeat calls the controls often
+    # don't re-mount (focus already consumed, or lost to a prior
+    # filter interaction) — the ``except`` below catches that and
+    # relies on the page size set by the first successful call
+    # persisting through the session.
     try:
         page.wait_for_selector(
             '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]',
-            timeout=3000, state="visible",
+            timeout=4500, state="visible",
         )
         page.locator(
             '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]'
@@ -1286,6 +1297,67 @@ def read_visual_column_values(
     ) or []
 
 
+def read_table_rows_dom(
+    page: Page, visual_title: str,
+) -> list[dict[str, str]]:
+    """Read the DOM-visible rows of a QuickSight Table visual as a list
+    of dicts keyed by column-header text, in display order.
+
+    QS virtualizes — only ~10 rows are in the DOM at once — so this
+    returns that window, not necessarily the whole table. Caller is
+    responsible for getting the table on screen (use
+    ``scroll_visual_into_view`` first; bump the page size if the full
+    table is needed). Returns ``[]`` if the visual isn't found or has no
+    body cells (empty table / still loading).
+
+    Column headers come from the ``[data-automation-id="sn-table-column-N"]``
+    divs (their ``.title`` span — the visible header text); body cells
+    from ``sn-table-cell-{row}-{col}``. Headers and cells are zipped by
+    *position* — the Nth header (left-to-right in the DOM) pairs with the
+    Nth cell (smallest ``col`` first) in each row — so it's robust to QS's
+    internal column-index numbering (the header's ``sn-table-column-N`` and
+    the body's ``sn-table-cell-r-c`` use different ``N``/``c`` origins).
+    """
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                // Column headers, left-to-right in DOM order.
+                const headers = [];
+                v.querySelectorAll('[data-automation-id^="sn-table-column-"]').forEach(c => {
+                    if (!/sn-table-column-\\d+$/.test(c.getAttribute('data-automation-id'))) return;
+                    const titleEl = c.querySelector('.table-title .title')
+                        || c.querySelector('.title');
+                    headers.push(titleEl ? titleEl.innerText.trim() : c.innerText.trim());
+                });
+                // Body cells -> { rowIdx: { colIdx: text } }
+                const cellsByRow = {};
+                v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-(\\d+)/);
+                    if (!m) return;
+                    const r = parseInt(m[1], 10), col = parseInt(m[2], 10);
+                    (cellsByRow[r] = cellsByRow[r] || {})[col] = c.innerText.trim();
+                });
+                const rows = [];
+                Object.keys(cellsByRow).map(Number).sort((a, b) => a - b).forEach(r => {
+                    const ordered = Object.keys(cellsByRow[r]).map(Number).sort((a, b) => a - b)
+                        .map(col => cellsByRow[r][col]);
+                    const row = {};
+                    for (let i = 0; i < headers.length && i < ordered.length; i++) {
+                        row[headers[i]] = ordered[i];
+                    }
+                    rows.push(row);
+                });
+                return rows;
+            }
+            return [];
+        }""",
+        visual_title,
+    ) or []
+
+
 def read_kpi_value(page: Page, visual_title: str) -> str:
     """Return the displayed big-number text of a KPI visual.
 
@@ -1505,6 +1577,34 @@ def set_parameter_datetime_value(
     page.wait_for_selector(picker_selector, timeout=timeout_ms, state="visible")
     page.fill(picker_selector, value)
     page.press(picker_selector, "Enter")
+
+
+def set_parameter_slider_value(
+    page: Page, control_title: str, value: float, timeout_ms: int,
+) -> None:
+    """Set a single-value ``ParameterSliderControl`` by its title.
+
+    QS renders each ParameterSliderControl as its own ``sheet_control``
+    card scoped by ``data-automation-context`` to the control title. The
+    card carries an MUI slider (a draggable thumb — fragile to drive
+    pixel-accurately in Playwright) AND a typable text box that commits
+    the value when it *loses focus* (typing alone doesn't take effect).
+    So the reliable path: find the one non-hidden ``<input>`` in the card
+    (the MUI slider's own ``<input type="hidden">`` value carrier is the
+    other one), fill it, blur it.
+
+    ``value`` is the numeric slider position — an int for the typical
+    step-1 control; rendered without a trailing ``.0``.
+    """
+    card_selector = (
+        f'[data-automation-id="sheet_control"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    page.wait_for_selector(card_selector, timeout=timeout_ms, state="visible")
+    loc = page.locator(f'{card_selector} input:not([type="hidden"])').first
+    loc.click(timeout=timeout_ms)
+    loc.fill(f"{value:g}", timeout=timeout_ms)
+    loc.blur(timeout=timeout_ms)  # the value only commits on focus-loss
 
 
 def set_slider_range(

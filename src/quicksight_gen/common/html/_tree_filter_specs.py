@@ -20,22 +20,37 @@ name="param_<name>">``. The selected options serialise as repeated
 executor's static-default fallback kicks in (= no narrowing), mirroring
 QuickSight's "empty the dropdown reverts to default" behaviour.
 
+``ParameterSlider`` controls join the supported set in X.2.u.4.e — they
+become a ``ParameterNumberSpec`` → an ``<input type="number"
+name="param_<name>">`` + a one-handle noUiSlider (single-value scalar
+bind, the same ``<<$param>>`` narrowing QS does).
+
 Out of scope (for now): SINGLE_SELECT dropdowns (L2FT's metadata-cascade
 key dropdowns — App2 can't replicate the QS cascade-refresh-options
 behaviour, so a static single-select would be a half-truth); ``LinkedValues``
 dropdowns (App2 would have to query the linked dataset to enumerate options
-— deferred); sliders / number / text-field parameter controls (a different
-shape; investigation's sigma/threshold sliders, if any reach App2, would
-want a ``NumericRangeSpec``-ish primitive — not this sub-task). Those
-controls are silently skipped — the form just won't carry a widget for them.
+— deferred); ``ParameterTextField`` / ``ParameterDateTimePicker`` controls
+(a different shape — text-field parity not yet needed; date-control parity
+is the universal date range, handled separately). Those controls are
+silently skipped — the form just won't carry a widget for them.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from quicksight_gen.common.html.render import FilterSpec, ParameterMultiSelectSpec
-from quicksight_gen.common.tree import ParameterDropdown, StaticValues
+from quicksight_gen.common.html.render import (
+    FilterSpec,
+    ParameterDropdownSpec,
+    ParameterMultiSelectSpec,
+    ParameterNumberSpec,
+)
+from quicksight_gen.common.tree import (
+    LinkedValues,
+    ParameterDropdown,
+    ParameterSlider,
+    StaticValues,
+)
 
 if TYPE_CHECKING:
     from quicksight_gen.common.tree import Sheet
@@ -45,25 +60,77 @@ def make_filter_specs_for_sheet(sheet: "Sheet") -> list[FilterSpec]:
     """Return the App2 filter-form specs auto-derived from ``sheet``'s
     parameter-control nodes.
 
-    Today that's one ``ParameterMultiSelectSpec`` per MULTI_SELECT
-    ``ParameterDropdown`` whose ``selectable_values`` is a ``StaticValues``
-    (the only kind App2 can render without querying). Order follows the
-    sheet's ``parameter_controls`` order so the filter bar matches the
-    QuickSight control layout. Sheets with no such control return ``[]``
-    (the form is then date-pickers-only, and is suppressed entirely for
-    text-box-only sheets per ``render``'s existing logic).
+    Order follows the sheet's ``parameter_controls`` order so the filter
+    bar matches the QuickSight control layout. Sheets with no such control
+    return ``[]`` (the form is then date-pickers-only, and is suppressed
+    entirely for text-box-only sheets per ``render``'s existing logic).
+
+    Coverage:
+
+    - **MULTI_SELECT + StaticValues** → ``ParameterMultiSelectSpec`` with
+      inlined ``options`` (Y.2.app2.cde.l2ft-wiring.b — L2FT Rail / Status /
+      Bundle, L1 Account-Role / Transfer-Type / Rail enums, …).
+    - **MULTI_SELECT + LinkedValues** → ``ParameterMultiSelectSpec`` carrying
+      ``options_dataset`` / ``options_column`` (X.2.u.4.b — L1 Account /
+      Transfer / Status / Origin data-value dropdowns); the server resolves
+      the option list by querying the source dataset before rendering.
+    - **SINGLE_SELECT + LinkedValues** → ``ParameterDropdownSpec`` likewise
+      (X.2.u.4.b — Daily Statement's Account picker).
+    - **``ParameterSlider``** → ``ParameterNumberSpec`` (X.2.u.4.e —
+      Investigation's σ / max-hops / min-amount threshold knobs); the
+      number input is the wire element, with a one-handle noUiSlider over
+      it. Initial value = the bound parameter's analysis-level default if
+      declared (so it matches the dataset SQL's static-default literal),
+      else the slider minimum.
+
+    Still skipped: SINGLE_SELECT + StaticValues (L2FT's metadata-cascade key
+    dropdowns — App2 can't replicate the QS cascade-refresh-options behaviour,
+    so a static single-select would be a half-truth); ``ParameterTextField``
+    controls (a different shape — text-field parity not yet needed);
+    ``add_parameter_datetime_picker`` controls (date-control parity is the
+    universal date range, handled separately). Skipped controls just don't
+    get a widget.
     """
     specs: list[FilterSpec] = []
     for ctrl in sheet.parameter_controls:
+        if isinstance(ctrl, ParameterSlider):
+            # X.2.u.4.e — a slider bound to a numeric parameter
+            # (Investigation's σ / max-hops / min-amount knobs). App2
+            # renders an <input type="number" name="param_<name>"> plus a
+            # one-handle noUiSlider; the value submits as a single
+            # ?param_<name>=<v> key (scalar bind for the dataset SQL's
+            # <<$param>> placeholder — the same narrowing QS does).
+            # Initial value = the bound parameter's analysis-level default
+            # if it declares one (== the SQL static-default), else the
+            # slider minimum.
+            default_vals = getattr(ctrl.parameter, "default", None) or []
+            specs.append(ParameterNumberSpec(
+                name=str(ctrl.parameter.name),
+                label=ctrl.title,
+                minimum=float(ctrl.minimum_value),
+                maximum=float(ctrl.maximum_value),
+                step=float(ctrl.step_size),
+                default=float(default_vals[0]) if default_vals else None,
+            ))
+            continue
         if not isinstance(ctrl, ParameterDropdown):
             continue
-        if ctrl.type != "MULTI_SELECT":
-            continue
-        if not isinstance(ctrl.selectable_values, StaticValues):
-            continue
-        specs.append(ParameterMultiSelectSpec(
-            name=str(ctrl.parameter.name),
-            label=ctrl.title,
-            options=tuple(ctrl.selectable_values.values),
-        ))
+        sv = ctrl.selectable_values
+        name = str(ctrl.parameter.name)
+        if ctrl.type == "MULTI_SELECT" and isinstance(sv, StaticValues):
+            specs.append(ParameterMultiSelectSpec(
+                name=name, label=ctrl.title, options=tuple(sv.values),
+            ))
+        elif ctrl.type == "MULTI_SELECT" and isinstance(sv, LinkedValues):
+            specs.append(ParameterMultiSelectSpec(
+                name=name, label=ctrl.title, options=(),
+                options_dataset=sv.dataset.identifier,
+                options_column=sv.column_name,
+            ))
+        elif ctrl.type == "SINGLE_SELECT" and isinstance(sv, LinkedValues):
+            specs.append(ParameterDropdownSpec(
+                name=name, label=ctrl.title, options=(),
+                options_dataset=sv.dataset.identifier,
+                options_column=sv.column_name,
+            ))
     return specs

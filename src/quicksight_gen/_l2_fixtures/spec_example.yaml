@@ -107,6 +107,34 @@ rails:
     bundles_activity:
       - SubledgerCharge
 
+  # Two-leg rail that IS a TransferTemplate leg (S2 — no expected_net;
+  # the template owns the bundle's ExpectedNet). First leg of
+  # ExternalReconciliationCycle below: each firing posts a balanced
+  # debit+credit pair → net = expected_net (0), so the template
+  # instances surface as 'Complete'/'Orphaned' (never 'Imbalanced') —
+  # the complement of SubledgerCharge-first MerchantSettlementCycle
+  # (single-leg → every firing 'Imbalanced'). Together they give the
+  # L2FT Transfer Templates "Completion" dropdown all three values.
+  - name: ReconciliationLeg
+    transfer_type: recon_inbound
+    source_role: ExternalCounterparty
+    destination_role: CustomerSubledger
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [external_reference]
+
+  # Two-leg standalone (S1 — expected_net set) used as the Required
+  # chain child of ExternalReconciliationCycle. Distinct transfer_type
+  # so it never overlaps the other rails' Transaction binding (U6).
+  - name: ReconciliationClosing
+    transfer_type: recon_closing
+    source_role: CustomerSubledger
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    source_origin: InternalInitiated
+    destination_origin: ExternalForcePosted
+    metadata_keys: [external_reference]
+
 transfer_templates:
   - name: MerchantSettlementCycle
     transfer_type: settlement_cycle
@@ -115,6 +143,32 @@ transfer_templates:
     completion: business_day_end+1d
     leg_rails:
       - SubledgerCharge
+
+  # TwoLegRail-first template — firings balance to expected_net=0, so
+  # the auto-scenario's three chain-completion variants (all children
+  # fire / none / first) surface as Complete / Orphaned / Complete on
+  # the template instances. Paired with the chain below (Required child
+  # ReconciliationClosing) so firing 2 (no child) is an orphan.
+  - name: ExternalReconciliationCycle
+    transfer_type: recon_cycle
+    expected_net: 0
+    transfer_key: [external_reference]
+    completion: business_day_end+1d
+    leg_rails:
+      - ReconciliationLeg
+
+chains:
+  # First (and only) chain on spec_example — makes the L2FT Chains
+  # sheet non-empty and exercises both completion_status values
+  # ('Completed' when the closing leg fires, 'Incomplete' when it
+  # doesn't). C5 satisfied by the single Required child.
+  - parent: ExternalReconciliationCycle
+    child: ReconciliationClosing
+    required: true
+    description: |
+      Every reconciliation cycle SHOULD be closed by a matching
+      ReconciliationClosing leg; an unmatched cycle surfaces as an
+      orphan in the L2FT Chains explorer.
 
 limit_schedules:
   # Cap matches ExternalRailOutbound.transfer_type='wire' (R10 satisfied).

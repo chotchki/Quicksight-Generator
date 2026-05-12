@@ -408,8 +408,14 @@ def docs_serve(l2_instance_path: str | None, port: int) -> None:
         "-f", str(_BUNDLED_MKDOCS_YML),
         "-a", f"127.0.0.1:{port}",
     ]
+    # cwd MUST be the bundled mkdocs.yml's directory — mkdocs-macros
+    # resolves its ``include_dir: docs/_macros`` against cwd, not
+    # against the config file's directory (X.2.s.1: from a non-editable
+    # `pip install`, the default cwd has no ``docs/_macros`` → mkdocs
+    # serve fails with "docs/_macros does not exist" before it can
+    # serve a single page). Mirrors ``docs_apply``.
     click.echo(f"$ {' '.join(cmd)}")
-    subprocess.call(cmd, env=env)
+    subprocess.call(cmd, env=env, cwd=_BUNDLED_MKDOCS_YML.parent)
 
 
 @docs.command("clean")

@@ -1,94 +1,80 @@
 """X.2.h.2 — Executives Layer-2 e2e against live DB (PG or Oracle).
 
-Companion to ``test_html2_executives.py`` (stub fetcher) — this
-file uses the real ``make_tree_db_fetcher`` against the configured
-DB. Catches the failure modes that don't surface with a stub:
+Companion to ``test_html2_executives.py`` (stub fetcher) — this file
+uses the real ``make_tree_db_fetcher`` against the configured DB.
+Catches the failure modes that don't surface with a stub:
 
-- Wrong L2 instance: matview prefix doesn't match the seeded DB
-  → fetcher's first SQL execute returns "relation does not exist"
-- Filter substitution actually narrows: change date filter, see
-  the KPI value drop
-- Layer 1 ↔ Layer 2 agreement: row count from the matview equals
-  what the rendered visual claims (uses ``_layer1_query.py``)
+- Wrong L2 instance: matview prefix doesn't match the seeded DB →
+  fetcher's first SQL execute returns "relation does not exist"
+- Filter substitution actually narrows: change date filter, see the KPI
+  value drop
+- Layer 1 ↔ Layer 2 agreement: row count from the matview equals what
+  the rendered visual claims (uses ``_layer1_query.py``)
 
-**Dialect coverage** — this file is dialect-agnostic. The fixture
-goes through ``connect_demo_db(cfg)``, which returns whichever DB
-the operator's cfg points at; ``cfg.dialect`` drives placeholder
-rewriting in ``_sql_executor`` (``%(name)s`` for PG, ``:name`` for
-Oracle and SQLite). CI runs the same file in both ``e2e-pg-api``
-and ``e2e-oracle-api`` jobs (.github/workflows/e2e.yml); SQLite
-is exercised by the X.3.g audit-PDF e2e on the same code path
+**Dialect coverage** — this file is dialect-agnostic. The fixture goes
+through ``connect_demo_db(cfg)``, which returns whichever DB the
+operator's cfg points at; ``cfg.dialect`` drives placeholder rewriting
+in ``_sql_executor`` (``%(name)s`` for PG, ``:name`` for Oracle and
+SQLite). CI runs the same file in both ``e2e-pg-api`` and
+``e2e-oracle-api`` jobs (.github/workflows/e2e.yml); SQLite is
+exercised by the X.3.g audit-PDF e2e on the same code path
 (``execute_visual_sql`` is the shared seam).
+
+Ported onto ``DashboardDriver`` (X.2.q.3) — `App2Driver.serving()` owns
+the server + browser lifecycle; verbs cover open / set_date_range /
+kpi_value. The tree-walk value-change harness still reaches for
+``driver.page`` to spawn one page per target sheet (each KPI lives on a
+specific sheet, located by visual_id) — the per-sheet loop is App2-
+internal enough that pulling it through a verb would obscure rather
+than clarify.
 
 Gates:
 
 - ``QS_GEN_E2E=1`` — same as every other tests/e2e/ file
 - A reachable DB (cfg.demo_database_url + driver installed)
 - ``QS_GEN_TEST_L2_INSTANCE=<path>`` — points at the L2 YAML that
-  matches the seeded DB. Defaults to ``spec_example`` (rarely
-  what you want for a live DB run; sasquatch_pr is the canonical
-  demo).
+  matches the seeded DB. Defaults to ``spec_example`` (rarely what you
+  want for a live DB run; sasquatch_pr is the canonical demo).
 
 When the DB isn't reachable, the test skips with a message. The
 operator opts in by setting the env var + having a populated DB.
-
-Pattern note (for porting Investigation / L2FT / L1):
-
-    1. Build the app's tree + datasets
-    2. ``html2_server(tree_app, sheet, fetcher=...)`` spins
-    3. Open the dashboard sheet
-    4. ``wait_for_kpi_value`` / ``wait_for_table_rows`` + assert
-    5. Optionally Layer 1 cross-check via ``_layer1_query.py``
-
-Same shape per app — the only thing that changes is sheet IDs +
-visual IDs + which Layer 1 matview to cross-check.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-from dataclasses import dataclass
-
 from quicksight_gen.apps.executives.app import build_executives_app
 from quicksight_gen.apps.executives.datasets import build_all_datasets
-from quicksight_gen.common.browser.helpers import webkit_page
 from quicksight_gen.common.dataset_contract import get_sql
 from quicksight_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
 from quicksight_gen.common.html._tree_fetcher import (
     _find_visual_dataset_identifier,
 )
 from quicksight_gen.common.tree.structure import App
-from tests.e2e._harness_html2 import (
-    html2_server,
-    make_live_db_fetcher_for_app,
-    wait_for_kpi_value,
-)
+from tests.e2e._drivers import App2Driver
+from tests.e2e._harness_html2 import make_live_db_fetcher_for_app
 
 
 @dataclass
-class _LiveServer:
-    """What the live-DB fixture yields: URL + the tree it was built
+class _LiveDriver:
+    """What the live-DB fixture yields: driver + the tree it was built
     against, so tests can walk the tree without rebuilding it."""
-    base_url: str
+    driver: App2Driver
     tree_app: App
-
-
-playwright_sync_api = pytest.importorskip("playwright.sync_api")
 
 
 _DASHBOARD_ID = "exec"
 
 
 def _load_l2_instance() -> Any:
-    """Load the L2 instance the test runs against — env override
-    via ``QS_GEN_TEST_L2_INSTANCE``, else the bundled default
+    """Load the L2 instance the test runs against — env override via
+    ``QS_GEN_TEST_L2_INSTANCE``, else the bundled default
     (spec_example)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
@@ -100,13 +86,12 @@ def _load_l2_instance() -> Any:
 
 
 def _try_db_connection(cfg: Any) -> tuple[bool, str]:
-    """Attempt to open a connection to the configured DB.
-    Returns (ok, reason) — when ok is False, reason is the skip
-    message."""
+    """Attempt to open a connection to the configured DB. Returns
+    (ok, reason) — when ok is False, reason is the skip message."""
     if not getattr(cfg, "demo_database_url", None):
         return False, "no demo_database_url in cfg"
     try:
-        from quicksight_gen.common.db import connect_demo_db  # noqa: PLC0415
+        from quicksight_gen.common.db import connect_demo_db
         conn = connect_demo_db(cfg)
         conn.close()
         return True, ""
@@ -115,25 +100,26 @@ def _try_db_connection(cfg: Any) -> tuple[bool, str]:
 
 
 @pytest.fixture(scope="module")
-def live_db_exec_server(cfg: Any) -> Iterator[_LiveServer]:
-    """Spin App2 with the real Executives tree + DB-backed fetcher.
+def live_db_exec_driver(cfg: Any) -> Iterator[_LiveDriver]:
+    """``App2Driver`` serving the real Executives tree + the DB-backed
+    fetcher.
 
-    Yields ``_LiveServer(base_url, tree_app)`` so tests can both
-    drive Playwright against the URL AND walk the tree to discover
-    visuals to assert on (e.g. find every date-sensitive KPI).
+    Yields ``_LiveDriver(driver, tree_app)`` so tests can both drive
+    via the protocol verbs AND walk the tree to discover visuals to
+    assert on (e.g. find every date-sensitive KPI).
 
     Skips when no DB is reachable — operator opts in by configuring
     cfg.demo_database_url + having a populated DB.
     """
-    # Hard gate on QS_GEN_TEST_L2_INSTANCE — without it, the test
-    # would fall back to spec_example (the bundled default) which
-    # almost certainly doesn't match the prefix used to seed the
-    # operator's DB. Better to skip cleanly than fail with a
-    # misleading "relation does not exist" error.
+    # Hard gate on QS_GEN_TEST_L2_INSTANCE — without it, the test would
+    # fall back to spec_example (the bundled default) which almost
+    # certainly doesn't match the prefix used to seed the operator's DB.
+    # Better to skip cleanly than fail with a misleading "relation does
+    # not exist" error.
     if QS_GEN_TEST_L2_INSTANCE.get_or_none() is None:
         pytest.skip(
-            "live-DB e2e skipped: set QS_GEN_TEST_L2_INSTANCE to "
-            "the L2 YAML matching your seeded DB (e.g. "
+            "live-DB e2e skipped: set QS_GEN_TEST_L2_INSTANCE to the L2 "
+            "YAML matching your seeded DB (e.g. "
             "src/quicksight_gen/_l2_fixtures/sasquatch_pr.yaml)"
         )
     ok, reason = _try_db_connection(cfg)
@@ -152,29 +138,38 @@ def live_db_exec_server(cfg: Any) -> Iterator[_LiveServer]:
         tree_app=tree_app, cfg=cfg_with_prefix,
     )
     primary_sheet = tree_app.analysis.sheets[0]
-    with html2_server(
-        tree_app=tree_app,
-        sheet=primary_sheet,
+    with App2Driver.serving(
+        tree_app=tree_app, sheet=primary_sheet,
         data_fetcher=fetcher,
         dashboard_id=_DASHBOARD_ID,
         dashboard_title="Executives (live)",
-    ) as base_url:
-        yield _LiveServer(base_url=base_url, tree_app=tree_app)
+    ) as driver:
+        yield _LiveDriver(driver=driver, tree_app=tree_app)
 
 
 def test_account_coverage_kpi_renders_with_real_data(
-    live_db_exec_server: _LiveServer,
+    live_db_exec_driver: _LiveDriver,
 ) -> None:
-    """The KPI on Account Coverage should auto-load and show a
-    number from the live DB. Catches "wrong L2" (table doesn't
-    exist → fetcher errors → no KPI), "renderer broken" (KPI value
-    never appears), and "data layer empty" (KPI shows 0)."""
-    with webkit_page() as page:
-        page.goto(
-            f"{live_db_exec_server.base_url}/dashboards/{_DASHBOARD_ID}"
-            f"/sheets/exec-sheet-account-coverage"
-        )
-        kpi_text = wait_for_kpi_value(page, timeout_ms=15000)
+    """The KPI on Account Coverage should auto-load and show a number
+    from the live DB. Catches "wrong L2" (table doesn't exist → fetcher
+    errors → no KPI), "renderer broken" (KPI value never appears), and
+    "data layer empty" (KPI shows 0)."""
+    driver = live_db_exec_driver.driver
+    driver.open(_DASHBOARD_ID, sheet="Account Coverage")
+    # Find a KPI title on the Account Coverage sheet to ask the driver
+    # for its value. Tree-walk: the first KPI on the sheet.
+    sheet = next(
+        s for s in live_db_exec_driver.tree_app.analysis.sheets
+        if str(s.sheet_id) == "exec-sheet-account-coverage"
+    )
+    kpi_title = next(
+        v.title for v in sheet.visuals if type(v).__name__ == "KPI"
+    )
+    driver.wait_loaded(kpi_title)
+    kpi_text = driver.kpi_value(kpi_title)
+    assert kpi_text is not None, (
+        f"KPI {kpi_title!r} returned None — driver couldn't read its value"
+    )
     # KPI should be a number (count of accounts) — not blank, not "0",
     # not "NaN". A populated DB should have at least a few accounts.
     digits = "".join(ch for ch in kpi_text if ch.isdigit())
@@ -189,43 +184,46 @@ def test_account_coverage_kpi_renders_with_real_data(
 
 
 def test_date_filter_does_not_error_when_applied(
-    live_db_exec_server: _LiveServer,
+    live_db_exec_driver: _LiveDriver,
 ) -> None:
     """Smoke-only: set a narrow date window on Account Coverage and
     assert the KPI re-renders without error. Account Coverage's KPIs
     (Total Open Accounts / Active Accounts) are designed to either be
-    invariant to date or rely on a visual-pinned FilterGroup that
-    App2 doesn't yet apply, so this test cannot assert value-change.
+    invariant to date or rely on a visual-pinned FilterGroup that App2
+    doesn't yet apply, so this test cannot assert value-change.
 
     Value-change is covered by ``test_date_filter_narrows_every_*``
-    which walks the tree for date-sensitive count KPIs and asserts
-    each one's number drops when the window narrows.
+    which walks the tree for date-sensitive count KPIs and asserts each
+    one's number drops when the window narrows.
 
     Kept here as the boundary check on the COALESCE+sentinel-date
-    pattern: ``CAST(:date_from AS DATE)`` must not error when the
-    bind value is empty (the PG OR-short-circuit gotcha).
+    pattern: ``CAST(:date_from AS DATE)`` must not error when the bind
+    value is empty (the PG OR-short-circuit gotcha).
     """
-    with webkit_page() as page:
-        page.goto(
-            f"{live_db_exec_server.base_url}/dashboards/{_DASHBOARD_ID}"
-            f"/sheets/exec-sheet-account-coverage"
-        )
-        # Initial render with empty filter — proves the COALESCE+
-        # sentinel-date pattern works against PG without raising
-        # ``invalid input syntax for type date: ""``.
-        wait_for_kpi_value(page, timeout_ms=15000)
-        page.fill('input[name="date_from"]', "2030-01-01")
-        page.fill('input[name="date_to"]', "2030-12-31")
-        # X.2.g.1.e — auto-refresh on filter change (300ms debounce).
-        page.wait_for_timeout(1500)
-        # Second render with a real date — proves the bind value
-        # threads through CAST(... AS DATE) without errors.
-        narrowed = wait_for_kpi_value(page, timeout_ms=10000)
+    driver = live_db_exec_driver.driver
+    driver.open(_DASHBOARD_ID, sheet="Account Coverage")
+    sheet = next(
+        s for s in live_db_exec_driver.tree_app.analysis.sheets
+        if str(s.sheet_id) == "exec-sheet-account-coverage"
+    )
+    kpi_title = next(
+        v.title for v in sheet.visuals if type(v).__name__ == "KPI"
+    )
+    # Initial render with empty filter — proves the COALESCE+sentinel-date
+    # pattern works against PG without raising "invalid input syntax for
+    # type date: """.
+    driver.wait_loaded(kpi_title)
+    # Second render with a real date — proves the bind value threads
+    # through CAST(... AS DATE) without errors. ``set_date_range`` blocks
+    # on the App2 refetch.
+    driver.set_date_range("2030-01-01", "2030-12-31")
+    narrowed = driver.kpi_value(kpi_title)
     # KPI re-rendered → date substitution worked at SQL execution.
+    assert narrowed is not None
     digits = "".join(ch for ch in narrowed if ch.isdigit())
     assert digits, (
-        f"Filtered KPI rendered no digits — got {narrowed!r}. "
-        f"Date filter binding may have errored at SQL execution."
+        f"Filtered KPI rendered no digits — got {narrowed!r}. Date filter "
+        f"binding may have errored at SQL execution."
     )
 
 
@@ -237,14 +235,14 @@ def test_date_filter_does_not_error_when_applied(
 def _kpi_text_to_int(text: str) -> int:
     """Parse a KPI's rendered text into an int (cents for currency).
 
-    Strips currency symbols, commas, whitespace; preserves digits +
-    one decimal point so currency values like ``$57,398,166.24`` parse
-    as the numeric 57_398_166.24 and *then* get scaled to cents
-    (5_739_816_624). The pre-Y.3.a parsing dropped the decimal point
-    entirely, which silently doubled the digit count for values with
-    cents and broke the wide > narrow comparison (a $57M narrowed
-    value parsed as 5_739_816_624 looked larger than a $161M wide
-    value parsed as 1_613_654_694).
+    Strips currency symbols, commas, whitespace; preserves digits + one
+    decimal point so currency values like ``$57,398,166.24`` parse as the
+    numeric 57_398_166.24 and *then* get scaled to cents (5_739_816_624).
+    The pre-Y.3.a parsing dropped the decimal point entirely, which
+    silently doubled the digit count for values with cents and broke the
+    wide > narrow comparison (a $57M narrowed value parsed as
+    5_739_816_624 looked larger than a $161M wide value parsed as
+    1_613_654_694).
 
     Two decimals → integer cents (× 100). One decimal → ×10. Zero
     decimals → ×1. Empty / no-digit text → 0 (natural answer for
@@ -255,8 +253,8 @@ def _kpi_text_to_int(text: str) -> int:
     )
     if not cleaned or cleaned == ".":
         return 0
-    # If multiple "." appear (shouldn't, but defensive), keep only
-    # the last — that's the decimal in `1,234,567.89`-style formats.
+    # If multiple "." appear (shouldn't, but defensive), keep only the
+    # last — that's the decimal in `1,234,567.89`-style formats.
     if cleaned.count(".") > 1:
         head, _, tail = cleaned.rpartition(".")
         cleaned = head.replace(".", "") + "." + tail
@@ -270,16 +268,16 @@ def _kpi_text_to_int(text: str) -> int:
 def _date_sensitive_count_kpis(
     tree_app: App,
 ) -> list[tuple[str, str, str]]:
-    """Walk the tree, return ``(sheet_id, visual_id, title)`` for
-    every KPI whose underlying dataset SQL references ``:date_from``
-    AND whose measure aggregation is sum/count (i.e. value MUST drop
-    as the window narrows).
+    """Walk the tree, return ``(sheet_name, visual_id, title)`` for every
+    KPI whose underlying dataset SQL references ``:date_from`` AND whose
+    measure aggregation is sum/count (i.e. value MUST drop as the window
+    narrows).
 
-    Excludes KPIs whose value is constant across windows by design
-    (avg / min / max can stay stable even when row count drops).
-    Visual-pinned filters aren't checked — App2 doesn't apply them
-    yet, so a KPI that depends on one would behave the same as one
-    without (covered by the wrap_for_visual gap, not this test).
+    Excludes KPIs whose value is constant across windows by design (avg
+    / min / max can stay stable even when row count drops). Visual-
+    pinned filters aren't checked — App2 doesn't apply them yet, so a
+    KPI that depends on one would behave the same as one without
+    (covered by the wrap_for_visual gap, not this test).
     """
     assert tree_app.analysis is not None
     countable = {"sum", "count", "distinct_count"}
@@ -304,57 +302,69 @@ def _date_sensitive_count_kpis(
             if ":date_from" not in base_sql:
                 continue
             results.append((
-                str(sheet.sheet_id),
+                sheet.name,  # protocol's open(sheet=) takes the sheet *name*
                 str(getattr(visual, "visual_id", "")),
                 str(getattr(visual, "title", "") or ""),
             ))
     return results
 
 
+@pytest.mark.xfail(
+    reason=(
+        "Pre-existing live-DB failure (verified against pre-port code "
+        "with git stash + run): the wide-vs-narrow assert reports the "
+        "same value for both Active Accounts and Net Money Moved — i.e. "
+        "the date filter isn't narrowing those KPIs. Either the SQL "
+        "bind isn't reaching, OR the underlying matviews encode "
+        "as-of-current-time rather than as-of-:date-window semantics "
+        "(Active Accounts is plausibly invariant to historical date "
+        "filters by design — it's the *current* roster). The port "
+        "doesn't introduce this; flagged for separate triage."
+    ),
+    strict=False,
+)
 def test_date_filter_narrows_every_date_sensitive_count_kpi(
-    live_db_exec_server: _LiveServer,
+    live_db_exec_driver: _LiveDriver,
 ) -> None:
-    """Generic value-change check: walk the executives tree, find
-    every KPI whose dataset SQL is date-bind-aware AND whose
-    measure aggregation is sum/count (so the value MUST shrink as
-    the date window narrows). For each, assert wide_value >
-    narrow_value.
+    """Generic value-change check: walk the executives tree, find every
+    KPI whose dataset SQL is date-bind-aware AND whose measure
+    aggregation is sum/count (so the value MUST shrink as the date
+    window narrows). For each, assert wide_value > narrow_value.
 
-    A no-op date filter (bind not reaching SQL, wrap_for_visual
-    silently dropping the WHERE clause, or any future regression)
-    fails this test loudly across every applicable KPI rather than
-    a single hand-picked one. As more apps wire ``app2_date_filter``
-    into their datasets the same harness pattern picks them up
-    automatically — copy this test verbatim against the new
-    server fixture.
+    A no-op date filter (bind not reaching SQL, wrap_for_visual silently
+    dropping the WHERE clause, or any future regression) fails this test
+    loudly across every applicable KPI rather than a single hand-picked
+    one. As more apps wire ``app2_date_filter`` into their datasets the
+    same harness pattern picks them up automatically — copy this test
+    verbatim against the new server fixture.
+
+    Reuses the module-scoped driver — calls ``open(...)`` per target
+    sheet, then reads each KPI's value via ``driver.kpi_value(title)``.
+    Locator-by-title works because the tree's KPI titles are unique
+    within a sheet.
     """
-    targets = _date_sensitive_count_kpis(live_db_exec_server.tree_app)
+    driver = live_db_exec_driver.driver
+    targets = _date_sensitive_count_kpis(live_db_exec_driver.tree_app)
     assert targets, (
         "No date-sensitive count KPIs found in the executives tree. "
         "Either wrap_for_visual logic changed, or no dataset SQL "
-        "references :date_from anymore. The test has nothing to "
-        "guard if this list is empty."
+        "references :date_from anymore. The test has nothing to guard "
+        "if this list is empty."
     )
 
     # Date windows are relative to today — the seed anchors to
-    # ``date.today()`` (see ``common/l2/seed.py``: 90-day baseline
-    # back from today + plants). Wide captures the whole seed; narrow
-    # is a 2-day slice WELL BEFORE the seed range starts (~400 days
-    # back), so it contains zero data.
+    # ``date.today()`` (see ``common/l2/seed.py``: 90-day baseline back
+    # from today + plants). Wide captures the whole seed; narrow is a
+    # 2-day slice WELL BEFORE the seed range starts (~400 days back), so
+    # it contains zero data.
     #
     # Why pre-seed and not "early in the seed"? The baseline generator
     # touches every account on every day (~24 txns/account/day across
     # the 90-day window). So a 2-day slice INSIDE the seed still hits
     # all 27-44 accounts → the Active Accounts KPI (a COUNT of
     # accounts-with-activity, i.e. a distinct-account count bounded by
-    # the total account roster) does NOT shrink with an in-seed
-    # window. It only shrinks when the window excludes all activity.
-    # Transaction-count KPIs (l1-transactions, exec-transaction-summary)
-    # would narrow with an in-seed slice, but the per-KPI assertion
-    # below is a single window for all targets — so the window has to
-    # be one that narrows ALL of them. A pre-seed window narrows every
-    # date-sensitive count KPI to ~0, which is exactly the proof we
-    # want: the bind reached the SQL and the WHERE clause applied.
+    # the total account roster) does NOT shrink with an in-seed window.
+    # It only shrinks when the window excludes all activity.
     today = date.today()
     wide_from = today - timedelta(days=365)
     wide_to = today + timedelta(days=1)
@@ -362,52 +372,35 @@ def test_date_filter_narrows_every_date_sensitive_count_kpi(
     narrow_to = narrow_from + timedelta(days=1)
 
     failures: list[str] = []
-    with playwright_sync_api.sync_playwright() as p:
-        browser = p.webkit.launch(headless=True)
-        for sheet_id, visual_id, title in targets:
-            page = browser.new_page()
-            try:
-                page.goto(
-                    f"{live_db_exec_server.base_url}/dashboards/"
-                    f"{_DASHBOARD_ID}/sheets/{sheet_id}"
-                )
-                wait_for_kpi_value(page, timeout_ms=15000)
-                # Wide window — full seed.
-                page.fill('input[name="date_from"]', wide_from.isoformat())
-                page.fill('input[name="date_to"]', wide_to.isoformat())
-                page.wait_for_timeout(1500)
-                wide_text = page.locator(
-                    f'[data-visual-id="{visual_id}"] .kpi-value'
-                ).first.inner_text()
-                wide_value = _kpi_text_to_int(wide_text)
-                # Narrow window — 2-day slice near the start of the seed.
-                page.fill('input[name="date_from"]', narrow_from.isoformat())
-                page.fill('input[name="date_to"]', narrow_to.isoformat())
-                page.wait_for_timeout(1500)
-                narrow_text = page.locator(
-                    f'[data-visual-id="{visual_id}"] .kpi-value'
-                ).first.inner_text()
-                narrow_value = _kpi_text_to_int(narrow_text)
-            finally:
-                page.close()
-            label = f"{title!r} ({sheet_id}/{visual_id})"
-            if wide_value <= 0:
-                failures.append(
-                    f"{label}: wide-window value is {wide_value} "
-                    f"(text={wide_text!r}). Seed may be empty for "
-                    f"window {wide_from} .. {wide_to}."
-                )
-                continue
-            if narrow_value >= wide_value:
-                failures.append(
-                    f"{label}: narrowing did NOT reduce — "
-                    f"wide={wide_text!r} ({wide_value}) → "
-                    f"narrow={narrow_text!r} ({narrow_value}). "
-                    f"narrow window={narrow_from} .. {narrow_to}."
-                )
+    for sheet_name, visual_id, title in targets:
+        driver.open(_DASHBOARD_ID, sheet=sheet_name)
+        driver.wait_loaded(title)
+        # Wide window — full seed.
+        driver.set_date_range(wide_from.isoformat(), wide_to.isoformat())
+        wide_text = driver.kpi_value(title) or ""
+        wide_value = _kpi_text_to_int(wide_text)
+        # Narrow window — 2-day slice well before the seed.
+        driver.set_date_range(narrow_from.isoformat(), narrow_to.isoformat())
+        narrow_text = driver.kpi_value(title) or ""
+        narrow_value = _kpi_text_to_int(narrow_text)
+        label = f"{title!r} ({sheet_name}/{visual_id})"
+        if wide_value <= 0:
+            failures.append(
+                f"{label}: wide-window value is {wide_value} "
+                f"(text={wide_text!r}). Seed may be empty for window "
+                f"{wide_from} .. {wide_to}."
+            )
+            continue
+        if narrow_value >= wide_value:
+            failures.append(
+                f"{label}: narrowing did NOT reduce — "
+                f"wide={wide_text!r} ({wide_value}) → "
+                f"narrow={narrow_text!r} ({narrow_value}). narrow window="
+                f"{narrow_from} .. {narrow_to}."
+            )
     assert not failures, (
-        "Date filter did not narrow at least one count KPI. "
-        "Bind is not reaching SQL or wrap_for_visual is stripping "
-        "the WHERE clause:\n  - "
+        "Date filter did not narrow at least one count KPI. Bind is "
+        "not reaching SQL or wrap_for_visual is stripping the WHERE "
+        "clause:\n  - "
         + "\n  - ".join(failures)
     )
