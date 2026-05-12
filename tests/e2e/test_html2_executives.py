@@ -9,13 +9,24 @@ Stub fetcher (not live PG) keeps the test fast + DB-free. The live-PG
 variant is ``test_html2_executives_live.py`` — same shape with
 ``make_live_db_fetcher_for_app`` plumbed in.
 
-Assertions split between ``DashboardDriver`` verbs (``sheet_names`` for
-the per-app tab strip) and ``driver.page`` for App2-internal wire shape
-(filter-form emit/suppress per-sheet, fetcher's calls log carrying
-``date_from`` after a refresh, the dev-log POST → server-log capture
-path). The KPI-auto-load smoke check that lived here is dropped — it's
-covered by ``test_dashboard_driver::test_showcase_kpi_renders_a_value``
-against the smoke app, same shape.
+What's left here is the App2-*internal* wire shape — there is no QS
+analogue, so a parametrized ``[qs, app2]`` body can't cover it:
+
+- the rich-text → HTML render of TextBox content (``_qs_richtext_to_html``);
+- per-sheet filter-form emit vs. suppress (a text-box-only sheet shows no
+  date picker; a sheet with data visuals does);
+- the date filter → visual re-fetch round-trip carrying ``date_from`` in
+  the query string (the fetcher's calls log);
+- the dev-log POST → uvicorn logging → ``$QS_GEN_RUN_DIR/app2/server.log``
+  capture path.
+
+What's NOT here anymore (X.2.u.3 / u.5 — covered by the parametrized
+``[qs, app2]`` bodies): the KPI-auto-load smoke check
+(``test_dashboard_driver::test_showcase_kpi_renders_a_value``), and the
+"sheet tabs render with the executives names" check (``test_exec_sheet_visuals::
+test_exec_dashboard_structure_matches_tree[app2]`` — its ``TreeValidator``
+walk asserts ``driver.sheet_names()`` against the tree's sheets on both
+renderers).
 """
 
 from __future__ import annotations
@@ -91,20 +102,6 @@ def exec_driver() -> Iterator[App2Driver]:
         dashboard_title="Executives",
     ) as driver:
         yield driver
-
-
-def test_dashboard_landing_renders_with_sheet_tabs(
-    exec_driver: App2Driver,
-) -> None:
-    """Default landing (``/dashboards/exec``) shows tab strip with every
-    analysis sheet — proves X.2.e tabs render for a real multi-sheet
-    app, named the way the executives tree declares them."""
-    exec_driver.open(_DASHBOARD_ID)
-    names = exec_driver.sheet_names()
-    for expected in ("Getting Started", "Account Coverage", "Money Moved"):
-        assert expected in names, (
-            f"Sheet tab {expected!r} missing — got {names}"
-        )
 
 
 def test_getting_started_sheet_renders_text_boxes(
