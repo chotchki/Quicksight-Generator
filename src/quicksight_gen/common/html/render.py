@@ -96,10 +96,22 @@ class ParameterDropdownSpec:
     Renders as a ``<select name="param_<name>">`` with a blank
     leading option (the empty string round-trips as "no
     selection"). URL key on submit: ``?param_<name>=<value>``.
+
+    ``options_dataset`` / ``options_column`` (X.2.u.4.b): when the
+    option universe is a dataset column rather than a static list (a
+    tree ``ParameterDropdown(type="SINGLE_SELECT",
+    selectable_values=LinkedValues(...))``), the spec carries the
+    source instead of inlined ``options`` (which stays ``()`` until
+    the server resolves it — `server.py::_resolve_linked_options`
+    runs ``SELECT DISTINCT <col> FROM (<dataset SQL>)`` and replaces
+    ``options`` before rendering). When ``options_dataset`` is None
+    the static ``options`` are authoritative.
     """
     name: str
     label: str
     options: tuple[str, ...]
+    options_dataset: str | None = None
+    options_column: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,12 +164,20 @@ class ParameterMultiSelectSpec:
     dataset param's declared-value default (= no narrowing), matching
     QuickSight's "empty the dropdown reverts to default" behaviour
     (Y.2.c.0). This is the App2 counterpart of a tree ``ParameterDropdown(
-    type="MULTI_SELECT", selectable_values=StaticValues(...))`` node —
-    derived from the tree by ``make_filter_specs_for_sheet``.
+    type="MULTI_SELECT", selectable_values=StaticValues(...) | LinkedValues(...))``
+    node — derived from the tree by ``make_filter_specs_for_sheet``.
+
+    ``options_dataset`` / ``options_column`` (X.2.u.4.b): for a
+    ``LinkedValues`` source the spec carries the dataset identifier +
+    column instead of an inlined ``options`` list (which stays ``()``
+    until ``server.py::_resolve_linked_options`` runs ``SELECT DISTINCT
+    <col> FROM (<dataset SQL>)`` and replaces ``options`` pre-render).
     """
     name: str
     label: str
     options: tuple[str, ...]
+    options_dataset: str | None = None
+    options_column: str | None = None
 
 
 FilterSpec = (

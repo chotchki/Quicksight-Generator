@@ -473,7 +473,7 @@ def _parametrized_dashboard_driver(  # type: ignore[no-untyped-def]: return-type
 
 
 @pytest.fixture(params=["qs", "app2"])
-def l1_dashboard_driver(request, cfg, region, account_id, l1_dashboard_id, l1_app):  # type: ignore[no-untyped-def]: see _parametrized_dashboard_driver
+def l1_dashboard_driver(request, cfg, region, account_id, l1_dashboard_id, l1_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
     yield from _parametrized_dashboard_driver(
         request, cfg=cfg, region=region, account_id=account_id,
         dashboard_id=l1_dashboard_id, app=l1_app, short="l1",
@@ -481,7 +481,7 @@ def l1_dashboard_driver(request, cfg, region, account_id, l1_dashboard_id, l1_ap
 
 
 @pytest.fixture(params=["qs", "app2"])
-def inv_dashboard_driver(request, cfg, region, account_id, inv_dashboard_id, inv_app):  # type: ignore[no-untyped-def]: see _parametrized_dashboard_driver
+def inv_dashboard_driver(request, cfg, region, account_id, inv_dashboard_id, inv_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
     yield from _parametrized_dashboard_driver(
         request, cfg=cfg, region=region, account_id=account_id,
         dashboard_id=inv_dashboard_id, app=inv_app, short="inv",
@@ -489,7 +489,7 @@ def inv_dashboard_driver(request, cfg, region, account_id, inv_dashboard_id, inv
 
 
 @pytest.fixture(params=["qs", "app2"])
-def exec_dashboard_driver(request, cfg, region, account_id, exec_dashboard_id, exec_app):  # type: ignore[no-untyped-def]: see _parametrized_dashboard_driver
+def exec_dashboard_driver(request, cfg, region, account_id, exec_dashboard_id, exec_app):  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
     yield from _parametrized_dashboard_driver(
         request, cfg=cfg, region=region, account_id=account_id,
         dashboard_id=exec_dashboard_id, app=exec_app, short="exec",
