@@ -1,16 +1,22 @@
-"""Y.2.app2.cde.l2ft-wiring.b — ``make_filter_specs_for_sheet`` tests.
+"""Y.2.app2.cde.l2ft-wiring.b + X.2.u.4.e — ``make_filter_specs_for_sheet`` tests.
 
-Locks the tree-walk → App2 ``FilterSpec`` derivation: a MULTI_SELECT
-``ParameterDropdown`` whose ``selectable_values`` is a ``StaticValues``
-becomes a ``ParameterMultiSelectSpec``; SINGLE_SELECT dropdowns, sliders,
-and ``LinkedValues`` dropdowns are skipped (App2 either can't replicate the
-QS cascade-refresh-options behaviour or would have to query to enumerate).
+Locks the tree-walk → App2 ``FilterSpec`` derivation:
+
+- a MULTI_SELECT ``ParameterDropdown`` with ``StaticValues`` →
+  ``ParameterMultiSelectSpec`` (X.1.g L2FT Rail/Status/Bundle, …);
+- a ``ParameterSlider`` → ``ParameterNumberSpec`` (X.2.u.4.e —
+  Investigation's σ / max-hops / min-amount knobs);
+- SINGLE_SELECT + ``StaticValues`` dropdowns (L2FT's metadata-cascade
+  key dropdowns) are skipped — App2 can't replicate the QS
+  cascade-refresh-options behaviour, so a static single-select would be
+  a half-truth.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.common.html import (
     ParameterMultiSelectSpec,
+    ParameterNumberSpec,
     make_filter_specs_for_sheet,
 )
 from quicksight_gen.common.ids import ParameterName, SheetId
@@ -48,11 +54,15 @@ def _sheet_with_controls() -> Sheet:
         parameter=p_key, title="Metadata Key",
         selectable_values=StaticValues(values=["__ALL__", "memo_kind"]),
     )
-    # A slider — should be skipped (not a ParameterDropdown).
-    p_n = analysis.add_parameter(IntegerParam(name=ParameterName("pThreshold")))
+    # A slider — becomes a ParameterNumberSpec (X.2.u.4.e). Default [3]
+    # so the derived spec carries default=3.0 (matches the dataset SQL's
+    # static-default literal); minimum 1 is the no-narrowing position.
+    p_n = analysis.add_parameter(IntegerParam(
+        name=ParameterName("pThreshold"), default=[3],
+    ))
     sheet.add_parameter_slider(
         parameter=p_n, title="Threshold",
-        minimum_value=1, maximum_value=10, step_size=1,
+        minimum_value=1, maximum_value=10, step_size=2,
     )
     return sheet
 
@@ -60,22 +70,36 @@ def _sheet_with_controls() -> Sheet:
 def test_make_filter_specs_returns_one_per_multiselect_static_dropdown() -> None:
     sheet = _sheet_with_controls()
     specs = make_filter_specs_for_sheet(sheet)
-    assert len(specs) == 1
-    (spec,) = specs
-    assert isinstance(spec, ParameterMultiSelectSpec)
+    multi = [s for s in specs if isinstance(s, ParameterMultiSelectSpec)]
+    assert len(multi) == 1
+    (spec,) = multi
     assert spec.name == "pL2ftRail"
     assert spec.label == "Rail"
     assert spec.options == ("ach", "wire", "check")
 
 
-def test_make_filter_specs_skips_single_select_and_sliders() -> None:
-    """The hand-built sheet has a SINGLE_SELECT dropdown + a slider on top
-    of the MULTI_SELECT one — only the MULTI_SELECT survives."""
+def test_make_filter_specs_skips_single_select_static_dropdown() -> None:
+    """The hand-built sheet has a SINGLE_SELECT StaticValues dropdown on
+    top of the MULTI_SELECT one + the slider — the SINGLE_SELECT one is
+    skipped (App2 can't replicate the QS cascade behaviour)."""
     sheet = _sheet_with_controls()
     specs = make_filter_specs_for_sheet(sheet)
-    names = {s.name for s in specs if isinstance(s, ParameterMultiSelectSpec)}
-    assert names == {"pL2ftRail"}
-    assert all("pKey" not in s.name and "pThreshold" not in s.name for s in specs)
+    assert all("pKey" not in getattr(s, "name", "") for s in specs)
+
+
+def test_make_filter_specs_derives_parameter_number_for_slider() -> None:
+    """A ``ParameterSlider`` → a ``ParameterNumberSpec`` carrying the
+    slider bounds/step + the bound parameter's analysis-level default
+    (X.2.u.4.e)."""
+    sheet = _sheet_with_controls()
+    specs = make_filter_specs_for_sheet(sheet)
+    nums = [s for s in specs if isinstance(s, ParameterNumberSpec)]
+    assert len(nums) == 1
+    (n,) = nums
+    assert n.name == "pThreshold"
+    assert n.label == "Threshold"
+    assert (n.minimum, n.maximum, n.step) == (1.0, 10.0, 2.0)
+    assert n.default == 3.0
 
 
 def test_make_filter_specs_empty_for_sheet_with_no_parameter_controls() -> None:

@@ -34,6 +34,7 @@ from quicksight_gen.common.html import (
     NumericRangeSpec,
     ParameterDropdownSpec,
     ParameterMultiSelectSpec,
+    ParameterNumberSpec,
 )
 from quicksight_gen.common.html.render import emit_dashboards_list, emit_html
 from quicksight_gen.common.ids import SheetId, VisualId
@@ -269,3 +270,41 @@ def test_numeric_range_with_bounds_emits_nouislider() -> None:
     # The number inputs are still there (typed-entry fallback + wire).
     assert 'name="min_amount"' in form
     assert 'name="max_amount"' in form
+
+
+def test_parameter_number_emits_single_handle_nouislider() -> None:
+    """X.2.u.4.e — a ``ParameterNumberSpec`` (from a tree
+    ``ParameterSlider``) → ``<input type="number" name="param_<name>">``
+    + a one-handle noUiSlider over it (``data-value-input``), with the
+    initial value from ``default`` and integer bounds rendered without a
+    trailing ``.0``."""
+    app, sheet = _build_app()
+    spec = ParameterNumberSpec(
+        name="pInvAnomaliesSigma", label="Min sigma",
+        minimum=1, maximum=4, step=1, default=2.0,
+    )
+    form = _filter_form(
+        emit_html(app, sheet, dashboard_id="x", filter_specs=[spec]),
+    )
+    assert 'name="param_pInvAnomaliesSigma"' in form
+    assert 'type="number"' in form
+    assert 'data-widget="nouislider"' in form
+    assert 'data-value-input="param_pInvAnomaliesSigma"' in form
+    assert 'data-min="1"' in form
+    assert 'data-max="4"' in form
+    assert 'data-start-min="2"' in form
+    # No two-handle wiring on a parameter slider.
+    assert 'data-min-input=' not in form
+    assert 'data-max-input=' not in form
+
+
+def test_parameter_number_without_default_starts_at_minimum() -> None:
+    app, sheet = _build_app()
+    spec = ParameterNumberSpec(
+        name="pThr", label="Threshold", minimum=2, maximum=20, step=2,
+    )
+    form = _filter_form(
+        emit_html(app, sheet, dashboard_id="x", filter_specs=[spec]),
+    )
+    assert 'value="2"' in form
+    assert 'data-start-min="2"' in form

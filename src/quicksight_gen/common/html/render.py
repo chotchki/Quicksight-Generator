@@ -151,6 +151,32 @@ class NumericRangeSpec:
 
 
 @dataclass(frozen=True)
+class ParameterNumberSpec:
+    """Single numeric value bound to a named parameter — the App2
+    counterpart of a tree ``ParameterSlider`` node (X.2.u.4.e).
+
+    Renders an ``<input type="number" name="param_<name>">`` (the wire
+    element — submits a single ``?param_<name>=<value>`` key, which
+    ``_sql_executor`` translates to a ``:param_<name>`` *scalar* bind for
+    a ``<<$pName>>`` placeholder; NOT the repeated-key shape
+    ``ParameterMultiSelectSpec`` produces) plus a one-handle noUiSlider
+    over it (``wireNoUiSlider``'s single-handle mode — driven by
+    ``data-value-input`` rather than the two-handle ``data-min-input`` /
+    ``data-max-input``). The widget's initial value is ``default`` when
+    set, else ``minimum`` — which for the Investigation thresholds is the
+    no-narrowing position (σ≥1 / hop≥$0). Empty → no key → the executor's
+    static-default fallback (= the dataset param's declared default),
+    mirroring QuickSight's "slider untouched ⇒ analysis default".
+    """
+    name: str
+    label: str
+    minimum: float
+    maximum: float
+    step: float
+    default: float | None = None
+
+
+@dataclass(frozen=True)
 class ParameterMultiSelectSpec:
     """Multi-select dropdown for a MULTI_VALUED named parameter
     (Y.2.app2.cde.l2ft-wiring.b).
@@ -184,6 +210,7 @@ FilterSpec = (
     ParameterDropdownSpec
     | CategoryFilterSpec
     | NumericRangeSpec
+    | ParameterNumberSpec
     | ParameterMultiSelectSpec
 )
 
@@ -459,6 +486,45 @@ def _render_numeric_range(spec: NumericRangeSpec) -> str:
     )
 
 
+def _num_attr(value: float) -> str:
+    """Render a numeric DOM-attribute value without a spurious trailing
+    ``.0`` — so ``?param_<name>=4`` matches the integer literal shape QS
+    substitutes for the same parameter (and the bind round-trips clean
+    through the SQL executor)."""
+    f = float(value)
+    return str(int(f)) if f.is_integer() else repr(f)
+
+
+def _render_parameter_number(spec: ParameterNumberSpec) -> str:
+    """``<input type="number" name="param_<name>">`` + a one-handle
+    noUiSlider over it (``wireNoUiSlider`` single-handle mode via
+    ``data-value-input``). Initial value = ``default`` else ``minimum``.
+    The number input is the wire element (HTMX serializes it); the
+    slider writes back into it on drag. If noUiSlider fails to load the
+    number input stays usable (degraded, not broken)."""
+    name = html.escape(spec.name)
+    start = spec.default if spec.default is not None else spec.minimum
+    lo, hi, step, val = (
+        _num_attr(spec.minimum), _num_attr(spec.maximum),
+        _num_attr(spec.step), _num_attr(start),
+    )
+    narrow_input = _FORM_INPUT_CLASS + " w-24"
+    number_input = (
+        f'<input type="number" name="param_{name}" '
+        f'min="{lo}" max="{hi}" step="{step}" value="{val}" '
+        f'class="{narrow_input}">'
+    )
+    slider = (
+        f'<div data-widget="nouislider" data-min="{lo}" data-max="{hi}" '
+        f'data-start-min="{val}" data-value-input="param_{name}" '
+        f'data-step="{step}" style="width: 10rem; margin: 0 1.25rem;"></div>'
+    )
+    return (
+        f'    <label class="{_FORM_LABEL_CLASS} items-center">'
+        f'{html.escape(spec.label)} {slider} {number_input}</label>'
+    )
+
+
 def _render_filter_form(
     visual_fetch_urls: list[tuple[str, str]],
     filter_specs: Sequence[FilterSpec] = (),
@@ -502,6 +568,8 @@ def _render_filter_form(
             parts.append(_render_category_filter(spec))
         elif isinstance(spec, NumericRangeSpec):
             parts.append(_render_numeric_range(spec))
+        elif isinstance(spec, ParameterNumberSpec):
+            parts.append(_render_parameter_number(spec))
         elif isinstance(spec, ParameterMultiSelectSpec):
             parts.append(_render_parameter_multiselect(spec))
     parts.append('  </form>')

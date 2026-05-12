@@ -183,8 +183,8 @@ class TreeValidator:
         """Walk this sheet's `filter_controls` + `parameter_controls`
         and assert each control's title is in the rendered DOM.
 
-        Two control kinds are excluded from the cross-renderer
-        comparison because they have renderer-specific presentation:
+        One control kind is excluded from the cross-renderer comparison
+        because its presentation is genuinely renderer-specific:
 
         - **datetime pickers** (``add_parameter_datetime_picker`` /
           ``FilterDateTimePicker``, ``_AUTO_KIND == "datetime"``) — QS
@@ -193,16 +193,19 @@ class TreeValidator:
           universal date range into a single "Date range" widget and
           renders no bare datetime pickers (X.2.u.4.d). Covered by the
           filter tests' ``set_date_range`` verb.
-        - **sliders** (``ParameterSlider`` / ``FilterSlider``,
-          ``_AUTO_KIND == "slider"``) — QS renders a slider widget;
-          App2 has no slider-bound-named-parameter filter widget yet
-          (the SQL pushdown still works, so the visuals narrow — see
-          ``PLAN`` X.2.l.4.d for the App2 slider widget follow-on).
-          Covered by the SQL-pushdown unit tests + ``test_html2_*``.
+
+        Sliders are *not* excluded since X.2.u.4.e — App2 now renders a
+        ``ParameterSlider`` as a ``ParameterNumberSpec`` widget (an
+        ``<input type="number" name="param_<name>">`` + a one-handle
+        noUiSlider) titled by ``.title``, so both renderers carry the
+        control. (A ``FilterSlider`` — column-range, analysis-level — is
+        still un-rendered in App2; no app uses one today, so it doesn't
+        need a divergence carve-out yet. If one lands, add ``"slider"``
+        back here *or* auto-derive a ``NumericRangeSpec`` for it.)
         """
         filter_ctrls = getattr(sheet, "filter_controls", None) or []
         param_ctrls = getattr(sheet, "parameter_controls", None) or []
-        _renderer_divergent = {"datetime", "slider"}
+        _renderer_divergent = {"datetime"}
         comparable = [
             c
             for c in (*filter_ctrls, *param_ctrls)

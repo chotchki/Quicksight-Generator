@@ -371,14 +371,40 @@ class App2Driver:
     def set_slider(
         self, label: str, lo: float | None, hi: float | None,
     ) -> None:
+        # Two shapes share this verb (X.2.u.4.e): a column ``NumericRangeSpec``
+        # — two ``min_<col>`` / ``max_<col>`` inputs (a noUiSlider may sit
+        # over them) — and a ``ParameterNumberSpec`` (from a tree
+        # ``ParameterSlider``) — a single ``<input name="param_<name>">``.
+        # For the single-value case the protocol passes the value as ``lo``
+        # (``hi=None``), so prefer ``lo`` and fall back to ``hi``. We write
+        # the underlying ``<input>`` directly (the wire element HTMX
+        # serializes) + dispatch a bubbling ``change``; the noUiSlider
+        # handle, if present, just stays where it was — irrelevant to the
+        # data the test reads.
         ctrl = self._filter_control(label)
         self._wait_for_refetch(lambda: ctrl.evaluate(
             """(el, { lo, hi }) => {
                 const mn = el.querySelector('input[name^="min_"]');
                 const mx = el.querySelector('input[name^="max_"]');
-                if (mn) mn.value = lo === null ? '' : String(lo);
-                if (mx) mx.value = hi === null ? '' : String(hi);
-                if (mn) mn.dispatchEvent(new Event('change', { bubbles: true }));
+                if (mn || mx) {
+                    if (mn) mn.value = lo === null ? '' : String(lo);
+                    if (mx) mx.value = hi === null ? '' : String(hi);
+                    (mn || mx).dispatchEvent(
+                        new Event('change', { bubbles: true }),
+                    );
+                    return;
+                }
+                const pv = el.querySelector('input[name^="param_"]');
+                if (pv) {
+                    const v = lo !== null ? lo : hi;
+                    pv.value = v === null ? '' : String(v);
+                    pv.dispatchEvent(new Event('change', { bubbles: true }));
+                    return;
+                }
+                throw new Error(
+                    'set_slider: no min_/max_/param_ input under control ' +
+                    'labelled ' + JSON.stringify(el.textContent || ''),
+                );
             }""",
             {"lo": lo, "hi": hi},
         ))
