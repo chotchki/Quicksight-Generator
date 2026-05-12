@@ -73,6 +73,59 @@ DataFetcher = Callable[[VisualId, Mapping[str, list[str]]], Awaitable[Any]]
 SyncDataFetcher = Callable[[VisualId, Mapping[str, list[str]]], Any]
 
 
+# X.2.g.5.followon — server-side pagination for Table visuals. The
+# renderer (``bootstrap.js::renderTable``) reads ``page_offset`` /
+# ``page_size`` / ``total_rows`` off the data fragment and re-fetches
+# ``?page_offset=N&page_size=M`` on pager clicks; without this the
+# fetcher returned EVERY row — a 68k-row L1-transactions table → a
+# ~20 MB JSON fragment → the browser freezes building 68k <tr>s
+# before any client-side pagination runs. Default page size mirrors
+# the renderer's "0–50 of N" pager; capped so a crafted ``page_size``
+# can't OOM the server. (Server-side sort on a clicked header — the
+# renderer also sends ``sort_column`` — is X.2.h.5; for now the page
+# is ``ORDER BY 1`` so pagination is deterministic across requests.)
+_TABLE_PAGE_SIZE = 50
+_TABLE_PAGE_SIZE_MAX = 10_000
+
+
+def _page_int(params: Mapping[str, list[str]], key: str, default: int) -> int:
+    """Read a non-negative int off the URL multi-dict (last value);
+    fall back to ``default`` on missing / blank / non-numeric."""
+    vals = params.get(key, [])
+    raw = vals[-1].strip() if vals else ""
+    if not raw:
+        return default
+    try:
+        n = int(raw)
+    except ValueError:
+        return default
+    return n if n >= 0 else default
+
+
+def _paginate_table_sql(
+    base_sql: str, *, offset: int, limit: int, dialect: Dialect,
+) -> str:
+    """Wrap ``base_sql`` with a dialect-correct OFFSET/LIMIT + a
+    ``COUNT(*) OVER ()`` total column (appended last; the fetcher
+    strips it positionally, so the alias name is cosmetic).
+
+    Ordered by the first column so the page boundaries are stable
+    across requests regardless of whether the base query's own
+    ``ORDER BY`` survives the derived-table wrap (PG/Oracle don't
+    promise it does). ``qs_page`` is letter-initial — Oracle rejects a
+    leading-underscore identifier unquoted.
+    """
+    page_clause = (
+        f"OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
+        if dialect is Dialect.ORACLE
+        else f"LIMIT {limit} OFFSET {offset}"  # postgres / sqlite
+    )
+    return (
+        f"SELECT qs_page.*, COUNT(*) OVER () AS qs_row_total "
+        f"FROM ({base_sql}) qs_page ORDER BY 1 {page_clause}"
+    )
+
+
 # Visual fields that may carry Dim/Measure references back to a
 # Dataset. Order matters — we return the FIRST dataset found, on
 # the assumption that a visual's primary dataset is the one its
@@ -208,12 +261,38 @@ def make_tree_db_fetcher(
             # Empty payload renders as a blank visual — fine for
             # the page-chrome-only case.
             return {}
+        # Y.2.app2.cde — resolve `<<$paramName>>` defaults from the
+        # dataset's QS parameters when the URL doesn't supply them
+        # (keeps the freshly-loaded page consistent with QS).
+        dataset_params = get_dataset_params(ds_id) if ds_id else []
+        if kind == "Table":
+            # X.2.g.5.followon — page the table SERVER-side. Without
+            # this a 68k-row dataset shipped 68k rows in one ~20 MB
+            # JSON fragment and the browser froze building the DOM.
+            offset = _page_int(params, "page_offset", 0)
+            limit = max(1, min(
+                _page_int(params, "page_size", _TABLE_PAGE_SIZE),
+                _TABLE_PAGE_SIZE_MAX,
+            ))
+            paginated_sql = _paginate_table_sql(
+                sql, offset=offset, limit=limit, dialect=cfg.dialect,
+            )
+            rows, columns = await execute_visual_sql_async(
+                pool, paginated_sql, params, dialect=cfg.dialect,
+                dataset_parameters=dataset_params,
+            )
+            # Last column is COUNT(*) OVER () — strip it positionally
+            # (the alias name varies by dialect / driver case-folding).
+            total = int(rows[0][-1]) if rows and rows[0] else 0
+            page_rows = [list(r[:-1]) for r in rows]
+            page_cols = list(columns[:-1])
+            return shape_for_kind(
+                "Table", page_rows, page_cols,
+                page_offset=offset, page_size=limit, total_rows=total,
+            )
         rows, columns = await execute_visual_sql_async(
             pool, sql, params, dialect=cfg.dialect,
-            # Y.2.app2.cde — resolve `<<$paramName>>` defaults from
-            # the dataset's QS parameters when the URL doesn't supply
-            # them (keeps the freshly-loaded page consistent with QS).
-            dataset_parameters=get_dataset_params(ds_id) if ds_id else [],
+            dataset_parameters=dataset_params,
         )
         # ForceGraph + Sankey have specialized projectors today
         # (_db_fetcher._topology_to_force_graph, etc.); the generic
