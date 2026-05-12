@@ -181,13 +181,25 @@ class TreeValidator:
 
     def validate_sheet_controls(self, sheet: Sheet) -> None:
         """Walk this sheet's `filter_controls` + `parameter_controls`
-        and assert each control's title is in the rendered DOM."""
+        and assert each control's title is in the rendered DOM.
+
+        Datetime-picker controls (``add_parameter_datetime_picker`` /
+        ``FilterDateTimePicker``, ``_AUTO_KIND == "datetime"``) are
+        excluded from the cross-renderer comparison: QS renders one
+        widget per declared picker titled by ``.title`` ("Date From" /
+        "Date To" / "Business Day"); App2 collapses the universal date
+        range into a single "Date range" widget and doesn't render bare
+        datetime pickers at all (X.2.u.4.d). Their behaviour is covered
+        by the filter tests' ``set_date_range`` verb, not here.
+        """
         filter_ctrls = getattr(sheet, "filter_controls", None) or []
         param_ctrls = getattr(sheet, "parameter_controls", None) or []
-        expected = {
-            t for t in (_control_title(c) for c in filter_ctrls + param_ctrls)
-            if t
-        }
+        non_datetime = [
+            c
+            for c in (*filter_ctrls, *param_ctrls)
+            if getattr(c, "_AUTO_KIND", None) != "datetime"
+        ]
+        expected = {t for t in (_control_title(c) for c in non_datetime) if t}
         if not expected:
             return
         rendered = set(self.driver.filter_labels())
