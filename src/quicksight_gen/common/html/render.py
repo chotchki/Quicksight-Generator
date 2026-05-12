@@ -215,17 +215,23 @@ FilterSpec = (
 )
 
 
-_HTMX_SRC = "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
-_D3_SRC = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
-_D3_SANKEY_SRC = (
-    "https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"
-)
+# Third-party browser libs — served from ``/static/vendor/...`` (the
+# existing ``assets/`` static mount), NOT a CDN. The dist files are
+# committed under ``common/html/assets/vendor/{js,css}/`` and shipped via
+# ``package-data`` so ``pip install quicksight-gen[serve] && quicksight-gen
+# serve app2 apply`` works with zero internet (X.2.p). Provenance + the
+# refresh recipe live in ``assets/vendor/vendor.lock`` +
+# ``scripts/vendor_js_deps.py``; ``tests/unit/test_vendor_assets.py``
+# asserts the committed bytes match the lock AND that no ``<script>`` /
+# ``<link>`` the page shell emits points at an external URL.
+_HTMX_SRC = "/static/vendor/js/htmx.min.js"
+_D3_SRC = "/static/vendor/js/d3.min.js"
+_D3_SANKEY_SRC = "/static/vendor/js/d3-sankey.min.js"
 
-# X.2.l.4 — filter-widget libs, CDN-loaded (same pattern as htmx / d3
-# above; X.2.p later vendors + bundles them so a `pip install` App 2
-# works offline). Each *enhances an existing* ``<select>`` / ``<input>``
-# and keeps its ``.value`` in sync — so the HTMX wire shape (URL keys,
-# form serialization) is unchanged; only the widget chrome changes.
+# X.2.l.4 — filter-widget libs. Each *enhances an existing* ``<select>`` /
+# ``<input>`` and keeps its ``.value`` in sync — so the HTMX wire shape
+# (URL keys, form serialization) is unchanged; only the widget chrome
+# changes.
 #
 #   - Tom Select  — multi-select chips + search (replaces the native
 #                   ``<select multiple>`` and the checkbox group; QS's
@@ -235,21 +241,12 @@ _D3_SANKEY_SRC = (
 #                   two browser-native ``<input type="date">``).
 #   - noUiSlider  — draggable two-handle min/max slider with value
 #                   bubbles (over the native number inputs).
-_TOM_SELECT_CSS = (
-    "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css"
-)
-_TOM_SELECT_JS = (
-    "https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/"
-    "tom-select.complete.min.js"
-)
-_FLATPICKR_CSS = "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
-_FLATPICKR_JS = "https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
-_NOUISLIDER_CSS = (
-    "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css"
-)
-_NOUISLIDER_JS = (
-    "https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"
-)
+_TOM_SELECT_CSS = "/static/vendor/css/tom-select.min.css"
+_TOM_SELECT_JS = "/static/vendor/js/tom-select.complete.min.js"
+_FLATPICKR_CSS = "/static/vendor/css/flatpickr.min.css"
+_FLATPICKR_JS = "/static/vendor/js/flatpickr.min.js"
+_NOUISLIDER_CSS = "/static/vendor/css/nouislider.min.css"
+_NOUISLIDER_JS = "/static/vendor/js/nouislider.min.js"
 
 # Built once at import: the full ``<head>`` asset blocks. ``_VENDOR_CSS``
 # lands right after ``output.css`` (so the per-instance ``:root`` theme

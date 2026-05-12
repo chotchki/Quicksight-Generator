@@ -77,38 +77,56 @@ def _apply_l2_theme_css(
     extra_css: list[Any],
     theme: Any,
 ) -> None:
-    """Write a CSS shim under ``docs_dir`` that overrides Material's brand
-    color custom properties with the L2 theme's accent palette.
+    """Write a CSS shim under ``docs_dir`` that overrides the handbook
+    site's ``--qs-*`` design tokens (declared in ``stylesheets/site.css``)
+    with the active L2 instance's theme palette.
 
-    Material's color customization (per the upstream docs) reads from
-    ``--md-primary-fg-color`` (header / nav background),
-    ``--md-primary-bg-color`` (text on primary bg), and
-    ``--md-accent-fg-color`` (links + highlights). Mapping:
+    ``site.css`` defines neutral ``--qs-*`` fallbacks and maps Material's
+    ``--md-*`` brand variables onto them, so overriding the ``--qs-*``
+    tokens here re-skins **both** Material's chrome (header / tabs /
+    links) **and** the ``.snb-*`` hero/card and ``.qs-*`` lightbox rules
+    in ``site.css`` from one generated file. (This shim previously set
+    Material's ``--md-*`` vars directly, which left the ``site.css``
+    rules that used ``--snb-*`` tokens hard-coded to the bundled SNB
+    palette regardless of the active L2 theme — X.2.s.2.)
 
-    - ``theme.accent`` → primary fg + accent fg (one brand color
-      everywhere). Matches the dashboard convention where ``accent``
-      is the single tinting color in-canvas.
-    - ``theme.accent_fg`` → primary bg (text shown on top of the
-      primary fg color).
+    Mapping (``--qs-*`` ← ``ThemePreset.*``):
 
-    Writes ``docs_dir/stylesheets/_l2_theme.css`` (the underscore
-    keeps it out of git via the same ``.gitignore`` ``_l2_*`` rule the
+    - ``--qs-accent``        ← ``theme.accent``       (header bar, links)
+    - ``--qs-accent-light``  ← ``theme.dimension``    (tab bar, hover)
+    - ``--qs-accent-dark``   ← ``theme.measure``      (Material's --dark)
+    - ``--qs-accent-fg``     ← ``theme.accent_fg``    (text on the accent bar)
+    - ``--qs-fg``            ← ``theme.primary_fg``
+    - ``--qs-fg-muted``      ← ``theme.secondary_fg``
+    - ``--qs-surface``       ← ``theme.primary_bg``
+    - ``--qs-surface-muted`` ← ``theme.secondary_bg`` (hero block bg)
+    - ``--qs-tint``          ← ``theme.link_tint``
+    - ``--qs-warning``       ← ``theme.warning``
+
+    Writes ``docs_dir/stylesheets/_l2_theme.css`` (the underscore keeps
+    it out of git via the same ``.gitignore`` ``_l2_*`` rule the
     logo/favicon copies use), and registers the docs-relative path on
-    ``extra_css``. Idempotent — re-runs of ``docs apply`` overwrite
-    the file in place.
+    ``extra_css`` — appended **after** ``site.css`` (which mkdocs.yml
+    lists), so the ``:root`` override wins on the cascade. Idempotent —
+    re-runs of ``docs apply`` overwrite the file in place. When the L2
+    carries no ``theme:`` block this shim isn't written, so ``site.css``'s
+    neutral ``--qs-*`` defaults (mirroring ``common/theme.py::DEFAULT_PRESET``)
+    apply.
     """
-    accent = theme.accent
-    accent_fg = theme.accent_fg
     css = (
-        "/* Auto-generated from the active L2 instance's theme block */\n"
+        "/* Auto-generated from the active L2 instance's theme: block. */\n"
+        "/* Overrides the --qs-* design tokens declared in site.css. */\n"
         ":root {\n"
-        f"  --md-primary-fg-color: {accent};\n"
-        f"  --md-primary-fg-color--light: {accent};\n"
-        f"  --md-primary-fg-color--dark: {accent};\n"
-        f"  --md-primary-bg-color: {accent_fg};\n"
-        f"  --md-primary-bg-color--light: {accent_fg};\n"
-        f"  --md-accent-fg-color: {accent};\n"
-        f"  --md-accent-fg-color--transparent: {accent}1a;\n"
+        f"  --qs-accent:        {theme.accent};\n"
+        f"  --qs-accent-light:  {theme.dimension};\n"
+        f"  --qs-accent-dark:   {theme.measure};\n"
+        f"  --qs-accent-fg:     {theme.accent_fg};\n"
+        f"  --qs-fg:            {theme.primary_fg};\n"
+        f"  --qs-fg-muted:      {theme.secondary_fg};\n"
+        f"  --qs-surface:       {theme.primary_bg};\n"
+        f"  --qs-surface-muted: {theme.secondary_bg};\n"
+        f"  --qs-tint:          {theme.link_tint};\n"
+        f"  --qs-warning:       {theme.warning};\n"
         "}\n"
     )
     css_dir = docs_dir / "stylesheets"

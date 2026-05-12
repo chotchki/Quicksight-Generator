@@ -236,6 +236,16 @@ quicksight_gen = [
     # lint / format / minify them. render.py loads at module-import
     # time; package_data ships them inside the wheel.
     "common/html/assets/js/*.js",
+    # X.2.p — vendored third-party browser libs (htmx / d3 / d3-sankey /
+    # tom-select / flatpickr / nouislider) the page shell loads from
+    # ``/static/vendor/...`` instead of a CDN. Pre-built minified dist
+    # files committed under ``assets/vendor/{js,css}/``; ``vendor.lock``
+    # carries the provenance + sha256s. Shipped so a `pip install
+    # quicksight-gen[serve]` App 2 works offline. Refresh recipe:
+    # ``scripts/vendor_js_deps.py``.
+    "common/html/assets/vendor/js/*.js",
+    "common/html/assets/vendor/css/*.css",
+    "common/html/assets/vendor/vendor.lock",
 ]
 
 [tool.setuptools.dynamic]

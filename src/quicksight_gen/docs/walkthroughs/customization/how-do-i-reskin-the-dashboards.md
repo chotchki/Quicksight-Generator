@@ -214,11 +214,24 @@ brand:
    dashboards with two distinct themes — no per-app preset
    juggling required.
 
-## Brand assets on the docs site
+## The docs site follows the same theme block
 
-The docs site (the mkdocs handbook published from `docs export`)
-also reads brand assets from the L2 YAML's `theme:` block. Two
-optional fields:
+The docs site (the mkdocs handbook published from `docs export` /
+`docs apply`) reads the **same** `theme:` block — both the colors
+above and an optional pair of brand-asset fields.
+
+**Colors.** The handbook chrome — header bar, the hero block on
+the landing pages, the walkthrough cards — derives from the L2
+theme's `accent` / `accent_fg` / `dimension` / `primary_fg` /
+`secondary_fg` / `primary_bg` / `secondary_bg` / `link_tint` /
+`warning` tokens (same source-of-truth rule as the dashboards: no
+hard-coded hex). Build with your themed L2 and the site picks it
+up automatically; no separate mkdocs config edit. When the L2
+carries no `theme:` block, the site falls back to a neutral
+navy/grey (`common/theme.py::DEFAULT_PRESET`), not a persona
+palette.
+
+**Logo / favicon** — two optional fields:
 
 ```yaml
 theme:
@@ -227,7 +240,7 @@ theme:
   favicon: "https://example.com/your-favicon.ico"
 ```
 
-Both fields accept either:
+Both accept either:
 
 - **A URL** (`http://`, `https://`, or protocol-relative `//`) —
   passed through verbatim to mkdocs `theme.logo` /
@@ -239,9 +252,8 @@ Both fields accept either:
 
 Relative paths are rejected (their resolution would depend on
 the integrator's working directory at build time). When either
-field is omitted or `null`, the docs site falls back to whatever
-`mkdocs.yml` ships with — for the canonical site, that's the SNB
-mark.
+field is omitted or `null`, the docs site renders text-only
+navigation (no logo) — `mkdocs.yml` ships no default mark.
 
 ## Related walkthroughs
 
