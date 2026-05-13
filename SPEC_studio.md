@@ -14,7 +14,7 @@ Three personas, three loops Studio collapses into one front door:
 - **Trainer** — wants to demo "the system over time," planting specific exceptions and stepping students through days. Studio gives them: a data-shaping panel (which exceptions to plant, which day to advance to, which random seed produces the layout they want), a vertical plant-timeline showing where exceptions land in the current window, and a one-click "Deploy changes" that re-seeds the database and Dashboards reloads.
 - **ETL engineer** — wants to know if their ETL pipeline covers what the L2 asks for. Studio gives them: the same diagram, tinted by data coverage (binary: rows / no rows per L2 primitive); an `etl_hook` shell command that runs their pipeline; an `etl_datasource` URL that Studio pulls rows from into the demo DB; and a generator scope (`uncovered_rails`) that fills only what the ETL didn't.
 
-The thread tying it all together is the **"Deploy changes" pipeline** — one button in Studio, four conditional steps (etl_hook → ETL pull → generator → matview refresh), Dashboards auto-reloads. That pipeline IS the implementation-tools loop.
+The thread tying it all together is the **"Deploy changes" pipeline** — one button in Studio, five steps (etl_hook gate → wipe + optional ETL pull → generator → matview refresh → Dashboards auto-reload), some conditional. That pipeline IS the implementation-tools loop.
 
 ## Non-goals
 
@@ -24,12 +24,13 @@ The thread tying it all together is the **"Deploy changes" pipeline** — one bu
 - **Not changing QuickSight or Dashboards rendering.** The QS pipeline (`json apply --execute`) and Dashboards' visual rendering are settled (X.2 wrap, v9.0 → v9.4). Studio is *new routes* + a *fuller diagram projection* + *generator-shaping knobs* — zero touch on those subsystems.
 - **Not preserving YAML comments.** Studio re-serializes the L2 YAML from the loaded `L2Instance` model on every save. `description:` fields survive (model data); freeform `# comments` don't. No `ruamel.yaml`.
 - **Not a SPA.** The editor is dumb HTMX (server-owned cascade). No client-side state machine, no diffing, no React-shaped surface.
+- **Not the X.2-era exhaustive scenario × dialect × target test matrix for Studio's own surface.** Studio is a dev tool with different exposure than the customer-facing Dashboards render surface that justified that fan-out. The codebase keeps cross-dialect support; we just don't force the matrix on every Studio test. See "Testing scope" below for what we DO test.
 
 ## Personas + their loops
 
 ### Integrator — "did I design my YAML right?"
 
-Today: edits a 500-line YAML in a text editor; runs `schema apply --execute`, `data apply --execute`, `data refresh --execute`; opens four QuickSight dashboards or App 2; spots that a chain references a renamed template and broke; fixes; re-runs. Diagrams are static SVGs in the docs site, one per topic — hard to see the institution as a single thing.
+Today: edits a 500-line YAML in a text editor; runs `schema apply --execute`, `data apply --execute`, `data refresh --execute`; opens four QuickSight dashboards or Dashboards (the self-hosted renderer); spots that a chain references a renamed template and broke; fixes; re-runs. Diagrams are static SVGs in the docs site, one per topic — hard to see the institution as a single thing.
 
 With Studio: opens `quicksight-gen studio` → lands on the unified diagram of their L2. Toggles "show only Chains" to verify the supersession structure; clicks an account to focus its subgraph. Renames a role via the Account form; the server rewrites every rail/chain reference; validates; the diagram and the entity list refresh themselves; the YAML on disk is updated. Hits "Deploy changes" → regenerated demo data lands; Dashboards (open in another window) reloads with the new structure visible.
 
@@ -320,10 +321,30 @@ The `serve` Click group goes away with it (the only thing under it was `app2 app
 These are explicitly deferred (per the standing "don't silently defer" rule — flagged here, not buried):
 
 - **Persistence of in-flight shaping params.** Today: ephemeral per-session Studio state; on restart, reads the `test_generator:` block from `config.yaml` for defaults. If a trainer wants to save "today's lesson configuration" → small `scenario.yaml` later, when asked. Not in the first cut.
+  - Later I'll advocate for saving an updated config.yaml
 - **PK collisions** between real `etl_datasource` `transaction_id`s and the generator's synthetic IDs. The natural fix (exclude colliding accounts from generation) overlaps with `scope: uncovered_rails`, so there's no need to pre-build a guard. Address if/when it bites.
 - **Auth (phase.2).** Studio has writes; eventually it needs a different auth posture than Dashboards' read-only views. The same-Starlette-process design is severable for that day. Not in the first cut.
 - **Dangling-reference Dashboards refresh** — when a re-seed deletes an entity the open Dashboards page was viewing. Show "no data" for now; specific UX when it bites.
 - **X.6 docs re-point.** Once Studio + the diagram are usable, the bulk of `docs/walkthroughs/` shrinks toward "load your YAML and look"; the long-form walkthroughs become can't-run-it-locally fallbacks. X.6 picks this up; not Studio's job.
+
+## Testing scope
+
+Studio inherits the existing project-wide testing discipline (the locked-seed determinism test, the dialect-portable SQL constraints, the QS↔App2 4-way agreement test, etc.) — those keep running unchanged. What Studio **does NOT do** is extend the X.2-era exhaustive `scenario × dialect × target` test matrix to its own surface. That matrix existed because Dashboards is the customer-visible render surface and had to be battle-hardened; Studio is a dev tool with different exposure.
+
+What this means concretely:
+
+- **Editor + cascade + shaping knobs → unit tests** against the in-memory `L2Instance` model + scenario object. No DB needed for the bulk of editor coverage. High coverage warranted (the cascade-rewrite logic is the riskiest correctness piece).
+- **Deploy changes pipeline → orchestration tests**, one per pipeline shape: gated halt on `etl_hook` failure (demo DB untouched), wipe-then-pull when `etl_datasource` is set, additive generator on top, refresh + reload bump. In-process; no full chain-runner matrix.
+- **Cross-dialect pull (step 2) → narrow targeted matrix.** This is the dialect-sensitive part of Studio. The short-term common case the SPEC targets: `etl_datasource` is PostgreSQL or Oracle (the operator's real DB), `demo_database_url` is SQLite (the fast local-iteration target). Test priority:
+  1. **PG → SQLite** — the integrator-local + ETL-engineer common case.
+  2. **Oracle → SQLite** — the codebase already handles Oracle; same shape, different source dialect.
+  3. **SQLite → SQLite** — the degenerate case (same dialect on both sides); verifies the code path doesn't choke.
+  4. *(Longer-term, not gated on Studio shipping)* — `demo_database_url` of PG or Oracle re-adds cells. Skipped in the short-term Studio matrix; the codebase keeps the dialect support, we just don't force the matrix.
+- **Diagram → JS unit tests** in the existing `tests/js/` shape (Playwright harness, one per renderer feature: render the full graph for `sasquatch_pr`, toggle entity types, click-to-focus, coverage-tint mode). Renderer-specific once the spike picks D3 or graphviz.
+- **Studio + Dashboards integrated loop → 1-2 browser e2e tests** end-to-end against `sasquatch_pr` + SQLite (edit the YAML in Studio → Deploy → Dashboards reloads with the new data). NOT parametrized over `[qs, app2]` — Studio is App2-only; there's no QS-side analog to test parity against.
+- **Existing Dashboards / QS / 4-way agreement tests are untouched** by Studio. The X.2-era 13-cell `scenario × dialect × target` matrix and the agreement test keep running as they do today. Studio doesn't add to them and doesn't subtract from them.
+
+The principle: keep good coverage, but don't pay X.2's matrix-fan-out cost on a dev tool whose primary user is the developer wielding it.
 
 ## Reuse inventory (what Studio builds ON, not from scratch)
 
