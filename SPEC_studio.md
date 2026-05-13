@@ -245,11 +245,12 @@ ONE renderer, mode-switched overlays. The exact UI shape "falls out of the imple
 
 ### The renderer-choice spike — first task in X.4
 
-The current `common/tree/visuals.py::ForceGraph` is "barely a tech demo" (user). A force-directed view of `sasquatch_pr` (meatier than `spec_example`: dozens of accounts/rails, templates, chains) that's actually *legible* is the riskiest piece of X.4. So X.4 starts with a **timeboxed diagram spike** that compares three approaches:
+The current `common/tree/visuals.py::ForceGraph` is "barely a tech demo" (user). A force-directed view of `sasquatch_pr` (meatier than `spec_example`: dozens of accounts/rails, templates, chains) that's actually *legible* is the riskiest piece of X.4. So X.4 starts with a **timeboxed diagram spike** that compares two approaches:
 
-1. **D3 + d3-force** — the existing primitive, tuned. Maximum flexibility, hardest to get to "legible" without fighting the layout.
-2. **D3 + ELK as a layout engine** — D3 keeps the rendering job (it works); ELK computes positions and feeds them to D3. The hierarchical layout d3-force struggles to produce, with D3's interactivity intact. (NOT a Mermaid revisit — the Phase S Mermaid spike was a dead end.)
-3. **Enhanced graphviz** — the existing graphviz output is a perfectly legible static SVG; the existing training diagrams are graphviz-rendered and the user has called them "amazing." Add click-to-focus / type-toggle on a post-processed SVG (data-attrs per node + JS event handlers) and you get interactivity without losing the layout quality. The fallback if D3-based approaches don't get to legible.
+1. **D3 + d3-force** — the existing primitive, tuned. Maximum flexibility, hardest to get to "legible" without fighting the layout. Stays inside the existing JS-only stack (vendored d3 in the wheel).
+2. **Enhanced graphviz** — the existing graphviz output is a perfectly legible static SVG; the existing training diagrams are graphviz-rendered and the user has called them "amazing." Add click-to-focus / type-toggle on a post-processed SVG (data-attrs per node + JS event handlers) and you get interactivity without losing the layout quality `dot` already delivers.
+
+(ELK was the third candidate but it's out: it's a large Java library, which would drag a JVM dependency / build step into the runtime — a whole new complexity tier that doesn't fit a Python+JS tool. Mermaid was already out from the Phase S spike. So the spike is genuinely D3 vs graphviz, no third arm.)
 
 Spike deliverable = a **judgment call**, not a finished feature: which renderer gets us to "legible on `sasquatch_pr` with toggles + focus working."
 
