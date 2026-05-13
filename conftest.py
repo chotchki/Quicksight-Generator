@@ -16,8 +16,11 @@ them by hand — and both flow through the test-layer-chain runner's
   non-zero on lint *errors* (e.g. ``noInnerDeclarations``) and zero on
   warnings — same "errors fail, warnings don't" policy as the project
   config. Opt out: ``QS_GEN_SKIP_BIOME=1``. ``biome`` is a standalone
-  Rust binary (brew / ``setup-biome``), not an npm package — when it's
-  not on ``PATH`` the gate skips rather than failing.
+  Rust binary (brew locally / ``biomejs/setup-biome`` in CI), not a pip
+  dep — when it's not on ``PATH`` the gate skips rather than failing.
+  (No official Biome PyPI package yet — tracking biomejs/biome#8818; once
+  that lands it becomes a ``[dev]`` dep like ``pyright`` and this gate's
+  ``shutil.which`` lookup gets a venv-sibling check.)
 """
 
 from __future__ import annotations
