@@ -28,7 +28,10 @@ from quicksight_gen.cli._helpers import (
     resolve_l2_for_demo,
 )
 from quicksight_gen.cli._html_serve import run_html_server
-from quicksight_gen.common.html._studio_routes import make_studio_routes
+
+# ``_studio_routes`` is starlette-backed; defer to keep the CLI shell
+# importable on a no-``[serve]`` install (Pages, docs-portable smoke,
+# release wheel test). The factory is only needed when ``studio`` runs.
 
 
 @click.command("studio")
@@ -106,6 +109,10 @@ def studio(  # type: ignore[no-untyped-def]: Click decorator strips the function
     (X.4.c), editor (X.4.e), and Deploy pipeline (X.4.g) land in
     sub-phases. The CLI surface is stable from this commit forward.
     """
+    from quicksight_gen.common.html._studio_routes import (  # noqa: PLC0415
+        make_studio_routes,
+    )
+
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
     run_html_server(
         cfg=cfg,
