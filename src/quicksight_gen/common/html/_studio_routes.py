@@ -52,6 +52,7 @@ from quicksight_gen.common.l2.topology import (
     build_topology_graph_per_rail,
     topology_graph_for,
 )
+from quicksight_gen.common.l2.trainer import plants_per_node
 from quicksight_gen.common.sql.dialect import Dialect
 
 
@@ -212,6 +213,10 @@ def _render_diagram_page(
         if coverage_available
         else ""
     )
+    # X.4.c.6 — trainer overlay is always available (pure scenario
+    # walk, no DB). The meta tag mirrors the coverage shape so the JS
+    # shim's gate is symmetrical.
+    trainer_meta = '<meta name="diagram-trainer-available" content="1">\n'
     # Build URL fragments so layer / focus links preserve the other
     # param. Order: focus first, then layer (matches the natural read).
     def _qs(*, layer_val: int, focus_val: str | None) -> str:
@@ -242,6 +247,14 @@ def _render_diagram_page(
         if coverage_available
         else ""
     )
+    # X.4.c.6 — Trainer toggle. Always available (pure scenario walk).
+    # Off by default; on overlays per-plant-kind badges per node.
+    trainer_toggle_html = (
+        '<label class="chrome-trainer-toggle">'
+        '<input type="checkbox" id="toggle-trainer">'
+        ' Trainer'
+        '</label>'
+    )
 
     # Focus indicator + clear link. Visible only when ?focus= is set.
     # Clear preserves the current layer.
@@ -259,7 +272,7 @@ def _render_diagram_page(
 <head>
   <meta charset="utf-8">
   <title>Studio diagram — {prefix}</title>
-  {devlog_meta}{coverage_meta}<link rel="stylesheet" href="/studio/static/diagram.css">
+  {devlog_meta}{coverage_meta}{trainer_meta}<link rel="stylesheet" href="/studio/static/diagram.css">
   {devlog_script}</head>
 <body>
   <header class="studio-header">
@@ -275,6 +288,7 @@ def _render_diagram_page(
     </span>
     <a id="toggle-reset" href="?">Reset</a>
     {coverage_toggle_html}
+    {trainer_toggle_html}
     {focus_indicator}
     <span class="status" id="diagram-status">loading…</span>
   </div>
@@ -409,6 +423,17 @@ def make_studio_routes(
             name="studio_wasm_graphviz",
         ),
     ]
+
+    # X.4.c.6 — trainer JSON route. Always mounted (no DB needed —
+    # the scenario walk is pure Python over the cached L2).
+    async def trainer(_request: Request) -> JSONResponse:
+        instance = cache.get()
+        tm = plants_per_node(instance)
+        return JSONResponse(
+            {"nodes": {k: dict(v) for k, v in tm.by_node_id.items()}},
+        )
+
+    routes.append(Route("/diagram/trainer", trainer, methods=["GET"]))
 
     # X.4.c.5.c — coverage JSON route. Mounted only when a pool exists
     # (Studio CLI always provides one; the unit-test surface skips this).

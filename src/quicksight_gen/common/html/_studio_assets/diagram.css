@@ -304,7 +304,8 @@ body {
 }
 /* Coverage chrome toggle — pill style mirroring the layer-btn look so
  * it sits comfortably alongside the layer stepper + Reset button. */
-.diagram-chrome .chrome-coverage-toggle {
+.diagram-chrome .chrome-coverage-toggle,
+.diagram-chrome .chrome-trainer-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -312,4 +313,18 @@ body {
   color: var(--studio-muted);
   cursor: pointer;
   user-select: none;
+}
+
+/* X.4.c.6 — Trainer overlay. Nodes with planted exceptions get a
+ * warning-coloured outline (amber) + a thicker stroke so the trainer
+ * spots them at a glance. The hover <title> carries the per-kind
+ * counts (drift×2, overdraft×1, etc.). Combines additively with the
+ * coverage tint — a trainer-marked absent node is still grey, just
+ * with the amber outline.
+ */
+.topology-svg.trainer-on g.node[data-trainer-kinds] > polygon,
+.topology-svg.trainer-on g.node[data-trainer-kinds] > ellipse,
+.topology-svg.trainer-on g.node[data-trainer-kinds] > path {
+  stroke: #f59e0b !important;
+  stroke-width: 3px !important;
 }

@@ -202,6 +202,7 @@ async function renderDiagram() {
   _wireFocus(svg);
   _wirePanZoom(svg);
   _wireCoverage(svg);
+  _wireTrainer(svg);
 }
 
 // Vanilla SVG pan + wheel zoom — no library. Operates on the SVG's
@@ -472,6 +473,81 @@ function _stripIdPrefix(s) {
     if (s.startsWith(prefix)) return s.slice(prefix.length);
   }
   return s;
+}
+
+// X.4.c.6 — Trainer overlay. Pure scenario walk on the server (no DB);
+// route is always mounted, but we still gate on the
+// `<meta name="diagram-trainer-available">` so the chrome contract is
+// symmetric with coverage's.
+//
+// On toggle-on: fetch /diagram/trainer once (cached for the session),
+// stamp `data-trainer-kinds="drift,overdraft,..."` on each node that
+// has a planted plant, append the kinds to the existing <title>
+// hover, then add `.trainer-on` to the SVG root so the CSS badges
+// activate. On toggle-off: drop `.trainer-on`. The data-trainer-kinds
+// attrs stay (cheap; re-toggle doesn't refetch).
+let _trainerCache = null;
+async function _wireTrainer(svg) {
+  if (!document.querySelector('meta[name="diagram-trainer-available"]')) {
+    return;
+  }
+  const cb = document.getElementById("toggle-trainer");
+  if (!cb) return;
+
+  const apply = async () => {
+    if (!cb.checked) {
+      svg.classList.remove("trainer-on");
+      return;
+    }
+    if (_trainerCache === null) {
+      try {
+        const resp = await fetch("/diagram/trainer");
+        if (!resp.ok) {
+          console.error("studio/diagram: /diagram/trainer", resp.status);
+          return;
+        }
+        _trainerCache = await resp.json();
+      } catch (err) {
+        console.error("studio/diagram: trainer fetch failed", err);
+        return;
+      }
+    }
+    _stampTrainer(svg, _trainerCache);
+    svg.classList.add("trainer-on");
+  };
+  cb.addEventListener("change", apply);
+  // Off by default — no initial apply.
+}
+
+function _stampTrainer(svg, tr) {
+  const nodes = tr.nodes || {};
+  for (const g of svg.querySelectorAll('g.node[data-id]')) {
+    const id = g.getAttribute('data-id');
+    const kinds = nodes[id];
+    if (!kinds) continue;
+    // Comma-joined kind list — the data attr is what the CSS keys off
+    // (e.g. `[data-trainer-kinds*="drift"]`); the actual counts live
+    // in the title for hover.
+    const kindList = Object.keys(kinds).sort();
+    g.setAttribute('data-trainer-kinds', kindList.join(','));
+
+    // Append "[plants: drift×2, overdraft×1]" to the existing <title>
+    // so the operator sees both row count + plant breakdown.
+    const summary = kindList
+      .map((k) => `${k}×${kinds[k]}`)  // × = multiplication sign
+      .join(', ');
+    let titleEl = g.querySelector('title');
+    if (!titleEl) {
+      titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      g.insertBefore(titleEl, g.firstChild);
+    }
+    const display = g.getAttribute('data-display-id') || id;
+    const baseTitle = titleEl.textContent || display;
+    // Avoid double-appending the plants block on re-toggle.
+    if (!baseTitle.includes('[plants:')) {
+      titleEl.textContent = `${baseTitle} [plants: ${summary}]`;
+    }
+  }
 }
 
 if (document.readyState === "loading") {

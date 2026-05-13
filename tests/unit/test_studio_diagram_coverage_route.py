@@ -199,3 +199,42 @@ def test_make_studio_routes_pool_without_dialect_raises() -> None:
             make_studio_routes(cache, db_pool=pool)
     finally:
         asyncio.run(pool.close())
+
+
+# ---------------------------------------------------------------------------
+# X.4.c.6 — Trainer route + chrome integration
+# ---------------------------------------------------------------------------
+
+
+def test_trainer_route_returns_json_without_pool() -> None:
+    """Trainer is pure scenario walk — no pool needed. Always mounted."""
+    app = _build_studio_app_no_pool()
+    with TestClient(app) as client:
+        resp = client.get("/diagram/trainer")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert "nodes" in payload
+        # spec_example's auto-scenario plants something — assert at least
+        # one node has at least one plant kind.
+        nodes = payload["nodes"]
+        assert len(nodes) > 0
+        # Each entry is {plant_kind: count}; counts must be positive ints.
+        for node_id, kinds in nodes.items():
+            assert isinstance(kinds, dict)
+            assert all(isinstance(c, int) and c > 0 for c in kinds.values())
+            # Node IDs match the topology prefix scheme.
+            assert (
+                node_id.startswith("role__")
+                or node_id.startswith("rail__")
+                or node_id.startswith("tmpl__")
+            )
+
+
+def test_trainer_chrome_toggle_always_present() -> None:
+    """The Trainer toggle + meta tag are server-rendered always (the
+    overlay reads the in-memory L2, no DB needed)."""
+    app = _build_studio_app_no_pool()
+    with TestClient(app) as client:
+        body = client.get("/diagram").text
+        assert 'id="toggle-trainer"' in body
+        assert 'name="diagram-trainer-available"' in body
