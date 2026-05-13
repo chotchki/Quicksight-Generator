@@ -332,6 +332,10 @@ async function renderDiagram() {
   // ``boundedLinkForce`` (added below) enforces the per-kind
   // ``[min, max]`` bounds each tick.
   const knobs = _readKnobs();
+  // Boolean state for the viewport-clamp checkbox; closed over by the
+  // viewport force below so toggling fires immediately on next tick
+  // without re-binding.
+  const viewportState = { clamp: true };
   const sim = d3.forceSimulation(nodes)
     .force("link", d3.forceLink(links).id((d) => d.id).strength(0.1))
     .force("link_bounds", _boundedLinkForce(links, knobs))
@@ -339,8 +343,10 @@ async function renderDiagram() {
     .force("collide", d3.forceCollide().strength(0.95))
     .force("y", d3.forceY((d) => Y_BAND[d.kind] || height / 2))
     .force("x", d3.forceX(width / 2))
+    .force("viewport", _viewportClampForce(nodes, width, height, viewportState))
     .on("tick", () => {});
   _bindForces(sim, knobs);
+  _wireViewportClamp(viewportState, sim);
 
   // Wire drag now that sim exists in closure.
   node.call(d3.drag()
@@ -535,6 +541,53 @@ function _wireBandHints(target) {
   const apply = () => target.classList.toggle("show-bands", cb.checked);
   cb.addEventListener("change", apply);
   apply();
+}
+
+function _wireViewportClamp(state, sim) {
+  const cb = document.getElementById("toggle-viewport-clamp");
+  if (!cb) return;
+  state.clamp = cb.checked;
+  cb.addEventListener("change", () => {
+    state.clamp = cb.checked;
+    // Nudge the simulation so a flip from off→on snaps overflowing
+    // nodes back inside the viewport on the very next tick.
+    sim.alpha(0.3).restart();
+  });
+}
+
+// Hard viewport clamp — runs each tick after the other forces have
+// updated velocities. Any node that would leave the [0, width] x
+// [0, height] viewBox box gets its position pinned to the boundary
+// (with the node's own measured radius as inset so it doesn't half-
+// disappear). Outward velocity is zeroed so the simulation doesn't
+// waste energy trying to push a clamped node further out.
+//
+// Pinned endpoints (``fx`` / ``fy`` set during drag) bypass the clamp
+// so the user can drag a node to wherever they want.
+function _viewportClampForce(nodes, width, height, state) {
+  function force() {
+    if (!state.clamp) return;
+    for (const node of nodes) {
+      if (node.fx != null) continue;
+      const r = (node.measuredRadius || 30) + 4;
+      if (node.x < r) {
+        node.x = r;
+        if (node.vx < 0) node.vx = 0;
+      } else if (node.x > width - r) {
+        node.x = width - r;
+        if (node.vx > 0) node.vx = 0;
+      }
+      if (node.y < r) {
+        node.y = r;
+        if (node.vy < 0) node.vy = 0;
+      } else if (node.y > height - r) {
+        node.y = height - r;
+        if (node.vy > 0) node.vy = 0;
+      }
+    }
+  }
+  force.initialize = function () {};
+  return force;
 }
 
 function _wireBundleToggle() {

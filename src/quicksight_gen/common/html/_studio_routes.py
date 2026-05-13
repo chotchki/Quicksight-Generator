@@ -419,6 +419,10 @@ def _render_d3_diagram_page(
       <input type="checkbox" id="toggle-bundle"{" checked" if bundle_parallel_rails else ""}>
       bundle parallel rails
     </label>
+    <label class="knob-row" title="Constrain every node to stay within the visible canvas viewport. Negative X/Y pulls + low repulsion can otherwise fling nodes off-screen.">
+      <input type="checkbox" id="toggle-viewport-clamp" checked>
+      constrain to viewport
+    </label>
     <label class="knob-row" title="Show faint horizontal band-stripes">
       <input type="checkbox" id="toggle-band-hints">
       band hints
