@@ -52,10 +52,17 @@ const NODE_RADIUS = {
 // twiddles per-kind to fine-tune (e.g. templates need more repulsion
 // since their labels are longer).
 const KNOBS = {
-  // Per-node-kind Y-band pull (0 = no banding, 1 = locked).
-  y_strength_role:     { def: 0.15, min: 0, max: 1.0, step: 0.05 },
-  y_strength_rail:     { def: 0.15, min: 0, max: 1.0, step: 0.05 },
-  y_strength_template: { def: 0.15, min: 0, max: 1.0, step: 0.05 },
+  // Per-node-kind Y-pull. Positive = toward Y-band home; negative =
+  // pushed AWAY from it (e.g., negative Y on templates pushes them
+  // downward instead of upward).
+  y_strength_role:     { def: 0.15, min: -1.0, max: 1.0, step: 0.05 },
+  y_strength_rail:     { def: 0.15, min: -1.0, max: 1.0, step: 0.05 },
+  y_strength_template: { def: 0.15, min: -1.0, max: 1.0, step: 0.05 },
+  // Per-node-kind X-pull. Positive = toward canvas center; negative =
+  // pushed away from center (toward the edges).
+  x_strength_role:     { def: 0.04, min: -1.0, max: 1.0, step: 0.02 },
+  x_strength_rail:     { def: 0.04, min: -1.0, max: 1.0, step: 0.02 },
+  x_strength_template: { def: 0.04, min: -1.0, max: 1.0, step: 0.02 },
   // Per-node-kind repulsion (negative; more negative = harder push).
   charge_role:     { def: -450, min: -1500, max: -50, step: 10 },
   charge_rail:     { def: -450, min: -1500, max: -50, step: 10 },
@@ -69,8 +76,6 @@ const KNOBS = {
   link_template_member: { def: 130, min: 40, max: 300, step: 5 },
   link_chain:           { def: 90,  min: 40, max: 300, step: 5 },
   link_control_parent:  { def: 80,  min: 40, max: 300, step: 5 },
-  // Global horizontal centering pull (low = nodes spread wider).
-  x_strength: { def: 0.04, min: 0, max: 0.3, step: 0.01 },
 };
 
 function _readKnobs() {
@@ -390,7 +395,12 @@ function _bindForces(sim, knobs) {
     if (d.kind === "control_parent") return knobs.link_control_parent;
     return 90;
   });
-  sim.force("x").strength(knobs.x_strength);
+  sim.force("x").strength((d) => {
+    if (d.kind === "role") return knobs.x_strength_role;
+    if (d.kind === "rail") return knobs.x_strength_rail;
+    if (d.kind === "template") return knobs.x_strength_template;
+    return 0.04;
+  });
 }
 
 function _wireKnobs(sim, knobs) {

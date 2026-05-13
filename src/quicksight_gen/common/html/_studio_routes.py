@@ -428,9 +428,13 @@ def _render_d3_diagram_page(
 
   <div class="diagram-chrome">
     <strong class="chrome-section-label">Roles:</strong>
-    <span class="knob-row" title="How strongly Role nodes are pulled to their Y-band (0=free, 1=locked)">
-      Y-pull <input type="range" id="knob-y_strength_role" min="0" max="1" step="0.05">
+    <span class="knob-row" title="Y-pull on Role nodes. Positive = toward Y-band home; negative = pushed AWAY (e.g. -1 = pushed off-band)">
+      Y <input type="range" id="knob-y_strength_role" min="-1" max="1" step="0.05">
       <span class="knob-value" id="knob-y_strength_role-value">0.15</span>
+    </span>
+    <span class="knob-row" title="X-pull on Role nodes. Positive = toward canvas center; negative = pushed toward the edges">
+      X <input type="range" id="knob-x_strength_role" min="-1" max="1" step="0.02">
+      <span class="knob-value" id="knob-x_strength_role-value">0.04</span>
     </span>
     <span class="knob-row" title="Repulsion between Role nodes (more negative = harder push)">
       Repel <input type="range" id="knob-charge_role" min="-1500" max="-50" step="10">
@@ -441,9 +445,13 @@ def _render_d3_diagram_page(
       <span class="knob-value" id="knob-collide_role-value">14</span>
     </span>
     <strong class="chrome-section-label">Rails:</strong>
-    <span class="knob-row" title="How strongly Rail nodes are pulled to their Y-band">
-      Y-pull <input type="range" id="knob-y_strength_rail" min="0" max="1" step="0.05">
+    <span class="knob-row" title="Y-pull on Rail nodes (positive = toward Y-band; negative = pushed away)">
+      Y <input type="range" id="knob-y_strength_rail" min="-1" max="1" step="0.05">
       <span class="knob-value" id="knob-y_strength_rail-value">0.15</span>
+    </span>
+    <span class="knob-row" title="X-pull on Rail nodes (positive = toward center; negative = toward edges)">
+      X <input type="range" id="knob-x_strength_rail" min="-1" max="1" step="0.02">
+      <span class="knob-value" id="knob-x_strength_rail-value">0.04</span>
     </span>
     <span class="knob-row" title="Repulsion between Rail nodes">
       Repel <input type="range" id="knob-charge_rail" min="-1500" max="-50" step="10">
@@ -454,9 +462,13 @@ def _render_d3_diagram_page(
       <span class="knob-value" id="knob-collide_rail-value">14</span>
     </span>
     <strong class="chrome-section-label">Templates:</strong>
-    <span class="knob-row" title="How strongly Template nodes are pulled to their Y-band">
-      Y-pull <input type="range" id="knob-y_strength_template" min="0" max="1" step="0.05">
+    <span class="knob-row" title="Y-pull on Template nodes (positive = toward Y-band; negative = pushed away)">
+      Y <input type="range" id="knob-y_strength_template" min="-1" max="1" step="0.05">
       <span class="knob-value" id="knob-y_strength_template-value">0.15</span>
+    </span>
+    <span class="knob-row" title="X-pull on Template nodes (positive = toward center; negative = toward edges)">
+      X <input type="range" id="knob-x_strength_template" min="-1" max="1" step="0.02">
+      <span class="knob-value" id="knob-x_strength_template-value">0.04</span>
     </span>
     <span class="knob-row" title="Repulsion between Template nodes">
       Repel <input type="range" id="knob-charge_template" min="-1500" max="-50" step="10">
@@ -485,11 +497,6 @@ def _render_d3_diagram_page(
     <span class="knob-row" title="Control hierarchy (subledger → control role) edges">
       control <input type="range" id="knob-link_control_parent" min="40" max="300" step="5">
       <span class="knob-value" id="knob-link_control_parent-value">80</span>
-    </span>
-    <strong class="chrome-section-label">Global:</strong>
-    <span class="knob-row" title="Horizontal centering pull (low = nodes spread wider)">
-      X-center <input type="range" id="knob-x_strength" min="0" max="0.3" step="0.01">
-      <span class="knob-value" id="knob-x_strength-value">0.04</span>
     </span>
     <span class="status" style="margin-left:auto">URL roundtrips · changes log to /dev-log</span>
   </div>
