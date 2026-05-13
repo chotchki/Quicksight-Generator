@@ -337,7 +337,11 @@ def _render_diagram_page(cache: L2InstanceCache, dev_log: bool) -> str:
 """
 
 
-def _render_d3_diagram_page(cache: L2InstanceCache, dev_log: bool) -> str:
+def _render_d3_diagram_page(
+    cache: L2InstanceCache,
+    dev_log: bool,
+    bundle_parallel_rails: bool = True,
+) -> str:
     """X.4.b.2 — spike arm A: d3-force topology renderer.
 
     Sibling to ``_render_diagram_page`` (arm B / graphviz). Shares the
@@ -346,9 +350,19 @@ def _render_d3_diagram_page(cache: L2InstanceCache, dev_log: bool) -> str:
     first-class node — so rails can be visually banded between roles
     and templates and chains/templates connect to one canonical
     rail-node instead of to a duplicated label/cluster instance.
+
+    ``bundle_parallel_rails`` (default True) groups pure-connectivity
+    rails into bundle nodes (one per topological key) — same elegance
+    graphviz used to collapse "5 rails: A, B, C..." between role pairs.
+    Anchored rails (chain endpoints / template leg-rails) always stay
+    individual since the sequencing/composition edges need them. Driven
+    by the ``?bundle=off`` URL param + the chrome checkbox.
     """
     instance = cache.get()
-    payload = to_d3_per_rail_json(instance)
+    payload = to_d3_per_rail_json(
+        instance,
+        bundle_parallel_rails=bundle_parallel_rails,
+    )
     sidecar = json.dumps(payload)  # typing-smell: ignore[json-indent]: inline page payload
 
     prefix = escape(str(instance.instance))
@@ -401,6 +415,10 @@ def _render_d3_diagram_page(cache: L2InstanceCache, dev_log: bool) -> str:
       <button type="button" data-layer="3" class="layer-btn active">+ Chains&nbsp;&amp;&nbsp;Templates</button>
     </span>
     <button id="toggle-reset">Reset</button>
+    <label class="knob-row" title="Bundle pure-connectivity rails (those not chain-referenced or template-leg) by their (source, destination) pair. Anchored rails stay individual. Reloads the page with ?bundle=on|off.">
+      <input type="checkbox" id="toggle-bundle"{" checked" if bundle_parallel_rails else ""}>
+      bundle parallel rails
+    </label>
     <label class="knob-row" title="Show faint horizontal band-stripes">
       <input type="checkbox" id="toggle-band-hints">
       band hints
@@ -523,8 +541,9 @@ def make_studio_routes(
     async def diagram(_request: Request) -> HTMLResponse:
         return HTMLResponse(_render_diagram_page(cache, dev_log))
 
-    async def diagram_d3(_request: Request) -> HTMLResponse:
-        return HTMLResponse(_render_d3_diagram_page(cache, dev_log))
+    async def diagram_d3(request: Request) -> HTMLResponse:
+        bundle = request.query_params.get("bundle", "on") != "off"
+        return HTMLResponse(_render_d3_diagram_page(cache, dev_log, bundle))
 
     routes: list[Route | Mount] = [
         Route("/", landing, methods=["GET"]),

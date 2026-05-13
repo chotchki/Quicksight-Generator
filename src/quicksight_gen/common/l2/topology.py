@@ -639,7 +639,11 @@ def topology_graph_for(instance: L2Instance) -> TopologyGraph:
     )
 
 
-def to_d3_per_rail_json(instance: L2Instance) -> dict[str, Any]:
+def to_d3_per_rail_json(
+    instance: L2Instance,
+    *,
+    bundle_parallel_rails: bool = True,
+) -> dict[str, Any]:
     """Emit the rails-as-first-class-nodes JSON shape for d3-force (X.4.b.2).
 
     Different shape from ``to_d3_force_json``: every Rail becomes its own
@@ -657,6 +661,15 @@ def to_d3_per_rail_json(instance: L2Instance) -> dict[str, Any]:
     composition where rails are nodes, not edge labels — and that
     expansion can't be done losslessly on the JS side because it
     needs per-rail source/destination role info.
+
+    ``bundle_parallel_rails`` (default True) collapses pure-connectivity
+    rails — TwoLegRails sharing exact (source_role, destination_role)
+    AND SingleLegRails sharing (leg_role, leg_direction), with NEITHER
+    referenced by any chain or template — into one bundle node per
+    group. Anchored rails (chain endpoints / template leg-rails) always
+    stay as individual nodes since the chain/template edges need to
+    attach to a stable rail identity. Set to False to render every
+    rail individually (the v0 shape).
 
     Output shape:
     ```
@@ -709,17 +722,38 @@ def to_d3_per_rail_json(instance: L2Instance) -> dict[str, Any]:
             role_dict["templated"] = True
         nodes.append(role_dict)
 
-    # 2. Rail nodes — one per rail, ALWAYS (not just chain-refs / template-legs).
-    for rail in instance.rails:
+    # 2. Rail nodes. Bundling rule (when ``bundle_parallel_rails=True``):
+    # group rails by their topological key, then within each group emit
+    # individual nodes for "anchored" rails (chain endpoints / template
+    # leg-rails — they need stable identity for those edges to attach)
+    # and ONE bundle node for the remaining 2+ "pure connectivity" rails.
+    # A group with 0 or 1 unanchored rails emits individuals only — no
+    # synthetic bundle of one.
+
+    rail_names_set: set[Identifier] = {r.name for r in instance.rails}
+    template_names_set: set[Identifier] = {
+        t.name for t in instance.transfer_templates
+    }
+    anchored_rails: set[Identifier] = set()
+    for chain in instance.chains:
+        if chain.parent in rail_names_set:
+            anchored_rails.add(chain.parent)
+        if chain.child in rail_names_set:
+            anchored_rails.add(chain.child)
+    for tmpl in instance.transfer_templates:
+        for rn in tmpl.leg_rails:
+            if rn in rail_names_set:
+                anchored_rails.add(rn)
+
+    def _emit_individual_rail(rail: Rail) -> None:
         if isinstance(rail, TwoLegRail):
-            rail_dict: dict[str, Any] = {
+            nodes.append({
                 "id": _rail_id(rail.name),
                 "kind": "rail",
                 "label": f"{rail.name}\n({rail.transfer_type})",
                 "rail_subtype": "two_leg",
                 "transfer_type": rail.transfer_type,
-            }
-            nodes.append(rail_dict)
+            })
             for src_role in rail.source_role:
                 links.append({
                     "source": _rail_id(rail.name),
@@ -735,16 +769,14 @@ def to_d3_per_rail_json(instance: L2Instance) -> dict[str, Any]:
                     "endpoint": "destination",
                 })
         else:
-            # SingleLegRail — leg_role(s), one direction.
-            rail_dict = {
+            nodes.append({
                 "id": _rail_id(rail.name),
                 "kind": "rail",
                 "label": f"{rail.name}\n({rail.transfer_type}, {rail.leg_direction})",
                 "rail_subtype": "single_leg",
                 "transfer_type": rail.transfer_type,
                 "leg_direction": rail.leg_direction,
-            }
-            nodes.append(rail_dict)
+            })
             for leg_role in rail.leg_role:
                 links.append({
                     "source": _rail_id(rail.name),
@@ -753,8 +785,105 @@ def to_d3_per_rail_json(instance: L2Instance) -> dict[str, Any]:
                     "endpoint": "leg",
                 })
 
+    if not bundle_parallel_rails:
+        for rail in instance.rails:
+            _emit_individual_rail(rail)
+    else:
+        # Group by topological key (same source/destination tuple for
+        # two-leg, same leg_role/direction for single-leg). transfer_type
+        # is NOT in the key — bundles can mix transfer_types just like
+        # graphviz's "5 rails: A, B (ach, wire)" labels did.
+        # Key shape: ("twoleg", source_tuple, destination_tuple) OR
+        #            ("singleleg", leg_tuple, leg_direction).
+        groups: dict[
+            tuple[str, tuple[Identifier, ...], tuple[Identifier, ...] | str],
+            list[Rail],
+        ] = {}
+        for rail in instance.rails:
+            if isinstance(rail, TwoLegRail):
+                key: tuple[
+                    str, tuple[Identifier, ...], tuple[Identifier, ...] | str,
+                ] = (
+                    "twoleg",
+                    tuple(rail.source_role),
+                    tuple(rail.destination_role),
+                )
+            else:
+                key = ("singleleg", tuple(rail.leg_role), rail.leg_direction)
+            groups.setdefault(key, []).append(rail)
+
+        bundle_idx = 0
+        for key, rails_in_group in groups.items():
+            anchored = [r for r in rails_in_group if r.name in anchored_rails]
+            unanchored = [r for r in rails_in_group if r.name not in anchored_rails]
+            for rail in anchored:
+                _emit_individual_rail(rail)
+            if len(unanchored) >= 2:
+                bundle_id = f"rail__bundle_{bundle_idx}"
+                bundle_idx += 1
+                names_sorted = sorted(str(r.name) for r in unanchored)
+                types_sorted = sorted({r.transfer_type for r in unanchored})
+                if key[0] == "twoleg":
+                    bundle_label = (
+                        f"{len(unanchored)} rails: "
+                        + ", ".join(names_sorted)
+                        + "\n(" + ", ".join(types_sorted) + ")"
+                    )
+                else:
+                    direction = str(key[2])
+                    bundle_label = (
+                        f"{len(unanchored)} rails: "
+                        + ", ".join(names_sorted)
+                        + f"\n({', '.join(types_sorted)}, {direction})"
+                    )
+                nodes.append({
+                    "id": bundle_id,
+                    "kind": "rail",
+                    "label": bundle_label,
+                    "rail_subtype": "bundle",
+                    "rail_count": len(unanchored),
+                    "rail_names": ", ".join(names_sorted),
+                    "transfer_types": ", ".join(types_sorted),
+                })
+                # Wire rail_endpoint edges from the bundle node to every
+                # role the group touches.
+                if key[0] == "twoleg":
+                    src_tuple = key[1]
+                    dst_tuple = key[2]
+                    assert isinstance(dst_tuple, tuple)  # twoleg invariant
+                    for src_role in src_tuple:
+                        links.append({
+                            "source": bundle_id,
+                            "target": _role_id(src_role),
+                            "kind": "rail_endpoint",
+                            "endpoint": "source",
+                        })
+                    for dst_role in dst_tuple:
+                        links.append({
+                            "source": bundle_id,
+                            "target": _role_id(dst_role),
+                            "kind": "rail_endpoint",
+                            "endpoint": "destination",
+                        })
+                else:
+                    leg_tuple = key[1]
+                    for leg_role in leg_tuple:
+                        links.append({
+                            "source": bundle_id,
+                            "target": _role_id(leg_role),
+                            "kind": "rail_endpoint",
+                            "endpoint": "leg",
+                        })
+            elif len(unanchored) == 1:
+                _emit_individual_rail(unanchored[0])
+            # else: 0 unanchored — only anchored rails in this group, all
+            # already emitted above.
+
+    # Re-derive template_names from set we built earlier (kept for the
+    # chain-edge resolution below).
+    template_names = template_names_set
+
     # 3. Template nodes + template_member edges + template_role helpers.
-    template_names: set[Identifier] = {t.name for t in instance.transfer_templates}
     for template in instance.transfer_templates:
         nodes.append({
             "id": _template_id(template.name),

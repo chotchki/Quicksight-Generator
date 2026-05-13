@@ -195,6 +195,7 @@ async function renderDiagram() {
     .attr("data-kind", (d) => d.kind)
     .attr("data-id", (d) => d.id)
     .attr("data-scope", (d) => d.scope || null)
+    .attr("data-rail-subtype", (d) => d.rail_subtype || null)
     .style("cursor", "pointer");
 
   // Per-kind shape + label.
@@ -208,12 +209,16 @@ async function renderDiagram() {
         .attr("x", -55).attr("y", -18);
       _labelLines(sel, d.label, 0, 0, 11);
     } else if (d.kind === "rail") {
+      // Bundle nodes are wider (their label includes "N rails: A, B, C…").
+      const isBundle = d.rail_subtype === "bundle";
+      const w = isBundle ? 160 : 100;
+      const h = isBundle ? 32 : 24;
       sel.append("rect")
         .attr("class", "shape rail-pill")
         .attr("rx", 12).attr("ry", 12)
-        .attr("width", 100).attr("height", 24)
-        .attr("x", -50).attr("y", -12);
-      _labelLines(sel, d.label, 0, -1, 9);
+        .attr("width", w).attr("height", h)
+        .attr("x", -w / 2).attr("y", -h / 2);
+      _labelLines(sel, d.label, 0, -1, isBundle ? 8 : 9);
     } else if (d.kind === "template") {
       sel.append("rect")
         .attr("class", "shape template-rect")
@@ -326,6 +331,7 @@ async function renderDiagram() {
   _wireReset(svg, resetFocus);
   _wireKnobs(sim, knobs);
   _wireBandHints(target);
+  _wireBundleToggle();
 }
 
 function _wireKnobs(sim, knobs) {
@@ -391,6 +397,18 @@ function _wireBandHints(target) {
   const apply = () => target.classList.toggle("show-bands", cb.checked);
   cb.addEventListener("change", apply);
   apply();
+}
+
+function _wireBundleToggle() {
+  // Bundling is server-side (different JSON shape), so a flip needs
+  // a page reload with ?bundle=on|off in the URL.
+  const cb = document.getElementById("toggle-bundle");
+  if (!cb) return;
+  cb.addEventListener("change", () => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("bundle", cb.checked ? "on" : "off");
+    window.location.search = params.toString();
+  });
 }
 
 function _setCount(id, n) {

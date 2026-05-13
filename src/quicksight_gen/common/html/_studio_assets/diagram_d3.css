@@ -69,6 +69,13 @@
   stroke: #666666;
   stroke-width: 1;
 }
+/* Bundle nodes — slightly stronger border + faint fill change so the
+ * user can tell at a glance "this is N rails, not 1". */
+.topology-d3-svg .node-rail[data-rail-subtype="bundle"] .rail-pill {
+  fill: #e8e8e8;
+  stroke: #1f4e79;
+  stroke-width: 1.5;
+}
 .topology-d3-svg .template-rect {
   fill: #fce4d6;
   stroke: #a6622c;
