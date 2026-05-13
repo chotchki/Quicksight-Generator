@@ -18,27 +18,23 @@ import importlib.util
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
-import uvicorn
 
-from quicksight_gen.common.html._smoke_app import (
-    SMOKE_FILTER_SPECS,
-    build_smoke_app,
-    stub_money_trail_fetcher,
-)
-from quicksight_gen.common.html.server import (
-    ServedDashboard,
-    make_app,
-)
 from quicksight_gen.common.l2.cache import L2InstanceCache
-from quicksight_gen.common.theme import resolve_l2_theme
 
-# Starlette types only used for the studio_routes_factory contract;
-# imported under TYPE_CHECKING would force a quoted alias everywhere
-# the factory is referenced. They're cheap modules — direct import.
-from starlette.routing import Mount, Route
+# Starlette + uvicorn + the heavy server/_smoke_app modules are
+# ``[serve]``-extra-only. Importing them at module top breaks any
+# install-flavor that doesn't ship ``[serve]`` (Pages job, the
+# ``docs-portable-install`` job, the release.yml smoke wheel test —
+# all install ``[docs]`` only and run ``quicksight-gen --help`` /
+# ``docs apply``, which only need the CLI shell to import). Original
+# ``cli/serve.py`` deferred them inside the command body; restoring
+# that pattern here keeps the no-``[serve]`` install paths working.
+# See ``run_html_server`` for the lazy imports.
+if TYPE_CHECKING:
+    from starlette.routing import Mount, Route
 
 
 # The four real apps. Dashboards + Studio both serve them; Studio
@@ -118,7 +114,11 @@ def build_real_app(app_name: str, cfg: Any, instance: Any) -> tuple[Any, Any]:  
 # returns a list of routes. ``cli.dashboards`` passes ``None``;
 # ``cli.studio`` passes ``make_studio_routes``. The seam keeps
 # ``_html_serve`` ignorant of Studio internals.
-StudioRoutesFactory = Callable[[L2InstanceCache], list[Route | Mount]]
+#
+# PEP 695 ``type`` statement defers evaluation — Route/Mount only get
+# resolved when a type-checker walks the alias, never at module load.
+# That keeps the no-``[serve]`` install paths importable.
+type StudioRoutesFactory = Callable[[L2InstanceCache], list[Route | Mount]]
 
 
 def run_html_server(
@@ -143,6 +143,24 @@ def run_html_server(
     The `--stub` / `--app smoke` paths are dashboards-only — Studio
     callers must pass ``stub=False`` and ``app_name != "smoke"``.
     """
+    # Lazy imports — see module-level comment about [serve]-extra
+    # gating. These only fire when the command actually runs, never
+    # at CLI shell import time.
+    import uvicorn  # noqa: PLC0415
+
+    from quicksight_gen.common.html._smoke_app import (  # noqa: PLC0415
+        SMOKE_FILTER_SPECS,
+        build_smoke_app,
+        stub_money_trail_fetcher,
+    )
+    from quicksight_gen.common.html.server import (  # noqa: PLC0415
+        ServedDashboard,
+        make_app,
+    )
+    from quicksight_gen.common.theme import (  # noqa: PLC0415
+        resolve_l2_theme,
+    )
+
     if stub and app_name != "smoke":
         raise click.UsageError(
             f"--stub only applies to --app smoke (the DB-free fixture); "

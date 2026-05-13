@@ -1,5 +1,23 @@
 # Release Notes
 
+## v10.0.0a3 — hotfix: restore the lazy-import discipline for `[serve]`-extra deps in the CLI shell
+
+Hotfix for v10.0.0a2. Caught by the v10.0.0a2 push pipeline:
+
+- `pages.yml::build` (installs `[docs]`, runs `quicksight-gen docs apply`) crashed at `from quicksight_gen.cli import main` with `ModuleNotFoundError: No module named 'uvicorn'`.
+- `release.yml::Smoke test wheel` (installs the wheel + `[docs]`, runs `quicksight-gen --version`) crashed at the same import path.
+
+Root cause: the X.4.a refactor (v10.0.0a2) lifted `cli/serve.py`'s `import uvicorn` and `from quicksight_gen.common.html.{server,_smoke_app} import …` from inside the function body up to the module top of the new `cli/_html_serve.py`. The original lazy-import pattern existed exactly so a `[docs]`-only install could `--help` / `docs apply` without `[serve]` (uvicorn / starlette aren't pulled by `[docs]`); the lift broke that.
+
+Fix:
+
+- `cli/_html_serve.py` — uvicorn + starlette + `common.html.server` + `common.html._smoke_app` imports moved back inside `run_html_server`. `Route` / `Mount` move under `TYPE_CHECKING` (they're only the type-alias shape).
+- `cli/_html_serve.py` — the `StudioRoutesFactory` type alias becomes a PEP 695 `type` statement (Python 3.13's lazy `type X = ...` form), so `Route | Mount` is only evaluated when a type-checker walks the alias, never at module load.
+- `cli/studio.py` — `from quicksight_gen.common.html._studio_routes import make_studio_routes` deferred inside the `studio` function body (`_studio_routes.py` is starlette-backed; same gating concern).
+- `tests/unit/test_cli_no_serve_extra.py` (new — pins the regression class). Installs a `sys.meta_path` finder that ImportErrors on every `uvicorn` / `starlette` import, evicts already-loaded copies, then asserts (a) `from quicksight_gen.cli import main` works and (b) `CliRunner.invoke(main, ['--help'])` exits 0 with both `studio` + `dashboards` listed (proves the full Click registration walks without crashing on the simulated-missing imports). Adds a guarded fixture so the eviction is bounded to the test scope and other tests that legitimately use starlette stay green.
+
+The unit suite stays at +2 from the v10.0.0a2 baseline (1441 passed / 73 skipped); no behavioral change beyond making the CLI shell importable on the `[docs]`-only install paths the workflow files use.
+
 ## v10.0.0a2 — Phase X.4.a (Studio foundations): the severable mount + the `studio` / `dashboards` Click commands
 
 Pre-release / alpha tag. **Internal CLI surface change**: the X.2-era `serve app2 apply` is removed (no deprecation alias — the operator was the only user), replaced by two top-level commands. The four-app behavior + every `--app` / `--stub` / `--docs` / `--dev-log` / `--host` / `--port` flag round-trip identically through the rename; the only visible move is the verb itself. **Customer-facing artifacts (the stable `schema` / `data` / `json` / `audit` groups, `config.yaml`, the L2 institution YAML)** are unchanged.
