@@ -427,24 +427,67 @@ def _render_d3_diagram_page(
   </div>
 
   <div class="diagram-chrome">
-    <strong class="chrome-section-label">Force knobs:</strong>
-    <span class="knob-row" title="How strongly nodes are pulled to their kind's Y-band (0 = no banding, 1 = locked)">
-      Y-band <input type="range" id="knob-y_strength" min="0" max="1" step="0.05">
-      <span class="knob-value" id="knob-y_strength-value">0.15</span>
+    <strong class="chrome-section-label">Roles:</strong>
+    <span class="knob-row" title="How strongly Role nodes are pulled to their Y-band (0=free, 1=locked)">
+      Y-pull <input type="range" id="knob-y_strength_role" min="0" max="1" step="0.05">
+      <span class="knob-value" id="knob-y_strength_role-value">0.15</span>
     </span>
-    <span class="knob-row" title="Node-node repulsion (more negative = nodes push each other harder)">
-      Repulsion <input type="range" id="knob-charge" min="-1500" max="-50" step="10">
-      <span class="knob-value" id="knob-charge-value">-450</span>
+    <span class="knob-row" title="Repulsion between Role nodes (more negative = harder push)">
+      Repel <input type="range" id="knob-charge_role" min="-1500" max="-50" step="10">
+      <span class="knob-value" id="knob-charge_role-value">-450</span>
     </span>
-    <span class="knob-row" title="Preferred edge length (cross-band edges get +20%)">
-      Link dist <input type="range" id="knob-link_distance" min="40" max="250" step="5">
-      <span class="knob-value" id="knob-link_distance-value">110</span>
+    <span class="knob-row" title="Extra padding around each Role node">
+      Pad <input type="range" id="knob-collide_role" min="2" max="60" step="1">
+      <span class="knob-value" id="knob-collide_role-value">14</span>
     </span>
-    <span class="knob-row" title="Extra padding around each node before it overlaps its neighbors">
-      Collide pad <input type="range" id="knob-collide_pad" min="2" max="40" step="1">
-      <span class="knob-value" id="knob-collide_pad-value">14</span>
+    <strong class="chrome-section-label">Rails:</strong>
+    <span class="knob-row" title="How strongly Rail nodes are pulled to their Y-band">
+      Y-pull <input type="range" id="knob-y_strength_rail" min="0" max="1" step="0.05">
+      <span class="knob-value" id="knob-y_strength_rail-value">0.15</span>
     </span>
-    <span class="knob-row" title="Horizontal centering pull (low = nodes spread out wider)">
+    <span class="knob-row" title="Repulsion between Rail nodes">
+      Repel <input type="range" id="knob-charge_rail" min="-1500" max="-50" step="10">
+      <span class="knob-value" id="knob-charge_rail-value">-450</span>
+    </span>
+    <span class="knob-row" title="Extra padding around each Rail node">
+      Pad <input type="range" id="knob-collide_rail" min="2" max="60" step="1">
+      <span class="knob-value" id="knob-collide_rail-value">14</span>
+    </span>
+    <strong class="chrome-section-label">Templates:</strong>
+    <span class="knob-row" title="How strongly Template nodes are pulled to their Y-band">
+      Y-pull <input type="range" id="knob-y_strength_template" min="0" max="1" step="0.05">
+      <span class="knob-value" id="knob-y_strength_template-value">0.15</span>
+    </span>
+    <span class="knob-row" title="Repulsion between Template nodes">
+      Repel <input type="range" id="knob-charge_template" min="-1500" max="-50" step="10">
+      <span class="knob-value" id="knob-charge_template-value">-450</span>
+    </span>
+    <span class="knob-row" title="Extra padding around each Template node">
+      Pad <input type="range" id="knob-collide_template" min="2" max="60" step="1">
+      <span class="knob-value" id="knob-collide_template-value">14</span>
+    </span>
+  </div>
+
+  <div class="diagram-chrome">
+    <strong class="chrome-section-label">Link distances:</strong>
+    <span class="knob-row" title="Rail → role connectivity edges">
+      rail→role <input type="range" id="knob-link_rail_endpoint" min="40" max="300" step="5">
+      <span class="knob-value" id="knob-link_rail_endpoint-value">130</span>
+    </span>
+    <span class="knob-row" title="Template → leg-rail composition edges">
+      tmpl→rail <input type="range" id="knob-link_template_member" min="40" max="300" step="5">
+      <span class="knob-value" id="knob-link_template_member-value">130</span>
+    </span>
+    <span class="knob-row" title="Chain sequencing edges">
+      chain <input type="range" id="knob-link_chain" min="40" max="300" step="5">
+      <span class="knob-value" id="knob-link_chain-value">90</span>
+    </span>
+    <span class="knob-row" title="Control hierarchy (subledger → control role) edges">
+      control <input type="range" id="knob-link_control_parent" min="40" max="300" step="5">
+      <span class="knob-value" id="knob-link_control_parent-value">80</span>
+    </span>
+    <strong class="chrome-section-label">Global:</strong>
+    <span class="knob-row" title="Horizontal centering pull (low = nodes spread wider)">
       X-center <input type="range" id="knob-x_strength" min="0" max="0.3" step="0.01">
       <span class="knob-value" id="knob-x_strength-value">0.04</span>
     </span>

@@ -45,12 +45,32 @@ const NODE_RADIUS = {
 // URL-param name. _readKnobs() reads URL overrides; _wireKnobs() binds
 // sliders + logs every change to /log so the user can copy good configs
 // out of the studio process stderr (dev-log forwarder).
+//
+// Per-kind knobs (X.4.b.2 iteration): Y / repulsion / collide are now
+// per node-kind; link distance per edge-kind; X-center stays global.
+// Defaults are the same across kinds (= prior global default); user
+// twiddles per-kind to fine-tune (e.g. templates need more repulsion
+// since their labels are longer).
 const KNOBS = {
-  y_strength:    { def: 0.15, min: 0,    max: 1.0,  step: 0.05, label: "Y-band pull" },
-  charge:        { def: -450, min: -1500, max: -50,  step: 10,   label: "Repulsion" },
-  link_distance: { def: 110,  min: 40,   max: 250,  step: 5,    label: "Link distance" },
-  collide_pad:   { def: 14,   min: 2,    max: 40,   step: 1,    label: "Collide padding" },
-  x_strength:    { def: 0.04, min: 0,    max: 0.3,  step: 0.01, label: "X-center pull" },
+  // Per-node-kind Y-band pull (0 = no banding, 1 = locked).
+  y_strength_role:     { def: 0.15, min: 0, max: 1.0, step: 0.05 },
+  y_strength_rail:     { def: 0.15, min: 0, max: 1.0, step: 0.05 },
+  y_strength_template: { def: 0.15, min: 0, max: 1.0, step: 0.05 },
+  // Per-node-kind repulsion (negative; more negative = harder push).
+  charge_role:     { def: -450, min: -1500, max: -50, step: 10 },
+  charge_rail:     { def: -450, min: -1500, max: -50, step: 10 },
+  charge_template: { def: -450, min: -1500, max: -50, step: 10 },
+  // Per-node-kind collide padding (extra px around the base radius).
+  collide_role:     { def: 14, min: 2, max: 60, step: 1 },
+  collide_rail:     { def: 14, min: 2, max: 60, step: 1 },
+  collide_template: { def: 14, min: 2, max: 60, step: 1 },
+  // Per-edge-kind preferred link distance.
+  link_rail_endpoint:   { def: 130, min: 40, max: 300, step: 5 },
+  link_template_member: { def: 130, min: 40, max: 300, step: 5 },
+  link_chain:           { def: 90,  min: 40, max: 300, step: 5 },
+  link_control_parent:  { def: 80,  min: 40, max: 300, step: 5 },
+  // Global horizontal centering pull (low = nodes spread wider).
+  x_strength: { def: 0.04, min: 0, max: 0.3, step: 0.01 },
 };
 
 function _readKnobs() {
@@ -279,25 +299,17 @@ async function renderDiagram() {
   });
 
   // Force simulation — current knob values from URL or defaults.
+  // Per-kind force accessors close over ``knobs`` so re-binding picks
+  // up the latest slider values when the user iterates.
   const knobs = _readKnobs();
   const sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id((d) => d.id)
-      .distance((d) => {
-        // Cross-band edges get +20% over the slider; intra-band default.
-        if (d.kind === "rail_endpoint" || d.kind === "template_member") {
-          return knobs.link_distance * 1.2;
-        }
-        return knobs.link_distance;
-      })
-      .strength(0.35))
-    .force("charge", d3.forceManyBody().strength(knobs.charge))
-    .force("collide", d3.forceCollide()
-      .radius((d) => (NODE_RADIUS[d.kind] || 30) + knobs.collide_pad)
-      .strength(0.95))
-    .force("y", d3.forceY((d) => Y_BAND[d.kind] || height / 2)
-      .strength(knobs.y_strength))
-    .force("x", d3.forceX(width / 2).strength(knobs.x_strength))
+    .force("link", d3.forceLink(links).id((d) => d.id).strength(0.35))
+    .force("charge", d3.forceManyBody())
+    .force("collide", d3.forceCollide().strength(0.95))
+    .force("y", d3.forceY((d) => Y_BAND[d.kind] || height / 2))
+    .force("x", d3.forceX(width / 2))
     .on("tick", () => {});
+  _bindForces(sim, knobs);
 
   // Wire drag now that sim exists in closure.
   node.call(d3.drag()
@@ -334,25 +346,46 @@ async function renderDiagram() {
   _wireBundleToggle();
 }
 
+function _bindForces(sim, knobs) {
+  // (Re-)bind every force accessor with closures that read the LATEST
+  // knob values. d3 caches per-node force results until you call the
+  // accessor again, so we re-call on every knob change.
+  sim.force("y").strength((d) => {
+    if (d.kind === "role") return knobs.y_strength_role;
+    if (d.kind === "rail") return knobs.y_strength_rail;
+    if (d.kind === "template") return knobs.y_strength_template;
+    return 0.15;
+  });
+  sim.force("charge").strength((d) => {
+    if (d.kind === "role") return knobs.charge_role;
+    if (d.kind === "rail") return knobs.charge_rail;
+    if (d.kind === "template") return knobs.charge_template;
+    return -260;
+  });
+  sim.force("collide").radius((d) => {
+    const base = NODE_RADIUS[d.kind] || 30;
+    if (d.kind === "role") return base + knobs.collide_role;
+    if (d.kind === "rail") return base + knobs.collide_rail;
+    if (d.kind === "template") return base + knobs.collide_template;
+    return base + 14;
+  });
+  sim.force("link").distance((d) => {
+    if (d.kind === "rail_endpoint") return knobs.link_rail_endpoint;
+    if (d.kind === "template_member") return knobs.link_template_member;
+    if (d.kind === "chain") return knobs.link_chain;
+    if (d.kind === "control_parent") return knobs.link_control_parent;
+    return 90;
+  });
+  sim.force("x").strength(knobs.x_strength);
+}
+
 function _wireKnobs(sim, knobs) {
-  // Bind each slider; on input, update the corresponding force, restart
-  // the alpha (gentle), and log the new value + the FULL knob set to
-  // /log so the user can grep their dev-log to find a good config.
+  // Bind each slider; on input, update knobs, re-bind force accessors,
+  // restart the alpha (gentle), and log the new value + the FULL knob
+  // set to /log so the user can grep their dev-log to find a good config.
   const apply = (name, value) => {
     knobs[name] = value;
-    if (name === "y_strength") {
-      sim.force("y").strength(value);
-    } else if (name === "charge") {
-      sim.force("charge").strength(value);
-    } else if (name === "link_distance") {
-      sim.force("link").distance((d) =>
-        (d.kind === "rail_endpoint" || d.kind === "template_member")
-          ? value * 1.2 : value);
-    } else if (name === "collide_pad") {
-      sim.force("collide").radius((d) => (NODE_RADIUS[d.kind] || 30) + value);
-    } else if (name === "x_strength") {
-      sim.force("x").strength(value);
-    }
+    _bindForces(sim, knobs);
     sim.alpha(0.5).restart();
     _logKnobs(knobs, name, value);
     _updateUrlForKnobs(knobs);
