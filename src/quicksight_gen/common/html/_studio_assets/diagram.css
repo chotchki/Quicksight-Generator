@@ -279,3 +279,37 @@ body {
 .topology-svg text {
   user-select: none;
 }
+
+/* X.4.c.5.d/e — Coverage overlay. The chrome's #toggle-coverage
+ * checkbox toggles `.coverage-on` on the SVG root; the JS shim has
+ * already stamped `data-presence="yes|no"` per node + edge by then.
+ * Absent (`no`) entities desaturate to a muted grey so the operator's
+ * eye lands on the missing-ETL gaps; present entities stay normal.
+ * Hover tooltips (the SVG <title>) carry the row count so the
+ * integrator can spot-check magnitudes without leaving the diagram. */
+.topology-svg.coverage-on g.node[data-presence="no"] > polygon,
+.topology-svg.coverage-on g.node[data-presence="no"] > ellipse,
+.topology-svg.coverage-on g.node[data-presence="no"] > path {
+  fill: #f1f5f9 !important;
+  stroke: #cbd5e1 !important;
+}
+.topology-svg.coverage-on g.node[data-presence="no"] text {
+  fill: #94a3b8 !important;
+}
+.topology-svg.coverage-on g.edge[data-presence="no"] path,
+.topology-svg.coverage-on g.edge[data-presence="no"] polygon {
+  stroke: #cbd5e1 !important;
+  fill: #cbd5e1 !important;
+  opacity: 0.5;
+}
+/* Coverage chrome toggle — pill style mirroring the layer-btn look so
+ * it sits comfortably alongside the layer stepper + Reset button. */
+.diagram-chrome .chrome-coverage-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--studio-muted);
+  cursor: pointer;
+  user-select: none;
+}

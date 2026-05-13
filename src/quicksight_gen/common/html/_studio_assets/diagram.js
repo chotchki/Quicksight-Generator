@@ -201,6 +201,7 @@ async function renderDiagram() {
   _wireEdgeLabelToggles(svg);
   _wireFocus(svg);
   _wirePanZoom(svg);
+  _wireCoverage(svg);
 }
 
 // Vanilla SVG pan + wheel zoom — no library. Operates on the SVG's
@@ -378,6 +379,99 @@ function _wireFocus(svg) {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") _navigateToFocus(null);
   });
+}
+
+// X.4.c.5.d/e — Coverage overlay. The chrome's `#toggle-coverage`
+// checkbox is server-rendered ONLY when the demo-DB pool is wired
+// (see `<meta name="diagram-coverage-available">`); this function
+// no-ops if either the meta or the checkbox is absent.
+//
+// On toggle-on: fetch /diagram/coverage once (cached for the
+// session — Studio's audience is one user iterating, not a hot path),
+// stamp `data-presence="yes|no"` + `data-row-count="N"` per node,
+// inject a <title> with "<id> · N rows" so the browser's native
+// hover tooltip shows the count, then add `.coverage-on` to the SVG
+// root so the CSS tint rules activate.
+//
+// On toggle-off: drop `.coverage-on` from the SVG root. The
+// data-presence / data-row-count attrs stay in place (cheap to leave;
+// re-toggling on doesn't need a re-fetch).
+let _coverageCache = null;
+async function _wireCoverage(svg) {
+  if (!document.querySelector('meta[name="diagram-coverage-available"]')) {
+    return;
+  }
+  const cb = document.getElementById("toggle-coverage");
+  if (!cb) return;
+
+  const apply = async () => {
+    if (!cb.checked) {
+      svg.classList.remove("coverage-on");
+      return;
+    }
+    if (_coverageCache === null) {
+      try {
+        const resp = await fetch("/diagram/coverage");
+        if (!resp.ok) {
+          console.error("studio/diagram: /diagram/coverage", resp.status);
+          return;
+        }
+        _coverageCache = await resp.json();
+      } catch (err) {
+        console.error("studio/diagram: coverage fetch failed", err);
+        return;
+      }
+    }
+    _stampCoverage(svg, _coverageCache);
+    svg.classList.add("coverage-on");
+  };
+  cb.addEventListener("change", apply);
+  // Off by default — no initial apply.
+}
+
+function _stampCoverage(svg, cov) {
+  const nodes = cov.nodes || {};
+  for (const g of svg.querySelectorAll('g.node[data-id]')) {
+    const id = g.getAttribute('data-id');
+    const entry = nodes[id];
+    if (!entry) continue;
+    g.setAttribute('data-presence', entry.present ? 'yes' : 'no');
+    g.setAttribute('data-row-count', String(entry.count));
+    // Inject / update the <title> with the count for native hover.
+    let titleEl = g.querySelector('title');
+    if (!titleEl) {
+      titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      g.insertBefore(titleEl, g.firstChild);
+    }
+    const display = g.getAttribute('data-display-id') || id;
+    titleEl.textContent = entry.present
+      ? `${display} · ${entry.count.toLocaleString()} rows`
+      : `${display} · no data`;
+  }
+
+  // Edges: chain edges by id `chain__<src>__<dst>`. The graphviz
+  // edges carry data-source / data-target on g.edge — synthesize the
+  // chain edge id by stripping the `rail__`/`tmpl__` prefix from each
+  // endpoint, since chain edges fly between rails / templates.
+  const chainEdges = cov.chain_edges || {};
+  for (const g of svg.querySelectorAll('g.edge[data-kind="chain"]')) {
+    const src = g.getAttribute('data-source') || "";
+    const dst = g.getAttribute('data-target') || "";
+    const srcName = _stripIdPrefix(src);
+    const dstName = _stripIdPrefix(dst);
+    const edgeId = `chain__${srcName}__${dstName}`;
+    const entry = chainEdges[edgeId];
+    if (!entry) continue;
+    g.setAttribute('data-presence', entry.present ? 'yes' : 'no');
+    g.setAttribute('data-row-count', String(entry.count));
+  }
+}
+
+function _stripIdPrefix(s) {
+  for (const prefix of Object.keys(PREFIX_TO_KIND)) {
+    if (s.startsWith(prefix)) return s.slice(prefix.length);
+  }
+  return s;
 }
 
 if (document.readyState === "loading") {

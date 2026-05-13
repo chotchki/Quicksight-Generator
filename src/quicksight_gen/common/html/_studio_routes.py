@@ -230,6 +230,19 @@ def _render_diagram_page(
         )
     )
 
+    # X.4.c.5.d — Coverage toggle. Mounted only when the demo-DB pool
+    # is wired (which the JS shim also gates by reading the
+    # diagram-coverage-available meta). Off by default — clean diagram;
+    # on overlays presence/absence tint per node.
+    coverage_toggle_html = (
+        '<label class="chrome-coverage-toggle">'
+        '<input type="checkbox" id="toggle-coverage">'
+        ' Coverage'
+        '</label>'
+        if coverage_available
+        else ""
+    )
+
     # Focus indicator + clear link. Visible only when ?focus= is set.
     # Clear preserves the current layer.
     if focus_node_id is not None:
@@ -261,6 +274,7 @@ def _render_diagram_page(
       layer: {layer_links}
     </span>
     <a id="toggle-reset" href="?">Reset</a>
+    {coverage_toggle_html}
     {focus_indicator}
     <span class="status" id="diagram-status">loading…</span>
   </div>
