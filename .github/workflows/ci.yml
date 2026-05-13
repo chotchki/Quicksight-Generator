@@ -303,6 +303,78 @@ jobs:
           QS_GEN_TEST_L2_INSTANCE: tests/l2/spec_example.yaml
         run: ./run_tests.sh up_to=db --dialects=or --targets=lo
 
+  # X.3.g — the SQLite column of the X.2 matrix. SQLite is the
+  # cheapest cell in the whole grid: no DB service container, no
+  # Docker, no AWS — the runner's ``_setup_local_sqlite()`` creates a
+  # per-invocation tempfile DB + synthesized cfg, seeds it (schema +
+  # data + refresh), then runs the ``db`` layer (every dataset's
+  # CustomSQL against the live SQLite + per-matview row counts + the
+  # audit PDF render/verify cycle) and the ``app2`` layer (the
+  # self-hosted HTMX renderer served against that SQLite, via
+  # ``test_html2_*``). That's the integrator-local persona's iteration
+  # loop — install, point at a SQLite file, see it apply, see App 2
+  # render — turned into a CI gate. (Layer-1 matview-check + audit-PDF
+  # SQLite *unit* coverage already runs in the ``test`` job above —
+  # ``tests/unit/test_layer1_query_sqlite.py`` + ``tests/audit/test_pdf_sqlite.py``;
+  # this job is the App-2-against-SQLite cell those two couldn't cover.)
+  #
+  # No ``--coverage`` (and not a ``coverage`` job dep) — same call as
+  # ``integration-oracle``: the SQLite dialect branches in
+  # ``common/sql/dialect.py`` / ``common/l2/schema.py`` are already
+  # exercised by the ``test`` job's ``tests/schema/`` + the new SQLite
+  # unit suites, so the marginal coverage gain isn't worth wiring this
+  # job into the aggregator DAG.
+  e2e-sqlite:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync from uv.lock)
+        # `--extra serve` brings the App2 server stack (starlette /
+        # uvicorn / aiosqlite) — the `app2` layer serves the HTMX
+        # renderer in-process. `--extra audit` adds pyhanko on top of
+        # reportlab + pypdf so the `db` layer's audit-PDF render/verify
+        # lands its empty reviewer-signature widgets. `--extra e2e`
+        # pulls pytest-xdist for the runner's `-n auto` unit prelude.
+        # No `--extra demo` — SQLite uses stdlib `sqlite3` + aiosqlite,
+        # not psycopg.
+        run: uv sync --frozen --extra dev --extra serve --extra audit --extra e2e
+
+      # The runner's `app2` chain layer fans `unit → db → app2` over
+      # the `--dialects=sl --targets=lo` cells (sp + sq scenarios, same
+      # default fan-out as `integration-pg`). `setup_variant` for `sl`
+      # is `_setup_local_sqlite()` — a tempdir DB + cfg, no Docker — so
+      # no `QS_GEN_RUNNER_CI` / pre-provisioned URL is needed here
+      # (that path is only for the PG/Oracle GHA service containers).
+      # Pyright already passed in the `test` job (a hard `needs:`), so
+      # skip the sessionstart pyright gate to keep this job lean — the
+      # unit pytest still re-runs as the prelude (cheap fresh-env smoke).
+      - name: Run runner app2 layer against SQLite
+        env:
+          QS_GEN_SKIP_PYRIGHT: "1"
+        run: ./run_tests.sh up_to=app2 --dialects=sl --targets=lo
+
+      - name: Upload runner artifacts (triage parity)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-sqlite-runs
+          path: runs/
+          if-no-files-found: warn
+          retention-days: 7
+
   # W.8b — combine the matrix entries' coverage data, render a
   # markdown summary into the GitHub Actions Step Summary (so the
   # number is one click from the run page, not buried in logs), and
