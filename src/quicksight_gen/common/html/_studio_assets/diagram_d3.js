@@ -218,35 +218,47 @@ async function renderDiagram() {
     .attr("data-rail-subtype", (d) => d.rail_subtype || null)
     .style("cursor", "pointer");
 
-  // Per-kind shape + label.
+  // Per-kind shape + label, sized to fit content (X.4.b.2 iteration).
+  // Render order: text first, measure with getBBox, then insert rect
+  // BEFORE the text (insert puts it earlier in DOM order = renders
+  // underneath) sized to wrap the measured text + per-kind padding.
+  // The measured radius is stashed on `d` so forceCollide picks up the
+  // real footprint instead of guessing from NODE_RADIUS constants.
   node.each(function (d) {
     const sel = d3.select(this);
+    let fontSize, padX, padY, shapeClass, rx;
     if (d.kind === "role") {
-      sel.append("rect")
-        .attr("class", "shape role-rect")
-        .attr("rx", 6).attr("ry", 6)
-        .attr("width", 110).attr("height", 36)
-        .attr("x", -55).attr("y", -18);
-      _labelLines(sel, d.label, 0, 0, 11);
+      fontSize = 11; padX = 12; padY = 8;
+      shapeClass = "role-rect"; rx = 6;
     } else if (d.kind === "rail") {
-      // Bundle nodes are wider (their label includes "N rails: A, B, C…").
-      const isBundle = d.rail_subtype === "bundle";
-      const w = isBundle ? 160 : 100;
-      const h = isBundle ? 32 : 24;
-      sel.append("rect")
-        .attr("class", "shape rail-pill")
-        .attr("rx", 12).attr("ry", 12)
-        .attr("width", w).attr("height", h)
-        .attr("x", -w / 2).attr("y", -h / 2);
-      _labelLines(sel, d.label, 0, -1, isBundle ? 8 : 9);
+      fontSize = 9; padX = 10; padY = 6;
+      shapeClass = "rail-pill"; rx = 12;
     } else if (d.kind === "template") {
-      sel.append("rect")
-        .attr("class", "shape template-rect")
-        .attr("rx", 4).attr("ry", 4)
-        .attr("width", 130).attr("height", 36)
-        .attr("x", -65).attr("y", -18);
-      _labelLines(sel, d.label, 0, 0, 9);
+      fontSize = 9; padX = 12; padY = 8;
+      shapeClass = "template-rect"; rx = 4;
+    } else {
+      fontSize = 10; padX = 10; padY = 6;
+      shapeClass = "rail-pill"; rx = 6;
     }
+    _labelLines(sel, d.label, 0, 0, fontSize);
+    // Measure the text we just laid down.
+    let bbox;
+    try {
+      bbox = sel.node().getBBox();
+    } catch {
+      bbox = { width: 80, height: 24 };
+    }
+    const w = Math.max(bbox.width + 2 * padX, 40);
+    const h = Math.max(bbox.height + 2 * padY, 20);
+    // Stash for forceCollide. Use diagonal half-length as a tight
+    // bounding circle (better than max(w,h)/2 for wide-and-short or
+    // tall-and-narrow shapes).
+    d.measuredRadius = 0.5 * Math.sqrt(w * w + h * h);
+    sel.insert("rect", "text")
+      .attr("class", `shape ${shapeClass}`)
+      .attr("rx", rx).attr("ry", rx)
+      .attr("width", w).attr("height", h)
+      .attr("x", -w / 2).attr("y", -h / 2);
   });
 
   // Click-to-focus.
@@ -363,7 +375,9 @@ function _bindForces(sim, knobs) {
     return -260;
   });
   sim.force("collide").radius((d) => {
-    const base = NODE_RADIUS[d.kind] || 30;
+    // Prefer the actual rendered footprint (set by node.each above)
+    // over the NODE_RADIUS fallback so size-to-fit nodes don't overlap.
+    const base = d.measuredRadius || NODE_RADIUS[d.kind] || 30;
     if (d.kind === "role") return base + knobs.collide_role;
     if (d.kind === "rail") return base + knobs.collide_rail;
     if (d.kind === "template") return base + knobs.collide_template;

@@ -823,17 +823,19 @@ def to_d3_per_rail_json(
                 bundle_idx += 1
                 names_sorted = sorted(str(r.name) for r in unanchored)
                 types_sorted = sorted({r.transfer_type for r in unanchored})
+                # One rail per line so the d3 size-to-fit renderer
+                # sizes the bundle node tall instead of stretched-wide.
                 if key[0] == "twoleg":
                     bundle_label = (
-                        f"{len(unanchored)} rails: "
-                        + ", ".join(names_sorted)
+                        f"{len(unanchored)} rails:\n"
+                        + "\n".join(names_sorted)
                         + "\n(" + ", ".join(types_sorted) + ")"
                     )
                 else:
                     direction = str(key[2])
                     bundle_label = (
-                        f"{len(unanchored)} rails: "
-                        + ", ".join(names_sorted)
+                        f"{len(unanchored)} rails:\n"
+                        + "\n".join(names_sorted)
                         + f"\n({', '.join(types_sorted)}, {direction})"
                     )
                 nodes.append({
