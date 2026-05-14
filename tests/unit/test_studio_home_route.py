@@ -81,9 +81,11 @@ def test_home_page_renders_diagram_iframe_and_six_entity_sections(
         assert resp.status_code == 200
         body = resp.text
 
-    # Diagram iframe is present and points at the existing /diagram route.
+    # Diagram iframe is present and points at the existing /diagram
+    # route in embed mode (so its studio-header doesn't double up
+    # with the home page's).
     assert 'id="diagram-frame"' in body
-    assert 'src="/diagram?layer=1"' in body
+    assert 'src="/diagram?layer=1&amp;embed=1"' in body
 
     # All six entity kinds get a <details> with the right data-kind.
     for kind in (
@@ -252,6 +254,27 @@ def test_diagram_visible_route_filters_by_focus(
     assert "north-pool" not in accounts
 
 
+def test_diagram_embed_mode_drops_studio_header(
+    writable_l2_yaml: Path,
+) -> None:
+    """When the diagram is embedded inside the home-page iframe, its
+    own studio-header chrome must drop so the operator doesn't see
+    two stacked nav bars (the home's + the diagram's). Triggered by
+    ``?embed=1`` on the diagram URL."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        embedded = c.get("/diagram?embed=1").text
+        standalone = c.get("/diagram").text
+
+    # Standalone diagram keeps the chrome.
+    assert '<header class="studio-header">' in standalone
+    assert "Studio · diagram" in standalone
+    # Embedded variant drops it; body is tagged so CSS / JS can detect.
+    assert '<header class="studio-header">' not in embedded
+    assert "Studio · diagram" not in embedded
+    assert 'class="diagram-embed"' in embedded
+
+
 def test_home_page_carries_diagram_filter_listener(
     writable_l2_yaml: Path,
 ) -> None:
@@ -269,6 +292,46 @@ def test_home_page_carries_diagram_filter_listener(
     assert "is-hidden-by-focus" in body
     # Re-apply on cascade-driven HTMX swap so the filter survives refetch.
     assert "addEventListener('htmx:afterSettle', applyFocusFilter)" in body
+
+
+def test_card_titles_carry_focus_node_attribute_per_kind(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.8.reverse — clicking a card title focuses the diagram on
+    the entity's natural node. Each kind maps to a different prefix:
+    accounts/templates/limit_schedules → role__X; rails → rail__X;
+    transfer_templates → tmpl__X; chains → rail__X or tmpl__X
+    depending on the parent endpoint."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        # Account → role node.
+        body = c.get("/l2_shape/account/?embed=1").text
+        assert 'data-focus-node="role__CustomerSubledger"' in body
+        # Rail → rail node.
+        body = c.get("/l2_shape/rail/?embed=1").text
+        assert 'data-focus-node="rail__ExternalRailInbound"' in body
+        # AccountTemplate → role node (addressing key is role).
+        body = c.get("/l2_shape/account_template/?embed=1").text
+        assert 'data-focus-node="role__CustomerSubledger"' in body
+
+
+def test_home_page_carries_card_title_click_listener(
+    writable_l2_yaml: Path,
+) -> None:
+    """The home page's inline JS catches clicks on .entity-card-title
+    via document-level delegation (so HTMX-refetched cards work too)
+    and navigates the iframe to ?focus=<node_id>."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/").text
+
+    # Click handler is on document so dynamically inserted cards work.
+    assert "addEventListener('click'" in body
+    # Helper navigates the iframe to a new focus URL.
+    assert "_focusDiagramOnNode" in body
+    assert "searchParams.set('focus'" in body
+    # Keyboard support: Enter / Space on focused title fires the same.
+    assert "addEventListener('keydown'" in body
 
 
 def test_home_page_cards_carry_data_attributes_for_filter(

@@ -96,6 +96,20 @@ body.home-page {
   font-size: 0.85rem;
 }
 
+/* X.4.f.8.reverse — clickable card title → diagram focus. */
+.entity-card-title {
+  cursor: pointer;
+  user-select: none;
+}
+.entity-card-title:hover {
+  text-decoration: underline;
+}
+.entity-card-title:focus {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+  border-radius: 0.2rem;
+}
+
 .entity-card {
   background: white;
   border: 1px solid var(--studio-border);

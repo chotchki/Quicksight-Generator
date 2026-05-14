@@ -272,6 +272,46 @@ def _render_home_page(cache: L2InstanceCache, dev_log: bool) -> str:
     // Re-apply after every HTMX swap (section refetch on cascade-reload
     // brings back fresh cards without our hide class).
     document.addEventListener('htmx:afterSettle', applyFocusFilter);
+
+    // X.4.f.8.reverse — click an entity-card title → focus the diagram
+    // on that entity's node. Navigates the iframe to ?focus=<node_id>;
+    // its load event fires our existing iframe-focus listener which
+    // fetches /diagram/visible and re-runs applyFocusFilter — so this
+    // is purely a "set focus on the diagram, let the existing pipeline
+    // do the rest" hop. Event delegation on #home-entities catches
+    // titles from cards added by hx-get refetches too.
+    function _focusDiagramOnNode(nodeId) {{
+      var f = document.getElementById('diagram-frame');
+      if (!f || !f.contentWindow) return;
+      var url;
+      try {{
+        url = new URL(f.contentWindow.location.href);
+      }} catch (e) {{
+        url = new URL('/diagram', window.location.origin);
+        url.searchParams.set('layer', '1');
+      }}
+      url.searchParams.set('focus', nodeId);
+      f.contentWindow.location.href = url.toString();
+    }}
+    function _maybeFocusFromTitle(target) {{
+      var el = target;
+      while (el && el !== document.body) {{
+        if (el.classList && el.classList.contains('entity-card-title')) {{
+          var nodeId = el.dataset.focusNode;
+          if (nodeId) {{ _focusDiagramOnNode(nodeId); return true; }}
+          return false;
+        }}
+        el = el.parentNode;
+      }}
+      return false;
+    }}
+    document.addEventListener('click', function(evt) {{
+      _maybeFocusFromTitle(evt.target);
+    }});
+    document.addEventListener('keydown', function(evt) {{
+      if (evt.key !== 'Enter' && evt.key !== ' ') return;
+      if (_maybeFocusFromTitle(evt.target)) {{ evt.preventDefault(); }}
+    }});
   </script>
   {devlog_script}</head>
 <body class="home-page">
@@ -283,7 +323,7 @@ def _render_home_page(cache: L2InstanceCache, dev_log: bool) -> str:
   </header>
 
   <section class="home-diagram">
-    <iframe id="diagram-frame" src="/diagram?layer=1"
+    <iframe id="diagram-frame" src="/diagram?layer=1&amp;embed=1"
             title="L2 topology diagram"></iframe>
   </section>
 
@@ -302,6 +342,7 @@ def _render_diagram_page(
     layer: int = 1,
     *,
     coverage_available: bool = False,
+    embed: bool = False,
 ) -> str:
     """Render the L2 topology diagram (per-rail / dot, X.4.b spike winner).
 
@@ -438,13 +479,15 @@ def _render_diagram_page(
   <title>Studio diagram — {prefix}</title>
   {devlog_meta}{coverage_meta}{trainer_meta}<link rel="stylesheet" href="{asset_url("diagram.css")}">
   {devlog_script}</head>
-<body>
-  <header class="studio-header">
-    <h1>Studio · diagram</h1>
-    <span class="instance">{prefix}</span>
-    <a class="nav-link" href="/">← landing</a>
-    <a class="nav-link" href="/dashboards">→ dashboards</a>
-  </header>
+<body class="{"diagram-embed" if embed else ""}">
+  {("" if embed else (
+    '<header class="studio-header">'
+    f'<h1>Studio · diagram</h1>'
+    f'<span class="instance">{prefix}</span>'
+    '<a class="nav-link" href="/">← landing</a>'
+    '<a class="nav-link" href="/dashboards">→ dashboards</a>'
+    '</header>'
+  ))}
 
   <div class="diagram-chrome">
     <span class="layer-stepper" aria-label="Conceptual layers">
@@ -566,10 +609,15 @@ def make_studio_routes(
             layer = max(1, min(3, int(layer_raw)))
         except ValueError:
             layer = 1
+        # X.4.f.8.embed-chrome — when embedded inside the home page's
+        # iframe, drop the studio-header so the page doesn't carry two
+        # nav bars (the home's + the diagram's).
+        embed = request.query_params.get("embed") == "1"
         return HTMLResponse(
             _render_diagram_page(
                 cache, dev_log, focus_node_id, layer,
                 coverage_available=db_pool is not None,
+                embed=embed,
             ),
         )
 

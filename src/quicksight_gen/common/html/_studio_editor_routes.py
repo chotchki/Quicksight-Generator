@@ -581,17 +581,80 @@ def _render_read_card(
         for s in specs
         if s.name not in hidden
     )
+    # X.4.f.8.reverse — card title becomes a click target that navigates
+    # the diagram iframe to ?focus=<node_id>. The home page's iframe-load
+    # listener then fans out the existing filter pipeline. data-focus-node
+    # on the card carries the right node-id prefix per kind; absent when
+    # the entity has no natural diagram target (e.g., an Account with no
+    # role) so the JS falls through to a plain-text title.
+    focus_node = _focus_node_for_entity(kind, entity, instance)
+    if focus_node is None:
+        title_html = f"<h3>{escape(entity_id)}</h3>"
+    else:
+        title_html = (
+            f'<h3 class="entity-card-title" tabindex="0" role="button" '
+            f'data-focus-node="{escape(focus_node)}" '
+            f'title="Focus the diagram on this entity">'
+            f"{escape(entity_id)}</h3>"
+        )
     return (
         f'<article class="entity-card" id="entity-{kind}-{escape(entity_id)}" '
         f'data-kind="{escape(kind)}" data-entity-id="{escape(entity_id)}">'
         f"<header>"
-        f'<h3>{escape(entity_id)}</h3>'
+        f"{title_html}"
         f'<a class="edit-link" hx-get="/l2_shape/{kind}/{escape(entity_id)}/edit" '
         f'hx-target="#entity-{kind}-{escape(entity_id)}" hx-swap="outerHTML">Edit</a>'
         f"</header>"
         f"<dl>{rows}</dl>"
         f"</article>"
     )
+
+
+def _focus_node_for_entity(
+    kind: EntityKind,
+    entity: object,
+    instance: Any,  # typing-smell: ignore[explicit-any]: L2Instance — needed to disambiguate chain.parent shape (rail vs template)
+) -> str | None:
+    """Map an entity to its natural diagram-node id (prefix-encoded
+    per the topology helpers — ``role__X`` / ``rail__X`` / ``tmpl__X``).
+
+    Used by the home page's reverse filter (X.4.f.8.reverse): clicking
+    the card title focuses the diagram on this node, which fans out
+    the existing /diagram/visible pipeline.
+
+    Returns None when there's no meaningful target — Account without a
+    role, AccountTemplate (impossible — role is required), etc. The
+    renderer then drops the click affordance and shows plain text.
+    """
+    if kind in ("account", "account_template"):
+        role = getattr(entity, "role", None)
+        if role is None or not str(role):
+            return None
+        return f"role__{role}"
+    if kind in ("rail", "transfer_template"):
+        name = getattr(entity, "name", None)
+        if name is None or not str(name):
+            return None
+        prefix = "rail__" if kind == "rail" else "tmpl__"
+        return f"{prefix}{name}"
+    if kind == "chain":
+        # parent could be a rail name OR a template name — pick the
+        # right prefix by checking which collection it belongs to.
+        parent = getattr(entity, "parent", None)
+        if parent is None or not str(parent):
+            return None
+        template_names = {
+            t.name for t in getattr(instance, "transfer_templates", ())
+        }
+        prefix = "tmpl__" if parent in template_names else "rail__"
+        return f"{prefix}{parent}"
+    if kind == "limit_schedule":
+        # Anchor on the parent_role node.
+        parent_role = getattr(entity, "parent_role", None)
+        if parent_role is None or not str(parent_role):
+            return None
+        return f"role__{parent_role}"
+    return None
 
 
 def _render_edit_form(
