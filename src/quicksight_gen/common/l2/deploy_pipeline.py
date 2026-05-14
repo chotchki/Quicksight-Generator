@@ -28,8 +28,12 @@ import shlex
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
+from quicksight_gen.common.db import connect_demo_db, execute_script
+from quicksight_gen.common.l2.schema import wipe_demo_data_sql
+
 if TYPE_CHECKING:
     from quicksight_gen.common.config import Config
+    from quicksight_gen.common.l2.primitives import L2Instance
 
 
 # A function the pipeline calls to surface progress / errors. Each
@@ -120,3 +124,61 @@ async def step_1_etl_hook(
         "exit_code": rc,
     })
     return rc
+
+
+async def step_2_wipe(
+    cfg: Config,
+    instance: L2Instance,
+    *,
+    dev_log: DevLogWriter | None = None,
+) -> tuple[int, int]:
+    """Empty ``<prefix>_transactions`` + ``<prefix>_daily_balances``.
+
+    X.4.g.5 — runs unconditionally (when the pipeline reaches it),
+    AFTER step 1's etl_hook gate has succeeded. The matview re-derive
+    is step 4's job; this just clears the two base tables so step 2's
+    pull (etl_datasource) and step 3's generator both write into clean
+    state.
+
+    Returns ``(transactions_deleted, daily_balances_deleted)`` row
+    counts so the caller can surface "wiped 12,345 transactions" in
+    the deploy summary.
+
+    Sync DB-API 2.0 work runs in ``asyncio.to_thread`` so it doesn't
+    block the asyncio loop — the studio's POST /deploy endpoint
+    otherwise stalls all other requests for the wipe duration on
+    a multi-million-row demo DB.
+    """
+    sql = wipe_demo_data_sql(instance, dialect=cfg.dialect)
+    await _emit(dev_log, {
+        "event": "deploy:step2:wipe:start",
+        "instance": instance.instance,
+        "dialect": cfg.dialect.value,
+    })
+
+    def _run_wipe() -> tuple[int, int]:
+        conn = connect_demo_db(cfg)
+        try:
+            cur = conn.cursor()
+            try:
+                # Count first so the dev_log can report what was wiped.
+                p = instance.instance
+                cur.execute(f"SELECT COUNT(*) FROM {p}_transactions")
+                tx_count = int(cur.fetchone()[0])
+                cur.execute(f"SELECT COUNT(*) FROM {p}_daily_balances")
+                bal_count = int(cur.fetchone()[0])
+                execute_script(cur, sql, dialect=cfg.dialect)
+                conn.commit()
+                return tx_count, bal_count
+            finally:
+                cur.close()
+        finally:
+            conn.close()
+
+    tx_count, bal_count = await asyncio.to_thread(_run_wipe)
+    await _emit(dev_log, {
+        "event": "deploy:step2:wipe:done",
+        "transactions_deleted": tx_count,
+        "daily_balances_deleted": bal_count,
+    })
+    return tx_count, bal_count
