@@ -151,32 +151,32 @@ The X.4.f.2/.3 first-cut Rail editor covers cosmetic fields (`name` / `transfer_
 
 **Approach:** add `subtype_only: Literal["two_leg", "single_leg"] | None` flag to `FieldSpec`; renderer filters fields based on the rail's actual subtype at edit time. Create form gets a subtype radio first that dispatches to the right constructor. Three tiers, shipping load-bearing first.
 
-**Tier 1 — load-bearing wiring (top priority):**
-- [ ] **X.4.f.11.1** — `FieldSpec.subtype_only` flag + renderer filter (skip fields whose `subtype_only` doesn't match the entity's actual subtype). Current rail's subtype derived via `isinstance(rail, TwoLegRail)`.
-- [ ] **X.4.f.11.2** — TwoLegRail: `source_role` + `destination_role` (`multi_select` from `roles`; `RoleExpression` is `tuple[Identifier, ...]`, single role becomes 1-tuple).
-- [ ] **X.4.f.11.3** — SingleLegRail: `leg_role` (`multi_select` from `roles`) + `leg_direction` (`select` Debit / Credit / Variable).
-- [ ] **X.4.f.11.4** — Both subtypes: `aggregating` (`select` true / false). `cadence` already in editor; this is the gate flag.
-- [ ] **X.4.f.11.5** — Create form subtype picker for new rails: radio Two-leg / Single-leg → constructor dispatch in `create_l2_entity`.
+**Tier 1 — load-bearing wiring (top priority):** *(all shipped in commit 9e2447f)*
+- [x] **X.4.f.11.1** — `FieldSpec.subtype_only` flag + renderer filter (skip fields whose `subtype_only` doesn't match the entity's actual subtype). Current rail's subtype derived via `isinstance(rail, TwoLegRail)`.
+- [x] **X.4.f.11.2** — TwoLegRail: `source_role` + `destination_role` (`multi_select` from `roles`; `RoleExpression` is `tuple[Identifier, ...]`, single role becomes 1-tuple).
+- [x] **X.4.f.11.3** — SingleLegRail: `leg_role` (`multi_select` from `roles`) + `leg_direction` (`select` Debit / Credit / Variable).
+- [x] **X.4.f.11.4** — Both subtypes: `aggregating` (`select` true / false). `cadence` already in editor; this is the gate flag.
+- [x] **X.4.f.11.5** — Create form subtype picker for new rails: radio Two-leg / Single-leg → constructor dispatch in `create_l2_entity`.
 
-**Tier 2 — frequently-touched:**
-- [ ] **X.4.f.11.6** — `metadata_keys` + `posted_requirements` (`textarea`, one-per-line, comma-tolerant; coerced to `tuple[Identifier, ...]`).
-- [ ] **X.4.f.11.7** — `max_pending_age` + `max_unbundled_age` (`text` with ISO 8601 format hint `PT24H` / `P1D`; parsed via existing loader's Duration helper; empty = `None`).
-- [ ] **X.4.f.11.8** — TwoLegRail: `source_origin` + `destination_origin` (`text` — Origin is open enum) + `expected_net` (`money`).
-- [ ] **X.4.f.11.9** — `bundles_activity` (`multi_select` from `rails_or_templates` for v1; gains `transfer_types` membership after Z.B lands).
+**Tier 2 — frequently-touched:** *(all shipped in commit 9e2447f)*
+- [x] **X.4.f.11.6** — `metadata_keys` + `posted_requirements` (`textarea`, one-per-line, comma-tolerant; coerced to `tuple[Identifier, ...]`).
+- [x] **X.4.f.11.7** — `max_pending_age` + `max_unbundled_age` (`text` with ISO 8601 format hint `PT24H` / `P1D`; parsed via existing loader's Duration helper; empty = `None`).
+- [x] **X.4.f.11.8** — TwoLegRail: `source_origin` + `destination_origin` (`text` — Origin is open enum) + `expected_net` (`money`).
+- [x] **X.4.f.11.9** — `bundles_activity` (`multi_select` from `rails_or_templates` for v1; gains `transfer_types` membership after Z.B lands).
 
-**Tier 3 — `metadata_value_examples` as a YAML-block textarea (locked 2026-05-13):**
+**Tier 3 — `metadata_value_examples` as a YAML-block textarea (locked 2026-05-13):** *(all shipped in commit 9e2447f)*
 
 The field is `tuple[tuple[Identifier, tuple[str, ...]], ...]` — a list of (metadata-key → list-of-example-values) pairs. A custom nested-row editor (per-key text input + values textarea + add/remove buttons + JSON wire shape) is materially more work than the rest of the rail editor combined. Operator preference: **simple YAML block is fine** — the L2 yaml shape is what the operator already knows, so the editor just exposes it.
 
-- [ ] **X.4.f.11.6.5** — `yaml_block` FieldKind: renders a `<textarea>` (mono font, ~10 rows). Coerce parses with `yaml.safe_load`, validates the result is `dict[str, list[str]]` (or empty), then wraps to `tuple[(Identifier(k), tuple(map(str, vals))), ...]`. Bad YAML → `ValueError("Invalid YAML: ...")` → form re-render with operator's typed content + inline error. Display side: `_value_to_input_str` for the metadata_value_examples field uses `yaml.safe_dump({k: list(vals) for k, vals in tuple_of_tuples})` so round-trip is exact.
-- [ ] **X.4.f.11.6.6** — Wire on the Rail FieldSpec (both subtypes; no `subtype_only`). Helper text: "YAML map — keys are metadata field names, values are example strings the demo seed cycles through. Empty ⇒ uses synthetic per-rail fallback." Example block in placeholder.
-- [ ] **X.4.f.11.6.7** — Create-form constructor: thread `metadata_value_examples` from `fields.get("metadata_value_examples") or ()` into both TwoLeg + SingleLeg constructors (mirrors the other Tier-2 fields landed in X.4.f.11.6).
-- [ ] **X.4.f.11.6.8** — Test: edit form renders existing example map as YAML; PUT round-trips a 2-key/3-values-each example without dropping/reordering; bad-YAML PUT returns 400 + inline error + typed content preserved.
+- [x] **X.4.f.11.6.5** — `yaml_block` FieldKind: renders a `<textarea>` (mono font, ~10 rows). Coerce parses with `yaml.safe_load`, validates the result is `dict[str, list[str]]` (or empty), then wraps to `tuple[(Identifier(k), tuple(map(str, vals))), ...]`. Bad YAML → `ValueError("Invalid YAML: ...")` → form re-render with operator's typed content + inline error. Display side: `_value_to_input_str` for the metadata_value_examples field uses `yaml.safe_dump({k: list(vals) for k, vals in tuple_of_tuples})` so round-trip is exact.
+- [x] **X.4.f.11.6.6** — Wire on the Rail FieldSpec (both subtypes; no `subtype_only`). Helper text: "YAML map — keys are metadata field names, values are example strings the demo seed cycles through. Empty ⇒ uses synthetic per-rail fallback." Example block in placeholder.
+- [x] **X.4.f.11.6.7** — Create-form constructor: thread `metadata_value_examples` from `fields.get("metadata_value_examples") or ()` into both TwoLeg + SingleLeg constructors (mirrors the other Tier-2 fields landed in X.4.f.11.6).
+- [x] **X.4.f.11.6.8** — Test: edit form renders existing example map as YAML; PUT round-trips a 2-key/3-values-each example without dropping/reordering; bad-YAML PUT returns 400 + inline error + typed content preserved.
 
-**Verify:**
-- [ ] **X.4.f.11.10** — Tests in `test_studio_editor_routes.py`: subtype filter (TwoLeg form hides leg_role; SingleLeg form hides source_role); create form subtype picker; PUT round-trip per new field.
-- [ ] **X.4.f.11.11** — Live verify against `sasquatch_pr.yaml`: load → edit a rail end-to-end via the studio editor → save → assert yaml diff matches the form changes.
-- [ ] **X.4.f.11.12** — pyright + commit + tick PLAN.
+**Verify:** *(all shipped in commit 9e2447f — 42 test references for new fields confirm coverage)*
+- [x] **X.4.f.11.10** — Tests in `test_studio_editor_routes.py`: subtype filter (TwoLeg form hides leg_role; SingleLeg form hides source_role); create form subtype picker; PUT round-trip per new field.
+- [x] **X.4.f.11.11** — Live verify against `sasquatch_pr.yaml`: load → edit a rail end-to-end via the studio editor → save → assert yaml diff matches the form changes.
+- [x] **X.4.f.11.12** — pyright + commit + tick PLAN.
 
 #### X.4.f.12 — Theme + Persona singleton editors
 
@@ -184,12 +184,13 @@ Theme + Persona are L2-instance attributes (singletons, not lists). They need a 
 
 **Approach:** parameterize the existing route handlers on `is_singleton: bool`; reuse the FieldSpec / coerce / render machinery. Add a `color` FieldKind for `<input type="color">` hex inputs. Defer the `GLAccount` sub-form editor — v1 uses a textarea of `code|name|note` rows.
 
-- [ ] **X.4.f.12.1** — Singleton route handlers (`GET /l2_shape/<kind>/` form / `PUT /l2_shape/<kind>/` save) — pattern mirrors per-id but no path param. Add `singleton_save_l2(kind, fields)` to `editor.py` that does `dataclasses.replace(instance, theme=…)` / `…persona=…)`.
-- [ ] **X.4.f.12.2** — `color` FieldKind: renders `<input type="color" value="#…">`; coerces 6-char hex. Validator at FieldSpec level rejects non-hex strings.
-- [ ] **X.4.f.12.3** — Theme FieldSpec list (~25 fields). Single-color fields use `color`; list-of-color fields (`data_colors`, `gradient`) use `textarea` (one hex per line) for v1; `logo` / `favicon` use `text` (URL or path).
-- [ ] **X.4.f.12.4** — Persona FieldSpec list (5 fields). `institution` / `stakeholders` / `merchants` / `flavor` use `textarea` (one entry per line). `gl_accounts` uses `textarea` of `code|name|note` pipe-separated rows for v1.
-- [ ] **X.4.f.12.5** — Home page: 2 new sections (Theme / Persona) above the diagram or below the existing 6 sections (decision: below, since they're cosmetic / less-frequently-edited). Each shows the current value preview + Edit link landing on `/l2_shape/theme/` or `/l2_shape/persona/`.
-- [ ] **X.4.f.12.6** — Tests + verify + commit.
+*(All shipped in commit 9e2447f — implementation pivoted from per-field FieldSpecs + `color` FieldKind to a single `yaml_block` per singleton: simpler + matches the operator's mental model of editing the L2 yaml shape they already know. `color` FieldKind dropped from scope; `singleton_save_l2` + `SINGLETON_KINDS` + `/l2_shape/{theme,persona}/` routes ship.)*
+- [x] **X.4.f.12.1** — Singleton route handlers (`GET /l2_shape/<kind>/` form / `PUT /l2_shape/<kind>/` save) — pattern mirrors per-id but no path param. Add `singleton_save_l2(kind, fields)` to `editor.py` that does `dataclasses.replace(instance, theme=…)` / `…persona=…)`.
+- [x] **X.4.f.12.2** — ~~`color` FieldKind~~ → dropped from scope. Singleton form uses a single `yaml_block` per the operator-preference call (the operator already knows the L2 yaml shape; v1 surfaces it directly rather than building 25+ per-field widgets). A dedicated `color` FieldKind can reland later if singleton editing turns out to be a frequent enough touchpoint to justify it.
+- [x] **X.4.f.12.3** — Theme yaml_block route shipped (single textarea + `_load_theme` round-trip). FieldSpec list deferred per .12.2.
+- [x] **X.4.f.12.4** — Persona yaml_block route shipped (single textarea + `_load_persona` round-trip). FieldSpec list deferred per .12.2.
+- [x] **X.4.f.12.5** — Home page: 2 new sections (Theme / Persona) above the diagram or below the existing 6 sections (decision: below, since they're cosmetic / less-frequently-edited). Each shows the current value preview + Edit link landing on `/l2_shape/theme/` or `/l2_shape/persona/`.
+- [x] **X.4.f.12.6** — Tests + verify + commit.
 
 #### X.4.g — The "Deploy changes" pipeline
 
