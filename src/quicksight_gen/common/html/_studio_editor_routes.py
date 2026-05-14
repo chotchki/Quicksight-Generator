@@ -44,6 +44,7 @@ from quicksight_gen.common.html._studio_routes import asset_url
 from quicksight_gen.common.l2.cache import L2InstanceCache
 from quicksight_gen.common.l2.editor import (
     EntityKind,
+    create_l2_entity,
     delete_l2_entity,
     mutate_l2,
     rename_identifier,
@@ -602,8 +603,18 @@ def _render_read_card(
         f'data-kind="{escape(kind)}" data-entity-id="{escape(entity_id)}">'
         f"<header>"
         f"{title_html}"
+        f'<div class="entity-card-actions">'
         f'<a class="edit-link" hx-get="/l2_shape/{kind}/{escape(entity_id)}/edit" '
         f'hx-target="#entity-{kind}-{escape(entity_id)}" hx-swap="outerHTML">Edit</a>'
+        # X.4.f.9.delete — DELETE on success returns empty (card disappears
+        # via outerHTML swap); on validator-rejected structural break
+        # returns 400 + the error fragment which swaps in place. No
+        # cascade — the operator clears the dependent reference first.
+        f'<a class="delete-link" hx-delete="/l2_shape/{kind}/{escape(entity_id)}" '
+        f'hx-target="#entity-{kind}-{escape(entity_id)}" hx-swap="outerHTML" '
+        f'hx-confirm="Delete this entity? References that block deletion '
+        f'will be reported inline.">Delete</a>'
+        f"</div>"
         f"</header>"
         f"<dl>{rows}</dl>"
         f"</article>"
@@ -702,6 +713,47 @@ def _render_edit_form(
         f'<a class="cancel-link" hx-get="/l2_shape/{kind}/{escape(entity_id)}" '
         f'hx-target="#entity-{kind}-{escape(entity_id)}" hx-swap="outerHTML">'
         f"Cancel</a>"
+        f"</div>"
+        f"</form>"
+        f"</article>"
+    )
+
+
+def _render_create_form(
+    kind: EntityKind,
+    instance: Any,  # typing-smell: ignore[explicit-any]: L2Instance — needed for select_from option resolution
+    form_overrides: Mapping[str, str] | None = None,
+    global_error: str | None = None,
+) -> str:
+    """X.4.f.9.create — blank form for a new entity. POST target is
+    the kind's collection root (``/l2_shape/<kind>/``); on success the
+    response is the new card + ``HX-Trigger: l2-cascade-reload``.
+
+    Validation-failure path mirrors edit: 400 + this same form
+    re-rendered with the operator's typed values + the validator
+    error in ``global_error``.
+    """
+    specs = _FIELD_SPECS_BY_KIND[kind]
+    overrides = form_overrides or {}
+    fields_html = "".join(
+        _render_field(s, overrides.get(s.name, ""), instance)
+        for s in specs
+    )
+    global_err_html = (
+        f'<div class="form-global-error">{escape(global_error)}</div>'
+        if global_error else ""
+    )
+    return (
+        f'<article class="entity-card editing" id="entity-{kind}-new">'
+        f"<header><h3>New {escape(kind)}</h3></header>"
+        f'<form hx-post="/l2_shape/{kind}/" '
+        f'hx-target="#entity-{kind}-new" hx-swap="outerHTML">'
+        f"{global_err_html}"
+        f"{fields_html}"
+        f'<div class="form-actions">'
+        f'<button type="submit">Create</button>'
+        f'<a class="cancel-link" hx-get="/l2_shape/{kind}/?embed=1" '
+        f'hx-target="closest .entity-list" hx-swap="outerHTML">Cancel</a>'
         f"</div>"
         f"</form>"
         f"</article>"
@@ -948,6 +1000,74 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
         resp.headers["HX-Trigger"] = "l2-cascade-reload"
         return resp
 
+    async def new_form(request: Request) -> HTMLResponse:
+        kind = _kind_from_path(request.path_params["kind"])
+        if kind is None or kind not in _FIELD_SPECS_BY_KIND:
+            return HTMLResponse("not editable", status_code=404)
+        return HTMLResponse(_render_create_form(kind, cache.get()))
+
+    async def create(request: Request) -> HTMLResponse:
+        """X.4.f.9.create — POST a new entity into the kind's collection.
+
+        Coerce → construct (catches required-field errors) → validate
+        → save → respond with the new card + cascade trigger. Failure
+        re-renders the create form with the error inline.
+        """
+        kind = _kind_from_path(request.path_params["kind"])
+        if kind is None or kind not in _FIELD_SPECS_BY_KIND:
+            return HTMLResponse("not editable", status_code=404)
+
+        form = await request.form()
+        coerced: dict[str, str] = {str(k): str(v) for k, v in form.items()}
+        try:
+            new_fields = _coerce_form(kind, coerced)
+        except (ValueError, TypeError) as exc:
+            return HTMLResponse(
+                _render_create_form(
+                    kind, cache.get(),
+                    form_overrides=coerced,
+                    global_error=f"Field coercion failed: {exc}",
+                ),
+                status_code=400,
+            )
+
+        try:
+            new_inst = create_l2_entity(cache.get(), kind, new_fields)
+        except ValueError as exc:
+            return HTMLResponse(
+                _render_create_form(
+                    kind, cache.get(),
+                    form_overrides=coerced,
+                    global_error=str(exc),
+                ),
+                status_code=400,
+            )
+
+        try:
+            validate(new_inst)
+        except L2ValidationError as exc:
+            return HTMLResponse(
+                _render_create_form(
+                    kind, cache.get(),
+                    form_overrides=coerced,
+                    global_error=str(exc),
+                ),
+                status_code=400,
+            )
+
+        cache.save(new_inst)
+        # Find the just-created entity to render its card.
+        addr = _addressing_field(kind)
+        entity_id = str(new_fields.get(addr, ""))
+        new_entity = _find_entity_or_none(new_inst, kind, entity_id)
+        body = (
+            _render_read_card(kind, new_entity, new_inst)
+            if new_entity is not None else "created"
+        )
+        resp = HTMLResponse(body)
+        resp.headers["HX-Trigger"] = "l2-cascade-reload"
+        return resp
+
     async def delete_handler(request: Request) -> HTMLResponse:
         kind = _kind_from_path(request.path_params["kind"])
         entity_id = request.path_params["entity_id"]
@@ -980,6 +1100,8 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
         "edit_form": edit_form,
         "save": save,
         "delete": delete_handler,
+        "new_form": new_form,
+        "create": create,
     }
 
 
@@ -1071,6 +1193,16 @@ def make_editor_routes(cache: L2InstanceCache) -> list[Route]:
     return [
         Route(
             "/l2_shape/{kind}/", h["list_view"], methods=["GET"],
+        ),
+        Route(
+            "/l2_shape/{kind}/", h["create"], methods=["POST"],
+            name="l2_shape_create",
+        ),
+        # ``/new`` MUST be declared before ``/{entity_id}`` so Starlette's
+        # path matcher doesn't treat the literal "new" as an entity_id.
+        Route(
+            "/l2_shape/{kind}/new", h["new_form"], methods=["GET"],
+            name="l2_shape_new_form",
         ),
         Route(
             "/l2_shape/{kind}/{entity_id}", h["read_card"],

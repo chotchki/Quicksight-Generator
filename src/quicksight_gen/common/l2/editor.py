@@ -38,6 +38,8 @@ from quicksight_gen.common.l2.primitives import (
     Identifier,
     L2Instance,
     LimitSchedule,
+    Money,
+    Name,
     Rail,
     TransferTemplate,
     TwoLegRail,
@@ -142,6 +144,180 @@ def rename_identifier(
 
     # kind == "transfer_template"
     return _rename_transfer_template(instance, old, new)
+
+
+def create_l2_entity(
+    instance: L2Instance,
+    kind: EntityKind,
+    fields: Mapping[str, Any],  # typing-smell: ignore[explicit-any]: heterogeneous form-submitted field values; per-entity dataclass fields differ
+) -> L2Instance:
+    """Append a new entity to the kind's collection.
+
+    Builds the entity from ``fields`` (already coerced to dataclass-
+    field types by the caller). Required-but-missing fields raise
+    ``ValueError`` from the dataclass constructor; ID collisions
+    raise ``ValueError`` here (we'd rather fail loud at construction
+    than let a duplicate slip into the collection and have the
+    validator's reference-resolution surface it as a confusing
+    indirect error).
+
+    Returns a new ``L2Instance``. The caller composes ``validate(...)``
+    afterward to catch L2-graph break (e.g., a Rail referencing roles
+    that don't exist yet).
+    """
+    if kind == "account":
+        new_id = fields.get("id")
+        if not new_id:
+            raise ValueError("Account.id is required")
+        if any(str(a.id) == str(new_id) for a in instance.accounts):
+            raise ValueError(f"Account id {new_id!r} already exists")
+        new_acc = Account(
+            id=Identifier(str(new_id)),
+            scope=fields.get("scope") or "internal",
+            name=Name(str(fields["name"])) if fields.get("name") else None,
+            role=Identifier(str(fields["role"])) if fields.get("role") else None,
+            parent_role=(
+                Identifier(str(fields["parent_role"]))
+                if fields.get("parent_role") else None
+            ),
+            expected_eod_balance=fields.get("expected_eod_balance"),
+            description=fields.get("description"),
+        )
+        return dataclasses.replace(
+            instance, accounts=(*instance.accounts, new_acc),
+        )
+    if kind == "account_template":
+        new_role = fields.get("role")
+        if not new_role:
+            raise ValueError("AccountTemplate.role is required")
+        if any(
+            str(t.role) == str(new_role) for t in instance.account_templates
+        ):
+            raise ValueError(
+                f"AccountTemplate role {new_role!r} already exists",
+            )
+        new_t = AccountTemplate(
+            role=Identifier(str(new_role)),
+            scope=fields.get("scope") or "internal",
+            parent_role=(
+                Identifier(str(fields["parent_role"]))
+                if fields.get("parent_role") else None
+            ),
+            expected_eod_balance=fields.get("expected_eod_balance"),
+            description=fields.get("description"),
+            instance_id_template=fields.get("instance_id_template"),
+            instance_name_template=fields.get("instance_name_template"),
+        )
+        return dataclasses.replace(
+            instance, account_templates=(*instance.account_templates, new_t),
+        )
+    if kind == "rail":
+        new_name = fields.get("name")
+        if not new_name:
+            raise ValueError("Rail.name is required")
+        if any(str(r.name) == str(new_name) for r in instance.rails):
+            raise ValueError(f"Rail name {new_name!r} already exists")
+        if not fields.get("transfer_type"):
+            raise ValueError("Rail.transfer_type is required")
+        # First-cut: blank TwoLegRail with empty endpoint roles. The
+        # validator will reject this until the operator adds the roles
+        # via a follow-on edit (TwoLeg vs SingleLeg subtype + endpoint
+        # editing UI is X.4.f.6.followon).
+        new_r = TwoLegRail(
+            name=Identifier(str(new_name)),
+            transfer_type=str(fields["transfer_type"]),
+            source_role=(),
+            destination_role=(),
+            metadata_keys=(),
+            description=fields.get("description"),
+        )
+        return dataclasses.replace(instance, rails=(*instance.rails, new_r))
+    if kind == "transfer_template":
+        new_name = fields.get("name")
+        if not new_name:
+            raise ValueError("TransferTemplate.name is required")
+        if any(
+            str(t.name) == str(new_name)
+            for t in instance.transfer_templates
+        ):
+            raise ValueError(
+                f"TransferTemplate name {new_name!r} already exists",
+            )
+        if not fields.get("transfer_type"):
+            raise ValueError("TransferTemplate.transfer_type is required")
+        if not fields.get("completion"):
+            raise ValueError("TransferTemplate.completion is required")
+        if fields.get("expected_net") is None:
+            raise ValueError("TransferTemplate.expected_net is required")
+        new_tt = TransferTemplate(
+            name=Identifier(str(new_name)),
+            transfer_type=str(fields["transfer_type"]),
+            expected_net=Money(fields["expected_net"]),
+            completion=str(fields["completion"]),
+            leg_rails=(),
+            transfer_key=(),
+            description=fields.get("description"),
+        )
+        return dataclasses.replace(
+            instance,
+            transfer_templates=(*instance.transfer_templates, new_tt),
+        )
+    if kind == "chain":
+        parent = fields.get("parent")
+        child = fields.get("child")
+        if not parent or not child:
+            raise ValueError("ChainEntry.parent and .child are required")
+        if any(
+            str(c.parent) == str(parent) and str(c.child) == str(child)
+            for c in instance.chains
+        ):
+            raise ValueError(
+                f"ChainEntry {parent}::{child} already exists",
+            )
+        required_val = fields.get("required")
+        if required_val is None:
+            raise ValueError("ChainEntry.required is required")
+        new_ce = ChainEntry(
+            parent=Identifier(str(parent)),
+            child=Identifier(str(child)),
+            required=bool(required_val),
+            xor_group=(
+                Identifier(str(fields["xor_group"]))
+                if fields.get("xor_group") else None
+            ),
+            description=fields.get("description"),
+        )
+        return dataclasses.replace(
+            instance, chains=(*instance.chains, new_ce),
+        )
+    if kind == "limit_schedule":
+        parent_role = fields.get("parent_role")
+        transfer_type = fields.get("transfer_type")
+        cap = fields.get("cap")
+        if not parent_role or not transfer_type or cap is None:
+            raise ValueError(
+                "LimitSchedule.parent_role / .transfer_type / .cap "
+                "are required",
+            )
+        if any(
+            str(ls.parent_role) == str(parent_role)
+            and ls.transfer_type == str(transfer_type)
+            for ls in instance.limit_schedules
+        ):
+            raise ValueError(
+                f"LimitSchedule {parent_role}::{transfer_type} "
+                f"already exists",
+            )
+        new_ls = LimitSchedule(
+            parent_role=Identifier(str(parent_role)),
+            transfer_type=str(transfer_type),
+            cap=Money(cap),
+            description=fields.get("description"),
+        )
+        return dataclasses.replace(
+            instance, limit_schedules=(*instance.limit_schedules, new_ls),
+        )
+    raise ValueError(f"Unknown entity kind: {kind!r}")
 
 
 def delete_l2_entity(

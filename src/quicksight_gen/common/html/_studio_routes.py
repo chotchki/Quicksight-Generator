@@ -157,6 +157,16 @@ def _render_home_page(cache: L2InstanceCache, dev_log: bool) -> str:
             f'<details class="home-section" data-kind="{escape(kind)}"{open_attr}>'
             f"<summary>{escape(label)} "
             f'<span class="count">({n})</span> '
+            f'<a class="home-section-add" '
+            f'hx-get="/l2_shape/{kind}/new" '
+            f'hx-target="next .home-section-body" '
+            f'hx-swap="afterbegin" '
+            # Stop the click from toggling the surrounding <details>
+            # (it would close on a second click); also force-open it
+            # so the inserted form is visible.
+            f'onclick="event.stopPropagation(); '
+            f'this.closest(\'details\').open = true;" '
+            f'title="Create a new {escape(kind)}">+ Add</a>'
             f'<a class="home-section-link" href="/l2_shape/{kind}/" '
             f'title="Open in dedicated page">↗</a>'
             f"</summary>"

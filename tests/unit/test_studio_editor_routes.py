@@ -268,6 +268,81 @@ def test_parent_role_hidden_when_account_is_already_a_parent(
         assert "Parent role" not in card_resp.text
 
 
+def test_card_renders_delete_link_with_confirm(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.9 — every read card carries a Delete link wired to the
+    DELETE route, with hx-confirm so a stray click can't wipe an
+    entity."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/l2_shape/account/cust-001").text
+    assert 'class="delete-link"' in body
+    assert 'hx-delete="/l2_shape/account/cust-001"' in body
+    assert "hx-confirm=" in body
+
+
+def test_get_new_form_returns_blank_create_form(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.9.create — GET /l2_shape/<kind>/new returns an empty
+    form that POSTs to /l2_shape/<kind>/."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.get("/l2_shape/account/new")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "<form" in body
+    assert 'hx-post="/l2_shape/account/"' in body
+    # No prefilled values.
+    assert 'value=""' in body
+
+
+def test_post_create_account_persists_and_triggers_cascade(
+    writable_l2_yaml: Path,
+) -> None:
+    """POST a brand-new Account; reload disk + assert it lands."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.post(
+            "/l2_shape/account/",
+            data={
+                "id": "cust-999-new",
+                "scope": "internal",
+                "name": "Brand new customer",
+                "role": "CustomerSubledger",
+                "parent_role": "CustomerLedger",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("HX-Trigger") == "l2-cascade-reload"
+    assert "cust-999-new" in resp.text
+
+    reloaded = load_instance(writable_l2_yaml)
+    assert any(str(a.id) == "cust-999-new" for a in reloaded.accounts)
+
+
+def test_post_create_with_duplicate_id_returns_400_inline(
+    writable_l2_yaml: Path,
+) -> None:
+    """ID collision → 400 + form re-rendered with the error inline +
+    user's typed values preserved."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.post(
+            "/l2_shape/account/",
+            data={
+                "id": "cust-001",  # already exists
+                "scope": "internal",
+                "name": "Conflicting",
+                "role": "CustomerSubledger",
+            },
+        )
+    assert resp.status_code == 400, resp.text
+    assert "already exists" in resp.text
+    assert "<form" in resp.text  # form re-rendered
+
+
 def test_put_account_role_rename_cascades_to_rails_and_templates(
     writable_l2_yaml: Path,
 ) -> None:

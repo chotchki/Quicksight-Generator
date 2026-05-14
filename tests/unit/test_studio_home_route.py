@@ -95,6 +95,26 @@ def test_home_page_renders_diagram_iframe_and_six_entity_sections(
         assert f'data-kind="{kind}"' in body, f"missing section for {kind}"
 
 
+def test_home_page_each_section_carries_add_button(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.9 — every section's <summary> exposes a "+ Add" link
+    that hx-gets the kind's blank form into the section body."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/").text
+
+    for kind in (
+        "account", "account_template", "rail",
+        "transfer_template", "chain", "limit_schedule",
+    ):
+        assert f'hx-get="/l2_shape/{kind}/new"' in body, (
+            f"missing + Add for {kind}"
+        )
+    # stopPropagation prevents the click from toggling <details> closed.
+    assert "event.stopPropagation()" in body
+
+
 def test_home_page_first_section_open_default_others_collapsed(
     writable_l2_yaml: Path,
 ) -> None:

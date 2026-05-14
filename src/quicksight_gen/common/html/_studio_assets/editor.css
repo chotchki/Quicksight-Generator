@@ -140,7 +140,8 @@ body.home-page {
 }
 
 .entity-card .edit-link,
-.entity-card .cancel-link {
+.entity-card .cancel-link,
+.entity-card .delete-link {
   color: var(--studio-accent);
   text-decoration: none;
   font-size: 0.75rem;
@@ -148,6 +149,28 @@ body.home-page {
 }
 .entity-card .edit-link:hover,
 .entity-card .cancel-link:hover {
+  text-decoration: underline;
+}
+.entity-card .delete-link {
+  color: #c62828;
+}
+.entity-card .delete-link:hover {
+  text-decoration: underline;
+}
+.entity-card-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* X.4.f.9 — section-header "Add" button (peer of the ↗ deep-link). */
+.home-section-add {
+  margin-left: 0.5rem;
+  color: var(--studio-accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.home-section-add:hover {
   text-decoration: underline;
 }
 
