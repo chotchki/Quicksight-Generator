@@ -26,10 +26,21 @@ from __future__ import annotations
 import asyncio
 import shlex
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING
+from datetime import date
+from typing import TYPE_CHECKING, Any
 
-from quicksight_gen.common.db import connect_demo_db, execute_script
-from quicksight_gen.common.l2.schema import wipe_demo_data_sql
+from quicksight_gen.common.db import (
+    connect_demo_db,
+    execute_script,
+    oracle_dsn,
+    sqlite_path,
+)
+from quicksight_gen.common.l2.schema import (
+    BASE_DAILY_BALANCES_COLUMNS,
+    BASE_TRANSACTIONS_COLUMNS,
+    wipe_demo_data_sql,
+)
+from quicksight_gen.common.sql import Dialect
 
 if TYPE_CHECKING:
     from quicksight_gen.common.config import Config
@@ -182,3 +193,211 @@ async def step_2_wipe(
         "daily_balances_deleted": bal_count,
     })
     return tx_count, bal_count
+
+
+# X.4.g.6 — Step 2 pull: cross-dialect copy from etl_datasource.
+
+# Batch size for the source-to-dest fetch+insert loop. 5000 rows is
+# the operator-tested default — memory bounded, dashboards-load tested.
+# Tunable per-call for tests that want to exercise the multi-batch
+# path without seeding 10k+ rows.
+_PULL_BATCH_SIZE = 5000
+
+
+def _dialect_from_url(url: str) -> Dialect:
+    """Infer the SQL dialect from a connection URL prefix.
+
+    Supports the same URL shapes ``connect_demo_db`` accepts. The
+    operator declares only the URL in ``cfg.etl_datasource``; we don't
+    require a redundant ``dialect:`` field there.
+    """
+    if url.startswith(("postgresql://", "postgres://")):
+        return Dialect.POSTGRES
+    if url.startswith(("oracle://", "oracle+oracledb://")):
+        return Dialect.ORACLE
+    if url.startswith("sqlite://"):
+        return Dialect.SQLITE
+    raise ValueError(
+        f"Cannot infer dialect from etl_datasource URL: {url!r}. "
+        f"Supported prefixes: postgresql://, oracle://, sqlite://."
+    )
+
+
+def _connect_etl_source(url: str) -> Any:  # pyright: ignore[reportExplicitAny]  # WHY: DB-API 2.0 sync connection has no shared Protocol across psycopg/oracledb/sqlite3
+    """Open a sync DB-API 2.0 connection to the etl_datasource URL.
+
+    Mirrors ``connect_demo_db`` but takes a URL directly so the source
+    DB doesn't share ``cfg.demo_database_url`` / ``cfg.dialect``.
+    """
+    dialect = _dialect_from_url(url)
+    if dialect is Dialect.POSTGRES:
+        import psycopg
+        return psycopg.connect(url)
+    if dialect is Dialect.ORACLE:
+        import oracledb
+        return oracledb.connect(oracle_dsn(url))
+    import sqlite3
+    return sqlite3.connect(sqlite_path(url))
+
+
+def _insert_paramstyle_sql(
+    table: str, columns: tuple[str, ...], dialect: Dialect,
+) -> str:
+    """Build an INSERT with the dialect's parameter placeholder style.
+
+    psycopg uses ``%s``, oracledb uses ``:1, :2, ...``, sqlite3 uses
+    ``?``. Single source of truth so the executemany call binds
+    correctly per dialect.
+    """
+    cols_csv = ", ".join(columns)
+    n = len(columns)
+    if dialect is Dialect.POSTGRES:
+        placeholders = ", ".join(["%s"] * n)
+    elif dialect is Dialect.ORACLE:
+        placeholders = ", ".join(f":{i + 1}" for i in range(n))
+    else:
+        placeholders = ", ".join(["?"] * n)
+    return f"INSERT INTO {table} ({cols_csv}) VALUES ({placeholders})"
+
+
+async def step_2_pull(
+    cfg: Config,
+    instance: L2Instance,
+    *,
+    dev_log: DevLogWriter | None = None,
+    batch_size: int = _PULL_BATCH_SIZE,
+) -> tuple[int, int]:
+    """Cross-dialect copy from ``cfg.etl_datasource`` into the demo DB.
+
+    X.4.g.6 — runs after step 2's wipe, BEFORE step 3's generator.
+    For each base table:
+      - SELECT mirrored columns from the source's declared
+        transactions / daily_balances table, optionally filtered to
+        ``cfg.test_generator.end_date`` (transactions: ``posting <=``;
+        daily_balances: ``business_day_end <=``).
+      - Fetch in ``batch_size`` chunks (default 5000).
+      - INSERT each batch into the demo's ``<prefix>_<table>``.
+
+    Skips entirely (no-op, returns ``(0, 0)``, emits a skip event)
+    when ``cfg.etl_datasource is None`` — operator's no-etl path.
+
+    Column mapping is by-name: the source must expose columns with
+    the same names the L2 v6 schema declares (``BASE_*_COLUMNS``).
+    Extra columns in the source are ignored; missing columns surface
+    as a loud "column not found" failure from the source DB. This is
+    the contract per the X.4.g.6 design — the operator's ETL is
+    responsible for landing v6-compliant column names.
+
+    Returns ``(transactions_pulled, daily_balances_pulled)`` row
+    counts so the caller can surface "pulled 12,345 transactions" in
+    the deploy summary.
+    """
+    if cfg.etl_datasource is None:
+        await _emit(dev_log, {
+            "event": "deploy:step2:pull:skip",
+            "reason": "etl_datasource not configured",
+        })
+        return 0, 0
+
+    src_cfg = cfg.etl_datasource
+    src_dialect = _dialect_from_url(src_cfg.url)
+    end_date = cfg.test_generator.end_date
+    p = instance.instance
+
+    await _emit(dev_log, {
+        "event": "deploy:step2:pull:start",
+        "source_dialect": src_dialect.value,
+        "dest_dialect": cfg.dialect.value,
+        "instance": p,
+        "end_date": end_date.isoformat() if end_date else None,
+    })
+
+    def _run_pull() -> tuple[int, int]:
+        src_conn = _connect_etl_source(src_cfg.url)
+        try:
+            dest_conn = connect_demo_db(cfg)
+            try:
+                tx_pulled = _pull_table(
+                    src_conn=src_conn,
+                    dest_conn=dest_conn,
+                    src_table=src_cfg.transactions_table,
+                    dest_table=f"{p}_transactions",
+                    columns=BASE_TRANSACTIONS_COLUMNS,
+                    filter_col="posting",
+                    end_date=end_date,
+                    dest_dialect=cfg.dialect,
+                    batch_size=batch_size,
+                )
+                bal_pulled = _pull_table(
+                    src_conn=src_conn,
+                    dest_conn=dest_conn,
+                    src_table=src_cfg.daily_balances_table,
+                    dest_table=f"{p}_daily_balances",
+                    columns=BASE_DAILY_BALANCES_COLUMNS,
+                    filter_col="business_day_end",
+                    end_date=end_date,
+                    dest_dialect=cfg.dialect,
+                    batch_size=batch_size,
+                )
+                dest_conn.commit()
+                return tx_pulled, bal_pulled
+            finally:
+                dest_conn.close()
+        finally:
+            src_conn.close()
+
+    tx_pulled, bal_pulled = await asyncio.to_thread(_run_pull)
+    await _emit(dev_log, {
+        "event": "deploy:step2:pull:done",
+        "transactions_pulled": tx_pulled,
+        "daily_balances_pulled": bal_pulled,
+    })
+    return tx_pulled, bal_pulled
+
+
+def _pull_table(
+    *,
+    src_conn: Any,  # pyright: ignore[reportExplicitAny]  # WHY: DB-API 2.0 sync connection has no shared Protocol across drivers
+    dest_conn: Any,  # pyright: ignore[reportExplicitAny]  # WHY: DB-API 2.0 sync connection has no shared Protocol across drivers
+    src_table: str,
+    dest_table: str,
+    columns: tuple[str, ...],
+    filter_col: str,
+    end_date: date | None,
+    dest_dialect: Dialect,
+    batch_size: int,
+) -> int:
+    """Stream rows from one source table into one dest table.
+
+    Returns the row count pulled. Source column order MUST match
+    ``columns``; the SELECT names them explicitly so the operator's
+    source can have extras + we still bind correctly to the INSERT.
+    """
+    cols_csv = ", ".join(columns)
+    select_sql = f"SELECT {cols_csv} FROM {src_table}"
+    if end_date is not None:
+        # ISO-8601 date string is always-safe to inline (operator-controlled
+        # via cfg.test_generator.end_date, typed `date`). DB-API param
+        # styles differ across drivers — inlining keeps the source-side
+        # path single-shape.
+        select_sql += f" WHERE {filter_col} <= '{end_date.isoformat()}'"
+
+    insert_sql = _insert_paramstyle_sql(dest_table, columns, dest_dialect)
+
+    src_cur = src_conn.cursor()
+    try:
+        src_cur.execute(select_sql)
+        dest_cur = dest_conn.cursor()
+        try:
+            total = 0
+            while True:
+                batch = src_cur.fetchmany(batch_size)
+                if not batch:
+                    break
+                dest_cur.executemany(insert_sql, batch)
+                total += len(batch)
+            return total
+        finally:
+            dest_cur.close()
+    finally:
+        src_cur.close()

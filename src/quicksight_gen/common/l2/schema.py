@@ -183,6 +183,33 @@ def emit_schema_drop_sql(
     )
 
 
+# X.4.g.6 — Base-table column lists for the deploy pipeline's step 2
+# pull. Excludes ``entry`` (auto-generated identity column on every
+# dialect; the pull lets the destination assign its own). Order is
+# the canonical order the pipeline uses for both SELECT (against the
+# operator's etl_datasource) and INSERT (into the demo DB), so column
+# positions stay aligned across dialects.
+#
+# Source of truth: the CREATE TABLE blocks in ``_SCHEMA_TEMPLATE``
+# below — when those change, this constant must change too. The
+# `tests/unit/test_deploy_pipeline.py` snapshot test guards drift
+# by introspecting a fresh sqlite-applied schema and diffing.
+BASE_TRANSACTIONS_COLUMNS: tuple[str, ...] = (
+    "id", "account_id", "account_name", "account_role",
+    "account_scope", "account_parent_role", "amount_money",
+    "amount_direction", "status", "posting", "transfer_id",
+    "transfer_type", "transfer_completion", "transfer_parent_id",
+    "rail_name", "template_name", "bundle_id", "supersedes",
+    "origin", "metadata",
+)
+
+BASE_DAILY_BALANCES_COLUMNS: tuple[str, ...] = (
+    "account_id", "account_name", "account_role", "account_scope",
+    "account_parent_role", "expected_eod_balance", "business_day_start",
+    "business_day_end", "money", "limits", "supersedes",
+)
+
+
 def wipe_demo_data_sql(
     instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
 ) -> str:

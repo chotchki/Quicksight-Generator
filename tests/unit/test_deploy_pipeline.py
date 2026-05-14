@@ -21,13 +21,20 @@ import pytest
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.db import connect_demo_db, execute_script
+from quicksight_gen.common.config import EtlDatasourceConfig
 from quicksight_gen.common.l2.deploy_pipeline import (
     step_1_etl_hook,
+    step_2_pull,
     step_2_wipe,
 )
 from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.primitives import L2Instance
-from quicksight_gen.common.l2.schema import emit_schema, wipe_demo_data_sql
+from quicksight_gen.common.l2.schema import (
+    BASE_DAILY_BALANCES_COLUMNS,
+    BASE_TRANSACTIONS_COLUMNS,
+    emit_schema,
+    wipe_demo_data_sql,
+)
 from quicksight_gen.common.sql import Dialect
 
 
@@ -350,3 +357,333 @@ def test_step_2_wipe_idempotent_on_empty_tables(
         step_2_wipe(cfg, spec_example_instance, dev_log=None),
     )
     assert (tx, bal) == (0, 0)
+
+
+# ============================================================
+# step_2_pull (X.4.g.6)
+# ============================================================
+
+
+def _build_etl_source_sqlite(
+    src_path: Path,
+    *,
+    txn_rows: int,
+    bal_rows: int,
+    posting_dates: list[str] | None = None,
+    bd_end_dates: list[str] | None = None,
+) -> None:
+    """Provision a SQLite tempfile to act as an external etl_datasource.
+
+    Schema mirrors the v6 base tables (column-by-column). Default
+    posting/business_day_end dates are 2030-01-01 + i days; override
+    via parameters for end_date filter tests.
+    """
+    import sqlite3
+    conn = sqlite3.connect(src_path)
+    try:
+        cur = conn.cursor()
+        # Mirror just the columns the pull cares about; CHECK
+        # constraints would fail us in tests trying to assert "the
+        # source can have arbitrary shape", so they're omitted here.
+        cur.execute(
+            "CREATE TABLE etl_txns ("
+            + ", ".join(f"{c} TEXT" for c in BASE_TRANSACTIONS_COLUMNS)
+            + ")"
+        )
+        cur.execute(
+            "CREATE TABLE etl_balances ("
+            + ", ".join(f"{c} TEXT" for c in BASE_DAILY_BALANCES_COLUMNS)
+            + ")"
+        )
+        for i in range(txn_rows):
+            posting = (
+                posting_dates[i] if posting_dates
+                else f"2030-01-{(i % 28) + 1:02d}"
+            )
+            row = [
+                f"t{i}", f"a{i}", f"Acct {i}", "role",
+                "internal", None, "100.00", "Credit", "posted",
+                posting, f"g{i}", "cash_withdrawal", None, None,
+                "r1", None, None, None, "inbound", None,
+            ]
+            cur.execute(
+                "INSERT INTO etl_txns VALUES ("
+                + ", ".join(["?"] * len(BASE_TRANSACTIONS_COLUMNS))
+                + ")",
+                row,
+            )
+        for i in range(bal_rows):
+            bd_end = (
+                bd_end_dates[i] if bd_end_dates
+                else f"2030-01-{(i % 28) + 2:02d}"
+            )
+            row = [
+                f"a{i}", f"Acct {i}", "role", "internal", None,
+                None, f"2030-01-{(i % 28) + 1:02d}", bd_end,
+                "100.00", None, None,
+            ]
+            cur.execute(
+                "INSERT INTO etl_balances VALUES ("
+                + ", ".join(["?"] * len(BASE_DAILY_BALANCES_COLUMNS))
+                + ")",
+                row,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _apply_demo_schema_only(
+    cfg: Config, instance: L2Instance,
+) -> None:
+    """Apply the demo schema without planting any rows — the pull is
+    what fills the base tables."""
+    schema_sql = emit_schema(instance, dialect=cfg.dialect)
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            execute_script(cur, schema_sql, dialect=cfg.dialect)
+            conn.commit()
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+
+
+# ---------- skip path ----------
+
+def test_step_2_pull_skip_when_etl_datasource_unset(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    cfg = _sqlite_cfg(tmp_path)
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    sink = _EventCollector()
+    tx, bal = asyncio.run(
+        step_2_pull(cfg, spec_example_instance, dev_log=sink),
+    )
+    assert (tx, bal) == (0, 0)
+    assert sink.kinds() == ["deploy:step2:pull:skip"]
+
+
+# ---------- happy paths ----------
+
+def test_step_2_pull_sqlite_to_sqlite_no_filter(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """Degenerate same-dialect pull. No end_date filter — all rows
+    flow through. Exercises the SELECT/INSERT plumbing."""
+    src_path = tmp_path / "etl.sqlite"
+    _build_etl_source_sqlite(src_path, txn_rows=3, bal_rows=2)
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        etl_datasource=EtlDatasourceConfig(
+            url=f"sqlite:///{src_path}",
+            transactions_table="etl_txns",
+            daily_balances_table="etl_balances",
+        ),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    sink = _EventCollector()
+    tx, bal = asyncio.run(
+        step_2_pull(cfg, spec_example_instance, dev_log=sink),
+    )
+    assert (tx, bal) == (3, 2)
+    assert _row_counts(cfg, spec_example_instance) == (3, 2)
+    kinds = sink.kinds()
+    assert kinds == [
+        "deploy:step2:pull:start",
+        "deploy:step2:pull:done",
+    ]
+    start = sink.by_kind("deploy:step2:pull:start")[0]
+    assert start["source_dialect"] == "sqlite"
+    assert start["dest_dialect"] == "sqlite"
+    assert start["end_date"] is None
+    done = sink.by_kind("deploy:step2:pull:done")[0]
+    assert done["transactions_pulled"] == 3
+    assert done["daily_balances_pulled"] == 2
+
+
+def test_step_2_pull_end_date_filter_drops_future_rows(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """end_date carves the source: rows after the cutoff aren't pulled."""
+    from datetime import date
+    from quicksight_gen.common.config import TestGeneratorConfig
+    src_path = tmp_path / "etl.sqlite"
+    _build_etl_source_sqlite(
+        src_path,
+        txn_rows=4,
+        bal_rows=4,
+        posting_dates=[
+            "2030-01-01", "2030-01-15", "2030-02-01", "2030-03-15",
+        ],
+        bd_end_dates=[
+            "2030-01-02", "2030-01-16", "2030-02-02", "2030-03-16",
+        ],
+    )
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        etl_datasource=EtlDatasourceConfig(
+            url=f"sqlite:///{src_path}",
+            transactions_table="etl_txns",
+            daily_balances_table="etl_balances",
+        ),
+        test_generator=TestGeneratorConfig(end_date=date(2030, 1, 31)),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    tx, bal = asyncio.run(
+        step_2_pull(cfg, spec_example_instance, dev_log=None),
+    )
+    # Jan 1 + Jan 15 in; Feb 1 + Mar 15 out.
+    assert tx == 2
+    # Jan 2 + Jan 16 in; Feb 2 + Mar 16 out.
+    assert bal == 2
+
+
+def test_step_2_pull_empty_source(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    src_path = tmp_path / "etl.sqlite"
+    _build_etl_source_sqlite(src_path, txn_rows=0, bal_rows=0)
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        etl_datasource=EtlDatasourceConfig(
+            url=f"sqlite:///{src_path}",
+            transactions_table="etl_txns",
+            daily_balances_table="etl_balances",
+        ),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    tx, bal = asyncio.run(
+        step_2_pull(cfg, spec_example_instance, dev_log=None),
+    )
+    assert (tx, bal) == (0, 0)
+
+
+def test_step_2_pull_multi_batch_completes(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """12 rows with batch_size=5 → 3 fetchmany batches; all rows land."""
+    src_path = tmp_path / "etl.sqlite"
+    _build_etl_source_sqlite(src_path, txn_rows=12, bal_rows=8)
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        etl_datasource=EtlDatasourceConfig(
+            url=f"sqlite:///{src_path}",
+            transactions_table="etl_txns",
+            daily_balances_table="etl_balances",
+        ),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    tx, bal = asyncio.run(
+        step_2_pull(
+            cfg, spec_example_instance, dev_log=None, batch_size=5,
+        ),
+    )
+    assert (tx, bal) == (12, 8)
+    assert _row_counts(cfg, spec_example_instance) == (12, 8)
+
+
+# ---------- failure modes ----------
+
+def test_step_2_pull_missing_source_column_loud_fails(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """Source missing a v6 column → SELECT raises, contract violated."""
+    import sqlite3
+    src_path = tmp_path / "etl.sqlite"
+    conn = sqlite3.connect(src_path)
+    try:
+        cur = conn.cursor()
+        # Source has only id + account_id — no amount_money etc.
+        cur.execute(
+            "CREATE TABLE etl_txns (id TEXT, account_id TEXT)"
+        )
+        cur.execute(
+            "CREATE TABLE etl_balances ("
+            + ", ".join(f"{c} TEXT" for c in BASE_DAILY_BALANCES_COLUMNS)
+            + ")"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        etl_datasource=EtlDatasourceConfig(
+            url=f"sqlite:///{src_path}",
+            transactions_table="etl_txns",
+            daily_balances_table="etl_balances",
+        ),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    with pytest.raises(sqlite3.OperationalError, match="no such column"):
+        asyncio.run(
+            step_2_pull(cfg, spec_example_instance, dev_log=None),
+        )
+
+
+# ---------- column-list drift guard ----------
+
+def test_base_columns_match_emitted_schema(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """BASE_*_COLUMNS must stay in sync with what emit_schema creates.
+
+    Apply the schema to a fresh sqlite and PRAGMA table_info to
+    extract the actual columns; assert the constants match (excluding
+    the auto-generated ``entry`` column the pull intentionally drops)."""
+    cfg = _sqlite_cfg(tmp_path)
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    p = spec_example_instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"PRAGMA table_info({p}_transactions)")
+            actual_tx = tuple(
+                row[1] for row in cur.fetchall() if row[1] != "entry"
+            )
+            cur.execute(f"PRAGMA table_info({p}_daily_balances)")
+            actual_bal = tuple(
+                row[1] for row in cur.fetchall() if row[1] != "entry"
+            )
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+    assert actual_tx == BASE_TRANSACTIONS_COLUMNS, (
+        "BASE_TRANSACTIONS_COLUMNS drift vs emit_schema; update "
+        "common/l2/schema.py"
+    )
+    assert actual_bal == BASE_DAILY_BALANCES_COLUMNS, (
+        "BASE_DAILY_BALANCES_COLUMNS drift vs emit_schema; update "
+        "common/l2/schema.py"
+    )
+
+
+# ---------- dialect-from-url ----------
+
+def test_dialect_from_url_postgres() -> None:
+    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    assert _dialect_from_url("postgresql://u:p@h:5432/d") is Dialect.POSTGRES
+    assert _dialect_from_url("postgres://u:p@h:5432/d") is Dialect.POSTGRES
+
+
+def test_dialect_from_url_oracle() -> None:
+    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    assert _dialect_from_url("oracle://u:p@h:1521/svc") is Dialect.ORACLE
+    assert _dialect_from_url(
+        "oracle+oracledb://u:p@h:1521/svc",
+    ) is Dialect.ORACLE
+
+
+def test_dialect_from_url_sqlite() -> None:
+    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    assert _dialect_from_url("sqlite:///tmp/foo.db") is Dialect.SQLITE
+
+
+def test_dialect_from_url_unknown_rejects() -> None:
+    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    with pytest.raises(ValueError, match="Cannot infer dialect"):
+        _dialect_from_url("mysql://u:p@h:3306/d")
