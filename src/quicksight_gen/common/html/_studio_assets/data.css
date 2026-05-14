@@ -1,0 +1,58 @@
+/* X.4.h.1 — Studio data-shaping panel ("trainer mode") layout.
+ *
+ * Page-shell only at this gate: chrome row + knob strip + 2-column
+ * main (timeline | training). Knob widgets land in h.2-h.5; timeline
+ * derivation in h.6; training-pane content in h.9.
+ *
+ * Tokens (--studio-*) alias the App2 Tailwind --color-* tokens via
+ * diagram.css (loaded alongside on the data page) so the L2 theme
+ * cascades through here too.
+ */
+
+body.data-page {
+  /* The base body rule in diagram.css already sets `display: flex;
+   * flex-direction: column; height: 100vh;` so the header pins to the
+   * top and the main fills the rest. We just need the main grid. */
+}
+
+.data-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--studio-border);
+  background: white;
+  flex: 0 0 auto;
+}
+
+.data-knobs .knob-placeholder {
+  font-size: 0.875rem;
+  color: var(--studio-muted);
+  font-style: italic;
+}
+
+.data-main {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1fr) minmax(24rem, 1.5fr);
+  gap: 1rem;
+  padding: 1rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.data-timeline,
+.data-training {
+  background: white;
+  border: 1px solid var(--studio-border);
+  border-radius: 0.25rem;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.data-empty {
+  color: var(--studio-muted);
+  font-style: italic;
+  margin: 0;
+}

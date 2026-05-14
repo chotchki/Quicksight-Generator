@@ -387,6 +387,7 @@ def _render_home_page(cache: L2InstanceCache, dev_log: bool) -> str:
     <h1>Studio</h1>
     <span class="instance">{prefix}</span>
     <a class="nav-link" href="/diagram">→ diagram (full)</a>
+    <a class="nav-link" href="/data">→ data</a>
     <a class="nav-link" href="/dashboards">→ dashboards</a>
     <button id="deploy-btn" class="deploy-btn" type="button"
             onclick="quicksightDeploy()">Deploy changes</button>
@@ -596,6 +597,7 @@ def _render_diagram_page(
     f'<h1>Studio · diagram</h1>'
     f'<span class="instance">{prefix}</span>'
     '<a class="nav-link" href="/">← landing</a>'
+    '<a class="nav-link" href="/data">→ data</a>'
     '<a class="nav-link" href="/dashboards">→ dashboards</a>'
     '</header>'
   ))}
@@ -669,6 +671,101 @@ def _render_diagram_page(
 """
 
 
+def _render_data_page(cache: L2InstanceCache, dev_log: bool) -> str:
+    """X.4.h.1 — Studio "trainer mode" data-shaping panel shell.
+
+    Empty page-shell at this gate: chrome + knob-strip placeholder +
+    two-column main (timeline + training pane). Knob widgets land in
+    h.2-h.5; timeline derivation + render in h.6; training-pane
+    content in h.9. Tests assert the layout landmarks are present so
+    later wiring has stable selectors to bind to.
+
+    The same Deploy button + status span the home page surfaces are
+    spliced in so the trainer can re-deploy without bouncing back to
+    ``/``. Listener pattern mirrors home — defines a top-level
+    ``quicksightDeploy()`` JS helper bound to the button's onclick.
+    """
+    instance = cache.get()
+    prefix = escape(str(instance.instance))
+    devlog_meta, devlog_script = _dev_log_head_snippets(dev_log)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Studio · data — {prefix}</title>
+  {devlog_meta}{studio_theme_head(instance)}
+  <link rel="stylesheet" href="{asset_url("diagram.css")}">
+  <link rel="stylesheet" href="{asset_url("data.css")}">
+  {devlog_script}</head>
+<body class="data-page">
+  <header class="studio-header">
+    <h1>Studio · data shaping</h1>
+    <span class="instance">{prefix}</span>
+    <a class="nav-link" href="/">← landing</a>
+    <a class="nav-link" href="/diagram">→ diagram</a>
+    <a class="nav-link" href="/dashboards">→ dashboards</a>
+    <button id="deploy-btn" class="deploy-btn" type="button"
+            onclick="quicksightDeploy()">Deploy changes</button>
+    <span id="deploy-status" class="deploy-status" aria-live="polite"></span>
+  </header>
+  <script>
+    // X.4.h.1 — Deploy button mirrors the home page's. POSTs /deploy,
+    // swaps the deploy-status span to reflect the result.
+    function quicksightDeploy() {{
+      var btn = document.getElementById('deploy-btn');
+      var status = document.getElementById('deploy-status');
+      btn.disabled = true;
+      status.className = 'deploy-status deploy-status--running';
+      status.textContent = 'Deploying…';
+      fetch('/deploy', {{ method: 'POST' }})
+        .then(function(resp) {{
+          return resp.json().then(function(body) {{
+            return {{ ok: resp.ok, status: resp.status, body: body }};
+          }});
+        }})
+        .then(function(result) {{
+          btn.disabled = false;
+          if (result.body.halted) {{
+            status.className = 'deploy-status deploy-status--halted';
+            status.textContent = 'Halted: ' + result.body.halt_reason;
+          }} else if (result.ok) {{
+            var s3 = result.body.step3_generator;
+            status.className = 'deploy-status deploy-status--ok';
+            status.textContent = (
+              'Deployed (gen ' + result.body.step5_data_generation_id +
+              ', ' + s3.transactions_after + ' tx)'
+            );
+          }} else {{
+            status.className = 'deploy-status deploy-status--error';
+            status.textContent = 'Failed: HTTP ' + result.status;
+          }}
+        }})
+        .catch(function(err) {{
+          btn.disabled = false;
+          status.className = 'deploy-status deploy-status--error';
+          status.textContent = 'Failed: ' + (err && err.message || err);
+        }});
+    }}
+  </script>
+
+  <div class="data-knobs" id="data-knobs">
+    <span class="knob-placeholder">scope · end_date · seed · plants — wired in X.4.h.2-h.5</span>
+  </div>
+
+  <main class="data-main">
+    <section class="data-timeline" id="data-timeline" aria-label="Plant timeline">
+      <p class="data-empty">timeline lands in X.4.h.6</p>
+    </section>
+    <section class="data-training" id="data-training" aria-label="Training pane">
+      <p class="data-empty">training pane lands in X.4.h.9</p>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
 def make_studio_routes(
     cache: L2InstanceCache,
     dev_log: bool = False,
@@ -720,6 +817,9 @@ def make_studio_routes(
     async def landing(_request: Request) -> HTMLResponse:
         return HTMLResponse(_render_home_page(cache, dev_log))
 
+    async def data(_request: Request) -> HTMLResponse:
+        return HTMLResponse(_render_data_page(cache, dev_log))
+
     async def diagram(request: Request) -> HTMLResponse:
         focus_node_id = request.query_params.get("focus") or None
         layer_raw = request.query_params.get("layer", "1")
@@ -741,6 +841,7 @@ def make_studio_routes(
 
     routes: list[Route | Mount] = [
         Route("/", landing, methods=["GET"]),
+        Route("/data", data, methods=["GET"]),
         Route("/diagram", diagram, methods=["GET"]),
         Mount(
             "/studio/static",

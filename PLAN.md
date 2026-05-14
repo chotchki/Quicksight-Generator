@@ -250,9 +250,9 @@ Today: `cfg.test_generator.plants` and `.seed` are read into the orchestration l
 
 ##### h.1 — `/data` route + chrome shell (no knobs wired yet)
 
-- [ ] **X.4.h.1.a** — `make_studio_routes` adds `GET /data` + an empty page-shell with the layout above (chrome bar, knob strip placeholder, two-column main with timeline + training panes empty).
-- [ ] **X.4.h.1.b** — Studio chrome on `/` and `/diagram` adds a `→ data` nav link so the new mode is reachable.
-- [ ] **X.4.h.1.c** — Tests: route returns 200 + landmark elements (knob strip, timeline column, training column) present.
+- [x] **X.4.h.1.a** — `make_studio_routes` adds `GET /data` + an empty page-shell. Renderer `_render_data_page(cache, dev_log)` in `_studio_routes.py` returns a chrome bar (← landing / → diagram / → dashboards / Deploy button + status), a knob-strip placeholder `<div class="data-knobs" id="data-knobs">` (h.2-h.5 will fill this), and a two-column `<main class="data-main">` with `<section id="data-timeline" aria-label="Plant timeline">` (h.6) and `<section id="data-training" aria-label="Training pane">` (h.9). New `_studio_assets/data.css` carries the grid layout; loaded alongside `diagram.css` so the page inherits the L2 theme tokens.
+- [x] **X.4.h.1.b** — Studio chrome on `/` and `/diagram` adds a `→ data` nav link so the new mode is reachable. Both chromes now carry the link in the same `nav-link` class as `→ diagram (full)` / `→ dashboards`. Diagram in `?embed=1` mode strips the studio-header (existing X.4.f.8 behavior), so the link doesn't double up when the diagram is iframed inside the home page.
+- [x] **X.4.h.1.c** — Tests: 6 cases in `tests/unit/test_studio_data_route.py` — route returns 200 + the three landmark elements present (knob strip + timeline + training); aria labels present (Playwright role-based selectors); deploy button + JS helper render; back-to-landing nav link present; home + diagram chromes carry the `→ data` link; embed-mode diagram omits it. Also added `_studio_assets/*.{css,js}` glob to `pyproject.toml::tool.setuptools.package-data` (the prior chrome assets were live-mounted via `Path(__file__).parent` and would have been missing from a real wheel install — closes a latent gap).
 
 ##### h.2-h.5 — Knob widgets
 
