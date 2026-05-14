@@ -249,12 +249,24 @@ def create_l2_entity(
             raise ValueError("TransferTemplate.completion is required")
         if fields.get("expected_net") is None:
             raise ValueError("TransferTemplate.expected_net is required")
+        # leg_rails comes from the multi_select form field as a tuple
+        # of Identifiers. Empty tuple is allowed at construction here
+        # but the caller's validate() rejects it (TransferTemplate must
+        # have at least one leg_rail) — surfaces inline on the create
+        # page as a 400 + the operator's selection preserved.
+        leg_rails_raw: object = fields.get("leg_rails") or ()
+        if isinstance(leg_rails_raw, (list, tuple)):
+            leg_rails: tuple[Identifier, ...] = tuple(
+                Identifier(str(r)) for r in leg_rails_raw  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]  # WHY: form-data values arrive as untyped strings; per-element coercion is the boundary
+            )
+        else:
+            leg_rails = (Identifier(str(leg_rails_raw)),)
         new_tt = TransferTemplate(
             name=Identifier(str(new_name)),
             transfer_type=str(fields["transfer_type"]),
             expected_net=Money(fields["expected_net"]),
             completion=str(fields["completion"]),
-            leg_rails=(),
+            leg_rails=leg_rails,
             transfer_key=(),
             description=fields.get("description"),
         )

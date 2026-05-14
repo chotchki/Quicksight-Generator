@@ -63,7 +63,9 @@ from quicksight_gen.common.l2.validate import L2ValidationError, validate
 # ---------------------------------------------------------------------------
 
 
-FieldKind: TypeAlias = Literal["text", "select", "money", "textarea"]
+FieldKind: TypeAlias = Literal[
+    "text", "select", "money", "textarea", "multi_select",
+]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -73,12 +75,19 @@ class FieldSpec:
     ``name`` is the dataclass field name (matches mutate_l2's
     ``fields`` dict key). ``label`` is what the operator sees;
     ``helper`` is a one-line hint shown under the input. ``kind``
-    drives the input type — text / select / money / textarea.
-    ``options`` is the static option list for ``kind="select"``.
-    ``select_from`` is the dynamic alternative — names a well-known
-    cross-entity collection (``"roles"``) that the renderer resolves
-    from the current L2 instance. Mutually exclusive with ``options``;
-    pick the right one for the field's source-of-truth.
+    drives the input type — text / select / money / textarea /
+    multi_select. ``options`` is the static option list for
+    ``kind="select"``. ``select_from`` is the dynamic alternative —
+    names a well-known cross-entity collection (``"roles"``,
+    ``"rails"``, ``"rails_or_templates"``) that the renderer resolves
+    from the current L2 instance. Mutually exclusive with
+    ``options``; pick the right one for the field's source-of-truth.
+
+    ``multi_select`` renders ``<select multiple>`` and submits as a
+    repeated form key — used for tuple-typed dataclass fields like
+    ``TransferTemplate.leg_rails``. The operator's selection IS the
+    new value; an empty selection clears the field (and the validator
+    decides whether that's acceptable per the L2 invariants).
     """
 
     name: str
@@ -239,19 +248,30 @@ _RAIL_FIELDS: tuple[FieldSpec, ...] = (
 
 # X.4.f.5 — Chain form (sub-list editor for required/xor children
 # is X.4.f.5b; this first cut just edits the per-entry fields).
+# X.4.f.10 — parent + child are now dropdowns of valid rail/template
+# names (was free text; typo'd values reached the validator only).
 _CHAIN_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         name="parent",
         label="Parent",
-        helper="Rail or TransferTemplate name that this chain entry's parent is.",
-        kind="text",
+        helper=(
+            "Rail or TransferTemplate that this chain entry's parent is. "
+            "When this entity fires, the L1 layer expects the child to follow."
+        ),
+        kind="select",
+        select_from="rails_or_templates",
         required=True,
     ),
     FieldSpec(
         name="child",
         label="Child",
-        helper="Rail or TransferTemplate name expected to follow the parent.",
-        kind="text",
+        helper=(
+            "Rail or TransferTemplate expected to follow the parent within "
+            "the SLA window. Required + missing child surfaces as a "
+            "stuck-pending invariant violation."
+        ),
+        kind="select",
+        select_from="rails_or_templates",
         required=True,
     ),
     FieldSpec(
@@ -277,8 +297,11 @@ _CHAIN_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 
-# X.4.f.6 — TransferTemplate form (sub-list editor for leg_rails is
-# X.4.f.6b; first cut takes a comma-separated string).
+# X.4.f.10 — TransferTemplate form, including the multi_select sub-list
+# editor for ``leg_rails`` (Cmd/Ctrl-click to add or remove rails). The
+# operator's submitted selection IS the new tuple; clearing all rails
+# leaves an empty tuple which the validator rejects with "TransferTemplate
+# must declare at least one leg_rail" — surface it inline.
 _TRANSFER_TEMPLATE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         name="name",
@@ -306,6 +329,19 @@ _TRANSFER_TEMPLATE_FIELDS: tuple[FieldSpec, ...] = (
         label="Completion expression",
         helper="e.g. business_day_end+1d. Drives L1 Timeliness.",
         kind="text",
+        required=True,
+    ),
+    FieldSpec(
+        name="leg_rails",
+        label="Leg rails",
+        helper=(
+            "The Rails this template owns. Cmd/Ctrl-click to multi-select. "
+            "Empty selection is rejected by the validator (a template must "
+            "have at least one leg rail) — add a replacement before removing "
+            "the last one, or delete the whole template instead."
+        ),
+        kind="multi_select",
+        select_from="rails",
         required=True,
     ),
     FieldSpec(
@@ -396,20 +432,48 @@ def _coerce_field(spec: FieldSpec, raw: str, kind: EntityKind) -> object:
 
 
 def _coerce_form(
-    kind: EntityKind, form: Mapping[str, str],
-) -> dict[str, object]:
+    kind: EntityKind,
+    form: Any,  # typing-smell: ignore[explicit-any]: starlette FormData; structural - has __contains__/getlist/__getitem__ but the stub type pulls in deps
+) -> tuple[dict[str, object], dict[str, str | tuple[str, ...]]]:
     """Walk the kind's FieldSpec list, coerce each submitted value.
 
-    Skips fields not present in the form (treats them as "no change").
-    The PUT handler hands the result to ``mutate_l2(... fields=...)``.
+    Returns ``(typed_fields, raw_overrides)``. The typed dict is what
+    mutate_l2 / create_l2_entity consume; the overrides dict preserves
+    raw form values (string for scalar fields, tuple-of-strings for
+    multi_select) so the validation-failure path can re-render with
+    the operator's typed-but-invalid input intact.
+
+    multi_select fields use the form's ``getlist`` to grab repeated
+    keys; a hidden ``<name>__present`` marker lets us distinguish
+    "field rendered with empty selection" (clear leg_rails) from
+    "field absent" (no change). Scalar fields skip on absence.
     """
     specs = _FIELD_SPECS_BY_KIND[kind]
-    out: dict[str, object] = {}
+    fields: dict[str, object] = {}
+    overrides: dict[str, str | tuple[str, ...]] = {}
     for spec in specs:
-        if spec.name not in form:
-            continue
-        out[spec.name] = _coerce_field(spec, form[spec.name], kind)
-    return out
+        if spec.kind == "multi_select":
+            if f"{spec.name}__present" not in form and spec.name not in form:
+                continue
+            raw_list = tuple(
+                str(v) for v in form.getlist(spec.name) if str(v).strip()
+            )
+            overrides[spec.name] = raw_list
+            # Identifier-typed list per FieldSpec convention; the
+            # specific dataclass field decides the inner type but
+            # leg_rails is the only multi_select today and it's
+            # tuple[Identifier, ...].
+            from quicksight_gen.common.l2.primitives import (  # noqa: PLC0415
+                Identifier,
+            )
+            fields[spec.name] = tuple(Identifier(v) for v in raw_list)
+        else:
+            if spec.name not in form:
+                continue
+            raw = str(form[spec.name])
+            overrides[spec.name] = raw
+            fields[spec.name] = _coerce_field(spec, raw, kind)
+    return fields, overrides
 
 
 # ---------------------------------------------------------------------------
@@ -490,11 +554,44 @@ def _resolve_select_options(
         if current_value and current_value not in opts:
             opts = (*opts, current_value)
         return opts, True
+    if select_from == "rails":
+        # Rail names — used by TransferTemplate.leg_rails. multi_select
+        # so the operator picks one or many. Empty option not needed
+        # for multi_select (zero selection IS the "empty" state).
+        names: set[str] = set()
+        for r in getattr(instance, "rails", ()):
+            n = getattr(r, "name", None)
+            if n is not None and str(n):
+                names.add(str(n))
+        opts = tuple(sorted(names))
+        if current_value and current_value not in opts:
+            opts = (*opts, current_value)
+        return opts, False
+    if select_from == "rails_or_templates":
+        # Union of Rail.name + TransferTemplate.name — used by
+        # ChainEntry.parent / .child. ChainEntries reference either a
+        # rail (e.g. "ACHReturnLeg") or a template (e.g.
+        # "ExternalReconciliationCycle") interchangeably; the typed L2
+        # graph disambiguates by membership in either collection.
+        rails: set[str] = set()
+        for r in getattr(instance, "rails", ()):
+            n = getattr(r, "name", None)
+            if n is not None and str(n):
+                rails.add(str(n))
+        for t in getattr(instance, "transfer_templates", ()):
+            n = getattr(t, "name", None)
+            if n is not None and str(n):
+                rails.add(str(n))
+        opts = tuple(sorted(rails))
+        if current_value and current_value not in opts:
+            opts = (*opts, current_value)
+        return opts, True
     raise ValueError(f"Unknown select_from source: {select_from!r}")
 
 
 def _render_field(
-    spec: FieldSpec, value: object,
+    spec: FieldSpec,
+    value: object,
     instance: Any,  # typing-smell: ignore[explicit-any]: L2Instance — needed to resolve select_from at render time
     error: str | None = None,
 ) -> str:
@@ -504,7 +601,6 @@ def _render_field(
     render per-field validator errors inline without losing the
     user's typed content.
     """
-    val_str = _value_to_input_str(value)
     label = (
         f'<label for="field-{spec.name}">{escape(spec.label)}'
         f'{"<span class=\"required\"> *</span>" if spec.required else ""}'
@@ -518,14 +614,46 @@ def _render_field(
         f'<div class="field-error">{escape(error)}</div>' if error else ""
     )
 
-    if spec.kind == "select":
+    if spec.kind == "multi_select":
+        # Render <select multiple>. The browser submits one form-data
+        # entry per selected option; the save handler uses getlist(name)
+        # to reconstruct the tuple. Hidden marker ensures the field is
+        # always present in the form so an empty selection (operator
+        # cleared all rails) is distinguishable from "field absent" —
+        # which lets the validator catch the empty-leg_rails case.
+        if spec.select_from is None:
+            raise ValueError(
+                f"multi_select FieldSpec {spec.name!r} requires select_from",
+            )
+        options, _ = _resolve_select_options(spec.select_from, instance, "")
+        selected = _multi_value_as_strs(value)
+        # Make sure any current value not in the option set still shows
+        # (defensively handles a stale reference; the validator surfaces
+        # the broken reference separately).
+        for v in selected:
+            if v not in options:
+                options = (*options, v)
+        opt_blocks = [
+            f'<option value="{escape(o)}"'
+            f'{" selected" if o in selected else ""}>{escape(o)}</option>'
+            for o in options
+        ]
+        input_html = (
+            # Hidden marker — see comment above.
+            f'<input type="hidden" name="{escape(spec.name)}__present" value="1">'
+            f'<select id="field-{spec.name}" name="{escape(spec.name)}" '
+            f'multiple size="{min(len(options) or 1, 8)}">'
+            f'{"".join(opt_blocks)}</select>'
+        )
+    elif spec.kind == "select":
+        val_str = _value_to_input_str(value)
         if spec.select_from is not None:
             options, allow_empty = _resolve_select_options(
                 spec.select_from, instance, val_str,
             )
         else:
             options, allow_empty = spec.options, False
-        opt_blocks: list[str] = []
+        opt_blocks = []
         if allow_empty:
             opt_blocks.append(
                 f'<option value=""{" selected" if val_str == "" else ""}>'
@@ -541,6 +669,7 @@ def _render_field(
             f'{"".join(opt_blocks)}</select>'
         )
     elif spec.kind == "textarea":
+        val_str = _value_to_input_str(value)
         input_html = (
             f'<textarea id="field-{spec.name}" name="{escape(spec.name)}" '
             f'rows="3">{escape(val_str)}</textarea>'
@@ -548,6 +677,7 @@ def _render_field(
     else:
         # text + money both render as <input type="text"> — the loader's
         # _load_money handles numeric strings either way.
+        val_str = _value_to_input_str(value)
         input_html = (
             f'<input id="field-{spec.name}" name="{escape(spec.name)}" '
             f'type="text" value="{escape(val_str)}">'
@@ -556,6 +686,21 @@ def _render_field(
     return (
         f'<div class="field-row">{label}{input_html}{helper}{err_html}</div>'
     )
+
+
+def _multi_value_as_strs(value: object) -> tuple[str, ...]:
+    """Normalize the multi-select current/override value to a tuple of
+    strings for the option-selected check.
+
+    Accepts: None, tuple/list of Identifier-or-str, or a single
+    Identifier/str (treated as a 1-element tuple — defensive).
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(v) for v in value if str(v))
+    s = str(value)
+    return (s,) if s else ()
 
 
 def _value_to_input_str(value: object) -> str:
@@ -672,7 +817,7 @@ def _render_edit_form(
     kind: EntityKind,
     entity: object,
     instance: Any,  # typing-smell: ignore[explicit-any]: L2Instance — needed for dynamic select_from resolution
-    form_overrides: Mapping[str, str] | None = None,
+    form_overrides: Mapping[str, str | tuple[str, ...]] | None = None,
     field_errors: Mapping[str, str] | None = None,
     global_error: str | None = None,
 ) -> str:
@@ -831,7 +976,7 @@ _CREATE_INTRO_BY_KIND: Mapping[EntityKind, str] = {
 def _render_create_page(
     kind: EntityKind,
     instance: Any,  # typing-smell: ignore[explicit-any]: L2Instance — needed for select_from option resolution
-    form_overrides: Mapping[str, str] | None = None,
+    form_overrides: Mapping[str, str | tuple[str, ...]] | None = None,
     global_error: str | None = None,
 ) -> str:
     """X.4.f.9.create-page — full HTML page for creating a new entity.
@@ -1040,19 +1185,20 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
             return HTMLResponse("not editable", status_code=404)
 
         form = await request.form()
-        coerced: dict[str, str] = {
-            str(k): str(v) for k, v in form.items()
-        }
         try:
-            new_fields = _coerce_form(kind, coerced)
+            new_fields, coerced_overrides = _coerce_form(kind, form)
         except (ValueError, TypeError) as exc:
             inst = cache.get()
             entity = _find_entity_or_none(inst, kind, entity_id)
+            # Best-effort overrides — coerce_form raised before producing
+            # them; capture the raw scalar fields from .items() so the
+            # operator's typed values aren't lost.
+            best_effort = {str(k): str(v) for k, v in form.items()}
             return HTMLResponse(
                 _render_edit_form(
                     kind, entity if entity is not None else _placeholder(kind),
                     inst,
-                    form_overrides=coerced,
+                    form_overrides=best_effort,
                     global_error=f"Field coercion failed: {exc}",
                 ),
                 status_code=400,
@@ -1107,7 +1253,7 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
                 _render_edit_form(
                     kind, entity if entity is not None else _placeholder(kind),
                     inst,
-                    form_overrides=coerced,
+                    form_overrides=coerced_overrides,
                     global_error=str(exc),
                 ),
                 status_code=400,
@@ -1148,14 +1294,14 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
             return HTMLResponse("not editable", status_code=404)
 
         form = await request.form()
-        coerced: dict[str, str] = {str(k): str(v) for k, v in form.items()}
         try:
-            new_fields = _coerce_form(kind, coerced)
+            new_fields, coerced_overrides = _coerce_form(kind, form)
         except (ValueError, TypeError) as exc:
+            best_effort = {str(k): str(v) for k, v in form.items()}
             return HTMLResponse(
                 _render_create_page(
                     kind, cache.get(),
-                    form_overrides=coerced,
+                    form_overrides=best_effort,
                     global_error=f"Field coercion failed: {exc}",
                 ),
                 status_code=400,
@@ -1167,7 +1313,7 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
             return HTMLResponse(
                 _render_create_page(
                     kind, cache.get(),
-                    form_overrides=coerced,
+                    form_overrides=coerced_overrides,
                     global_error=str(exc),
                 ),
                 status_code=400,
@@ -1179,7 +1325,7 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
             return HTMLResponse(
                 _render_create_page(
                     kind, cache.get(),
-                    form_overrides=coerced,
+                    form_overrides=coerced_overrides,
                     global_error=str(exc),
                 ),
                 status_code=400,

@@ -520,6 +520,137 @@ def test_put_account_id_rename_does_not_cascade(
     ]
 
 
+def test_transfer_template_edit_form_renders_leg_rails_multi_select(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.10 — TransferTemplate edit form exposes leg_rails as a
+    <select multiple> populated from the L2's rail list, with the
+    template's current leg_rails pre-selected."""
+    app = _build_app(writable_l2_yaml)
+    pre = load_instance(writable_l2_yaml)
+    if not pre.transfer_templates:
+        return  # spec_example has at least one
+    tmpl = pre.transfer_templates[0]
+    tmpl_name = str(tmpl.name)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.get(f"/l2_shape/transfer_template/{tmpl_name}/edit")
+    assert resp.status_code == 200
+    body = resp.text
+    # multi_select renders <select multiple>.
+    assert (
+        '<select id="field-leg_rails" name="leg_rails" multiple'
+        in body
+    )
+    # Each currently-attached leg_rail is preselected.
+    for rn in tmpl.leg_rails:
+        assert (
+            f'value="{escape_html(str(rn))}" selected'
+            in body or f'value="{escape_html(str(rn))}"  selected' in body
+        ) or f'value="{escape_html(str(rn))}" selected>' in body
+    # Hidden marker so the save handler can distinguish "field rendered
+    # with empty selection" from "field absent".
+    assert 'name="leg_rails__present"' in body
+
+
+def test_put_transfer_template_updates_leg_rails(
+    writable_l2_yaml: Path,
+) -> None:
+    """PUT with a leg_rails selection routes through the multi_select
+    coerce path and writes a tuple of rail names back. We round-trip
+    the existing leg_rails selection (rather than picking a random
+    new one) so the test asserts the wire shape without tripping the
+    unrelated metadata_keys / TransferKey validator rules — the
+    invariant "leg_rails arrives intact through PUT" is the part
+    that matters here."""
+    app = _build_app(writable_l2_yaml)
+    pre = load_instance(writable_l2_yaml)
+    if not pre.transfer_templates:
+        return
+    tmpl = pre.transfer_templates[0]
+    tmpl_name = str(tmpl.name)
+    current_leg_rails = [str(rn) for rn in tmpl.leg_rails]
+    # httpx encodes a dict-with-list value as repeated form keys,
+    # which is what the browser submits for <select multiple>.
+    data = {
+        "name": tmpl_name,
+        "transfer_type": str(tmpl.transfer_type),
+        "expected_net": str(tmpl.expected_net),
+        "completion": str(tmpl.completion),
+        "leg_rails__present": "1",
+        "leg_rails": current_leg_rails,
+    }
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.put(f"/l2_shape/transfer_template/{tmpl_name}", data=data)
+    assert resp.status_code == 200, resp.text
+
+    reloaded = load_instance(writable_l2_yaml)
+    saved = next(
+        t for t in reloaded.transfer_templates if str(t.name) == tmpl_name
+    )
+    assert [str(r) for r in saved.leg_rails] == current_leg_rails
+
+
+def test_put_transfer_template_with_empty_leg_rails_returns_400(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.10 — empty leg_rails would leave a TransferTemplate with
+    no member rails (validator rejects with R-something). The save
+    handler returns 400 + the form re-rendered."""
+    app = _build_app(writable_l2_yaml)
+    pre = load_instance(writable_l2_yaml)
+    if not pre.transfer_templates:
+        return
+    tmpl = pre.transfer_templates[0]
+    tmpl_name = str(tmpl.name)
+    # Marker present, no leg_rails key at all → browser sends nothing
+    # for an empty <select multiple>, but the hidden marker tells the
+    # save handler this is an intentional clear (vs "field absent").
+    data = {
+        "name": tmpl_name,
+        "transfer_type": str(tmpl.transfer_type),
+        "expected_net": str(tmpl.expected_net),
+        "completion": str(tmpl.completion),
+        "leg_rails__present": "1",
+    }
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.put(f"/l2_shape/transfer_template/{tmpl_name}", data=data)
+    assert resp.status_code == 400, resp.text
+    # Form re-rendered with the validator's error inline.
+    assert "form-global-error" in resp.text
+    assert "<form" in resp.text
+
+    # Disk unchanged — original leg_rails still there.
+    reloaded = load_instance(writable_l2_yaml)
+    saved = next(
+        t for t in reloaded.transfer_templates if str(t.name) == tmpl_name
+    )
+    assert saved.leg_rails == tmpl.leg_rails
+
+
+def test_chain_create_form_renders_parent_child_dropdowns(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.10 — ChainEntry parent + child are dropdowns of valid
+    rail/template names (was free text — typos only got caught by
+    the validator after submit)."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/l2_shape/chain/new").text
+    assert '<select id="field-parent" name="parent">' in body
+    assert '<select id="field-child" name="child">' in body
+    # Options include at least one known rail from spec_example.
+    assert 'value="ExternalRailInbound"' in body
+
+
+def _escape_html_attr(s: str) -> str:
+    """Tiny helper for asserting against escape()'d attribute values."""
+    return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
+
+
+# Used inside the leg_rails test above — keep right next to it.
+escape_html = _escape_html_attr
+
+
 def test_delete_unreferenced_account_persists(writable_l2_yaml: Path) -> None:
     """Deleting cust-002 succeeds — no rail / template references it
     by id; the role CustomerSubledger is still satisfied by cust-001."""

@@ -210,6 +210,7 @@ def validate(instance: L2Instance) -> None:
         instance, account_roles, template_roles,
     )
     _check_template_leg_rails_exist(instance, rail_names)
+    _check_template_has_at_least_one_leg_rail(instance)
     _check_chain_endpoints_exist(instance, rail_names, template_names)
     _check_limit_schedule_parent_role_resolves(instance, all_roles)
     _check_template_leg_rails_are_non_aggregating(instance, rails_by_name)
@@ -448,6 +449,24 @@ def _check_template_leg_rails_exist(
             raise L2ValidationError(
                 f"TransferTemplate {t.name!r}.leg_rails: rails {missing!r} "
                 f"are not declared in rails"
+            )
+
+
+def _check_template_has_at_least_one_leg_rail(inst: L2Instance) -> None:
+    """R4.1 (X.4.f.10): every TransferTemplate must declare at least one
+    leg_rail. A template with zero leg_rails has no rail firings to
+    bundle into a transfer event — there's nothing for the L1 layer to
+    measure ``expected_net`` or ``completion`` against. The Studio
+    editor surfaces this as the inline error when the operator
+    de-selects the last rail in the multi_select; the L1 layer would
+    silently ignore the template otherwise.
+    """
+    for t in inst.transfer_templates:
+        if len(t.leg_rails) == 0:
+            raise L2ValidationError(
+                f"TransferTemplate {t.name!r}.leg_rails is empty — "
+                f"a template must declare at least one leg_rail. Either "
+                f"add a replacement rail or delete the whole template."
             )
 
 
