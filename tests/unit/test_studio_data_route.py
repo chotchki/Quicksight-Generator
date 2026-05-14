@@ -672,3 +672,114 @@ def test_put_seed_route_absent_without_cache(
     with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
         resp = _put_form(c, "/data/knobs/seed", [("seed", "1234")])
     assert resp.status_code in (404, 405)  # type: ignore[attr-defined]: TestClient stub return is Any
+
+
+# ---------------------------------------------------------------------------
+# X.4.h.5 — scope selector radio group + PUT route
+# ---------------------------------------------------------------------------
+
+
+def test_scope_strip_renders_three_radios_full_default(
+    writable_l2_yaml: Path,
+) -> None:
+    """Default cfg.test_generator.scope = 'full' ⇒ that radio renders
+    pre-checked; the other two unchecked. Renders all three so the
+    operator can switch without a dropdown click."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig(scope="full"))
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    for value in ("full", "uncovered_rails", "exceptions_only"):
+        assert f'name="scope" value="{value}"' in body, (
+            f"missing radio for {value}"
+        )
+    # full is the cached value → pre-checked.
+    assert 'value="full" checked ' in body
+    # The others render unchecked.
+    assert 'value="uncovered_rails" hx-put' in body
+    assert 'value="exceptions_only" hx-put' in body
+    # Exactly one checked across the three.
+    assert body.count('name="scope"') == 3
+    assert body.count('value="full" checked') == 1
+
+
+def test_scope_strip_reflects_cached_value(
+    writable_l2_yaml: Path,
+) -> None:
+    """When the cache holds a non-default scope, that value pre-checks."""
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(scope="exceptions_only"),
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    assert 'value="exceptions_only" checked' in body
+    assert 'value="full" checked' not in body
+    assert 'value="uncovered_rails" checked' not in body
+
+
+def test_scope_strip_form_targets_put_route(
+    writable_l2_yaml: Path,
+) -> None:
+    """Each radio independently PUTs to /data/knobs/scope (its own
+    value as the form-encoded payload — no hx-vals needed)."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    assert body.count('hx-put="/data/knobs/scope"') == 3
+    assert 'hx-target="#data-knob-scope"' in body
+    assert 'hx-trigger="change"' in body
+    # Hover hint title= attrs render so the operator can discover
+    # the difference between the three modes.
+    assert "Wipe + emit baseline" in body  # full hint
+    assert "patch the gaps" in body  # uncovered_rails hint
+    assert "Plants only, no baseline" in body  # exceptions_only hint
+
+
+def test_put_scope_changes_cached_value(
+    writable_l2_yaml: Path,
+) -> None:
+    """PUT /data/knobs/scope with a known value commits and re-renders
+    the strip with that radio pre-checked."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig(scope="full"))
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(
+            c, "/data/knobs/scope", [("scope", "uncovered_rails")],
+        )
+    assert resp.status_code == 200  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert tg_cache.get().scope == "uncovered_rails"
+    assert 'value="uncovered_rails" checked' in resp.text  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert 'value="full" checked' not in resp.text  # type: ignore[attr-defined]: TestClient stub return is Any
+
+
+def test_put_scope_unknown_value_silently_drops(
+    writable_l2_yaml: Path,
+) -> None:
+    """A typo or curl-injected garbage scope value silently drops —
+    cache holds its prior value. Same posture as plants/end_date/seed."""
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(scope="exceptions_only"),
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(
+            c, "/data/knobs/scope", [("scope", "made_up_mode")],
+        )
+    assert resp.status_code == 200  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert tg_cache.get().scope == "exceptions_only"
+
+
+def test_put_scope_route_absent_without_cache(
+    writable_l2_yaml: Path,
+) -> None:
+    """Without tg_cache the route is NOT mounted (severability rule,
+    mirrors plants/end_date/seed)."""
+    app = _build_app(writable_l2_yaml, tg_cache=None)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(c, "/data/knobs/scope", [("scope", "full")])
+    assert resp.status_code in (404, 405)  # type: ignore[attr-defined]: TestClient stub return is Any

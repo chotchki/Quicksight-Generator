@@ -74,7 +74,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from quicksight_gen.common.config import Config, PlantKind
+from quicksight_gen.common.config import Config, PlantKind, ScopeKind
 from quicksight_gen.common.db import AsyncConnectionPool
 from quicksight_gen.common.l2.cache import L2InstanceCache
 from quicksight_gen.common.l2.coverage import CoverageEntry, coverage_for
@@ -683,6 +683,29 @@ _PLANT_LABELS: tuple[tuple[PlantKind, str], ...] = (
     ("supersession", "Supersession"),
 )
 
+_SCOPE_LABELS: tuple[tuple[ScopeKind, str, str], ...] = (
+    # (value, short label, hover hint pulled from deploy_pipeline docstrings)
+    (
+        "full",
+        "full",
+        "Wipe + emit baseline (90 days, all rails) + plants. The "
+        "locked-seed default — byte-identical to data apply.",
+    ),
+    (
+        "uncovered_rails",
+        "uncovered rails",
+        "Fill baseline only for rails the operator's external data "
+        "hasn't already covered. No plants — the operator's data is "
+        "the story; we just patch the gaps.",
+    ),
+    (
+        "exceptions_only",
+        "exceptions only",
+        "Plants only, no baseline. Layers L1/Investigation scenarios "
+        "on top of the operator's external data.",
+    ),
+)
+
 
 def _render_plants_strip(
     selected: tuple[PlantKind, ...] | None,
@@ -827,6 +850,47 @@ def _render_seed_strip(selected: int | None) -> str:
     )
 
 
+def _render_scope_strip(selected: ScopeKind) -> str:
+    """X.4.h.5 — render the scope-selector radio group.
+
+    UI: three radio buttons (one per ``ScopeKind``). The cached value
+    renders pre-selected; clicking another radio PUTs ``scope=<value>``
+    via HTMX. The full descriptive hover hint (lifted from the deploy
+    pipeline's per-scope docstrings) sits in the ``title=`` attribute
+    so the operator can hover-discover the difference between
+    ``full`` / ``uncovered_rails`` / ``exceptions_only`` without
+    bouncing back to the SPEC.
+
+    Each radio's ``hx-trigger="change"`` is what the form-encoded
+    ``scope`` field carries — the input's own value, no hx-vals
+    needed (unlike the date-stepper deltas / seed-roll which need a
+    second key in the payload).
+    """
+    common_attrs = (
+        'hx-put="/data/knobs/scope" '
+        'hx-target="#data-knob-scope" '
+        'hx-swap="outerHTML" '
+        'hx-trigger="change"'
+    )
+    items: list[str] = []
+    for value, short, hint in _SCOPE_LABELS:
+        checked = "checked " if value == selected else ""
+        items.append(
+            f'<label class="scope-radio" title="{escape(hint)}">'
+            f'<input type="radio" name="scope" value="{escape(value)}" '
+            f'{checked}{common_attrs}/>'
+            f' {escape(short)}'
+            f"</label>"
+        )
+    body = "".join(items)
+    return (
+        f'<form id="data-knob-scope" class="data-knob data-knob-scope">'
+        f'<span class="data-knob-label">scope:</span>'
+        f"{body}"
+        f"</form>"
+    )
+
+
 def _render_data_page(
     cache: L2InstanceCache,
     dev_log: bool,
@@ -836,9 +900,8 @@ def _render_data_page(
     """X.4.h.1 — Studio "trainer mode" data-shaping panel shell.
 
     Page-shell + h.2 plant-toggle + h.3 day-stepper + h.4 seed input
-    wired through the ``TestGeneratorCache``. h.5 layers the scope
-    selector into the same knob strip. Timeline + training pane stay
-    placeholders here (h.6 / h.9).
+    + h.5 scope selector wired through the ``TestGeneratorCache``.
+    Timeline + training pane stay placeholders here (h.6 / h.9).
 
     ``tg_cache`` is None for the unit-test surface that exercises the
     page shell without the full studio cfg wiring; in that mode the
@@ -865,6 +928,10 @@ def _render_data_page(
         tg_cache.get().seed if tg_cache is not None else None
     )
     seed_strip = _render_seed_strip(selected_seed)
+    selected_scope: ScopeKind = (
+        tg_cache.get().scope if tg_cache is not None else "full"
+    )
+    scope_strip = _render_scope_strip(selected_scope)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -928,7 +995,7 @@ def _render_data_page(
 
   <script src="https://unpkg.com/htmx.org@1.9.10"></script>
   <div class="data-knobs" id="data-knobs">
-    <span class="knob-placeholder">scope — wired in X.4.h.5</span>
+    {scope_strip}
     {end_date_strip}
     {seed_strip}
     {plants_strip}
@@ -1182,6 +1249,36 @@ def make_studio_routes(
 
         routes.append(
             Route("/data/knobs/seed", put_seed, methods=["PUT"]),
+        )
+
+        async def put_scope(request: Request) -> HTMLResponse:
+            """X.4.h.5 — set the test_generator.scope knob.
+
+            Form contract:
+                - ``scope=<full|uncovered_rails|exceptions_only>`` →
+                  set absolute value.
+                - Unknown / missing scope: silently keep current
+                  cached value — same posture as the other knobs.
+
+            No "clear" payload — scope has no None sentinel; the
+            generator's default is ``"full"``, set explicitly via
+            ``TestGeneratorConfig.scope`` default.
+            """
+            from typing import cast as _cast  # noqa: PLC0415
+
+            form = await request.form()
+            current = bound_tg.get().scope
+            new_scope: ScopeKind = current
+
+            scope_raw = form.get("scope")
+            known: set[ScopeKind] = {value for value, _, _ in _SCOPE_LABELS}
+            if isinstance(scope_raw, str) and scope_raw in known:
+                new_scope = _cast(ScopeKind, scope_raw)
+            bound_tg.update(scope=new_scope)
+            return HTMLResponse(_render_scope_strip(new_scope))
+
+        routes.append(
+            Route("/data/knobs/scope", put_scope, methods=["PUT"]),
         )
 
     # X.4.c.5.c — coverage JSON route. Mounted only when a pool exists

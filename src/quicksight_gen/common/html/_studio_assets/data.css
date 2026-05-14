@@ -150,6 +150,27 @@ body.data-page {
   margin-left: 0.25rem;
 }
 
+/* X.4.h.5 — scope-selector radio group. Inline-flex with native
+ * radios; the cached value is :checked — no special active styling
+ * needed because the OS-default checked dot is already visible. */
+.data-knob-scope {
+  gap: 0.5rem;
+}
+
+.scope-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.scope-radio input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 .data-main {
   display: grid;
   grid-template-columns: minmax(20rem, 1fr) minmax(24rem, 1.5fr);
