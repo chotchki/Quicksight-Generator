@@ -46,6 +46,7 @@ from quicksight_gen.common.l2.editor import (
     EntityKind,
     delete_l2_entity,
     mutate_l2,
+    rename_identifier,
 )
 from quicksight_gen.common.l2.primitives import (
     Account,
@@ -812,10 +813,45 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
                 status_code=400,
             )
 
+        old_inst = cache.get()
+        # Capture rename-trigger value BEFORE mutate so we can detect
+        # whether the operator renamed an identifier this PUT.
+        trigger = _rename_trigger_field(kind)
+        old_entity = _find_entity_or_none(old_inst, kind, entity_id)
+        old_trigger_val = (
+            str(getattr(old_entity, trigger, "") or "")
+            if old_entity is not None and trigger is not None
+            else ""
+        )
+
         try:
-            new_inst = mutate_l2(cache.get(), kind, entity_id, new_fields)
+            new_inst = mutate_l2(old_inst, kind, entity_id, new_fields)
         except KeyError:
             return HTMLResponse("not found", status_code=404)
+
+        # X.4.f.7.cascade — if the trigger field changed, walk the L2
+        # and rewrite every reference to the old value (Rail roles,
+        # AccountTemplate.parent_role, LimitSchedule.parent_role for a
+        # role rename; TransferTemplate.leg_rails / Rail.bundles_activity
+        # / ChainEntry.parent|child for a rail/template name rename).
+        # Skip when emptying a value or the trigger didn't change —
+        # cascading an empty value would wipe references.
+        if trigger is not None and trigger in new_fields:
+            raw_new = new_fields[trigger]
+            new_trigger_val = str(raw_new or "") if raw_new is not None else ""
+            if (
+                old_trigger_val
+                and new_trigger_val
+                and old_trigger_val != new_trigger_val
+            ):
+                from quicksight_gen.common.l2.primitives import (  # noqa: PLC0415
+                    Identifier,
+                )
+                new_inst = rename_identifier(
+                    new_inst, kind,
+                    Identifier(old_trigger_val),
+                    Identifier(new_trigger_val),
+                )
 
         try:
             validate(new_inst)
@@ -913,6 +949,28 @@ def _addressing_field(kind: EntityKind) -> str:
         "chain": "parent",
         "limit_schedule": "parent_role",
     }[kind]
+
+
+def _rename_trigger_field(kind: EntityKind) -> str | None:
+    """Which field's change should cascade across L2 references.
+
+    Per ``editor.rename_identifier``:
+
+    - account / account_template — ``role`` is the cross-cutting
+      identifier (Rail.source_role, parent_role, LimitSchedule.parent_role,
+      …). Account.id is addressing-only — no incoming references.
+    - rail / transfer_template — ``name`` is both the addressing key
+      AND the reference target (TransferTemplate.leg_rails,
+      Rail.bundles_activity, ChainEntry.parent/child).
+    - chain / limit_schedule — leaf consumers; nothing references
+      them. Returns None → no cascade.
+    """
+    return {
+        "account": "role",
+        "account_template": "role",
+        "rail": "name",
+        "transfer_template": "name",
+    }.get(kind)
 
 
 def _find_entity_or_none(

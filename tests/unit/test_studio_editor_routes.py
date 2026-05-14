@@ -268,6 +268,163 @@ def test_parent_role_hidden_when_account_is_already_a_parent(
         assert "Parent role" not in card_resp.text
 
 
+def test_put_account_role_rename_cascades_to_rails_and_templates(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.7.cascade — renaming Account.role rewrites every reference
+    (Rail.source/destination/leg_role, AccountTemplate.role +
+    parent_role, LimitSchedule.parent_role) so the post-PUT model
+    validates without dangling-role errors. Without the cascade the
+    validator rejects with "roles ['CustomerSubledger'] are not
+    declared on any Account or AccountTemplate"."""
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        # cust-001 plays role=CustomerSubledger; that role is also
+        # held by cust-002 + an AccountTemplate, and is the
+        # source/destination/leg_role on three Rails. Renaming it
+        # via the editor should cascade everywhere.
+        resp = c.put(
+            "/l2_shape/account/cust-001",
+            data={
+                "id": "cust-001",
+                "scope": "internal",
+                "name": "Customer Number One",
+                "role": "CustomerSubledgerV2",  # the rename
+                "parent_role": "CustomerLedger",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers.get("HX-Trigger") == "l2-cascade-reload"
+
+    reloaded = load_instance(writable_l2_yaml)
+    # Both Accounts that played the role get the new value (rename is
+    # role-scoped, not account-scoped — multiple instances of one role
+    # all carry the renamed value).
+    cust1 = next(a for a in reloaded.accounts if str(a.id) == "cust-001")
+    cust2 = next(a for a in reloaded.accounts if str(a.id) == "cust-002")
+    assert str(cust1.role) == "CustomerSubledgerV2"
+    assert str(cust2.role) == "CustomerSubledgerV2"
+    # AccountTemplate.role rewritten too.
+    tpl = next(
+        t for t in reloaded.account_templates
+        if str(t.role) == "CustomerSubledgerV2"
+    )
+    assert tpl is not None
+    # No template still references the old role.
+    assert not any(
+        str(t.role) == "CustomerSubledger"
+        for t in reloaded.account_templates
+    )
+    # Rail role references rewritten — pick one of each shape.
+    # source_role/destination_role/leg_role are RoleExpression
+    # (tuple[Identifier, ...]); flatten for the comparison.
+    rails_by_name = {str(r.name): r for r in reloaded.rails}
+    inbound = rails_by_name["ExternalRailInbound"]
+    outbound = rails_by_name["ExternalRailOutbound"]
+    charge = rails_by_name["SubledgerCharge"]
+    assert [str(x) for x in getattr(inbound, "destination_role")] == [
+        "CustomerSubledgerV2",
+    ]
+    assert [str(x) for x in getattr(outbound, "source_role")] == [
+        "CustomerSubledgerV2",
+    ]
+    assert [str(x) for x in getattr(charge, "leg_role")] == [
+        "CustomerSubledgerV2",
+    ]
+    # The unrelated CustomerLedger / NorthPool / SouthPool roles
+    # untouched (cascade is precise).
+    customer_ledger = next(
+        a for a in reloaded.accounts if str(a.id) == "customer-ledger"
+    )
+    assert str(customer_ledger.role) == "CustomerLedger"
+
+
+def test_put_rail_name_rename_cascades_to_templates_and_chains(
+    writable_l2_yaml: Path,
+) -> None:
+    """Rail.name rename cascades to TransferTemplate.leg_rails,
+    Rail.bundles_activity, ChainEntry.parent / child."""
+    app = _build_app(writable_l2_yaml)
+    # Find a rail that's referenced by some chain or template.
+    pre = load_instance(writable_l2_yaml)
+    referenced_rail_name: str | None = None
+    for ce in pre.chains:
+        for cand in (ce.parent, ce.child):
+            if any(str(r.name) == str(cand) for r in pre.rails):
+                referenced_rail_name = str(cand)
+                break
+        if referenced_rail_name:
+            break
+    assert referenced_rail_name is not None, (
+        "spec_example should have at least one chain referencing a rail"
+    )
+
+    new_name = f"{referenced_rail_name}_RENAMED"
+    # Pull the existing rail's other fields to round-trip cleanly.
+    pre_rail = next(r for r in pre.rails if str(r.name) == referenced_rail_name)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.put(
+            f"/l2_shape/rail/{referenced_rail_name}",
+            data={
+                "name": new_name,
+                "transfer_type": str(pre_rail.transfer_type),
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers.get("HX-Trigger") == "l2-cascade-reload"
+
+    reloaded = load_instance(writable_l2_yaml)
+    assert any(str(r.name) == new_name for r in reloaded.rails)
+    assert not any(
+        str(r.name) == referenced_rail_name for r in reloaded.rails
+    )
+    # No chain still points at the old name.
+    for ce in reloaded.chains:
+        assert str(ce.parent) != referenced_rail_name
+        assert str(ce.child) != referenced_rail_name
+
+
+def test_put_account_id_rename_does_not_cascade(
+    writable_l2_yaml: Path,
+) -> None:
+    """Account.id is addressing-only — nothing in the L2 model
+    references an Account by id. So a PUT that changes id should
+    succeed without invoking the role-cascade walker. (The id rename
+    itself is mutate_l2's job; rename_identifier is a no-op on id.)
+    """
+    app = _build_app(writable_l2_yaml)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        # external-counterparty-one's role is referenced by rails; if
+        # the cascade fired on id, those role refs would be broken or
+        # misrewritten. We're checking they STAY put.
+        resp = c.put(
+            "/l2_shape/account/external-counterparty-one",
+            data={
+                "id": "external-counterparty-renamed",
+                "scope": "external",
+                "name": "External Counterparty One",
+                "role": "ExternalCounterparty",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+    reloaded = load_instance(writable_l2_yaml)
+    # The Account moved.
+    assert any(
+        str(a.id) == "external-counterparty-renamed"
+        for a in reloaded.accounts
+    )
+    assert not any(
+        str(a.id) == "external-counterparty-one" for a in reloaded.accounts
+    )
+    # The role is unchanged → rails still resolve.
+    rails_by_name = {str(r.name): r for r in reloaded.rails}
+    inbound = rails_by_name["ExternalRailInbound"]
+    assert [str(x) for x in getattr(inbound, "source_role")] == [
+        "ExternalCounterparty",
+    ]
+
+
 def test_delete_unreferenced_account_persists(writable_l2_yaml: Path) -> None:
     """Deleting cust-002 succeeds — no rail / template references it
     by id; the role CustomerSubledger is still satisfied by cust-001."""
