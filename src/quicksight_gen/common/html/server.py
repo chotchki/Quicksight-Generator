@@ -415,12 +415,18 @@ def make_app(
         filter_specs = _apply_url_param_overrides(
             filter_specs, request.query_params,
         )
+        # X.4.g.12.b — capture the current generation counter at render
+        # time. The page's poller will compare against this baseline.
+        from quicksight_gen.common.l2.deploy_pipeline import (  # noqa: PLC0415
+            get_data_generation_id,
+        )
         return HTMLResponse(emit_html(
             served.tree_app, served.sheet,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
             filter_specs=filter_specs,
+            data_generation_id=get_data_generation_id(),
         ))
 
     async def sheet_view(request: Request) -> Response:
@@ -453,12 +459,17 @@ def make_app(
         filter_specs = _apply_url_param_overrides(
             filter_specs, request.query_params,
         )
+        # X.4.g.12.b — same poller baseline as dashboard_view.
+        from quicksight_gen.common.l2.deploy_pipeline import (  # noqa: PLC0415
+            get_data_generation_id,
+        )
         return HTMLResponse(emit_html(
             served.tree_app, sheet_for_dash,
             dashboard_id=dash_id, dev_log=dev_log,
             theme=served.theme,
             all_sheets=sheets,
             filter_specs=filter_specs,
+            data_generation_id=get_data_generation_id(),
         ))
 
     async def visual_data(request: Request) -> Response:

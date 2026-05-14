@@ -330,7 +330,7 @@ _PAGE_SHELL = """\
 <head>
   <meta charset="utf-8">
   <title>{title}</title>
-{dev_log_meta}
+{dev_log_meta}{data_generation_meta}
   <link rel="stylesheet" href="/static/output.css">
 {vendor_css}
   <link rel="stylesheet" href="/static/widgets-theme.css">
@@ -717,6 +717,7 @@ def emit_dashboards_list(
         bootstrap_js=_BOOTSTRAP_JS,
         dev_log_js=_DEV_LOG_JS,
         dev_log_meta="",
+        data_generation_meta="",
         theme_style=_emit_theme_style(theme),
     )
 
@@ -794,6 +795,7 @@ def emit_error_page(
         bootstrap_js=_BOOTSTRAP_JS,
         dev_log_js=_DEV_LOG_JS,
         dev_log_meta="",
+        data_generation_meta="",
         theme_style=_emit_theme_style(theme),
     )
 
@@ -958,6 +960,7 @@ def emit_html(
     theme: ThemePreset | None = None,
     filter_specs: Sequence[FilterSpec] = (),
     all_sheets: Sequence[Sheet] = (),
+    data_generation_id: int | None = None,
 ) -> str:
     """Render a tree ``Sheet`` as a standalone HTML page.
 
@@ -1067,6 +1070,15 @@ def emit_html(
             body_parts.append(_render_text_box(tb))
         for visual in sheet.visuals:
             body_parts.append(_render_visual(visual, dashboard_id, sheet_id))
+    # X.4.g.12.b — emit data-generation-id meta when set so the
+    # bootstrap.js poller has a baseline. Newline-prefixed so the
+    # meta lands on its own line in the rendered head, matching the
+    # dev-log meta's format.
+    data_generation_meta = (
+        f'\n  <meta name="data-generation-id" content="{int(data_generation_id)}">'
+        if data_generation_id is not None
+        else ""
+    )
     return _PAGE_SHELL.format(
         title=html.escape(sheet.title),
         body="\n".join(body_parts),
@@ -1077,6 +1089,7 @@ def emit_html(
         dev_log_meta=(
             '  <meta name="dev-log" content="1">' if dev_log else ""
         ),
+        data_generation_meta=data_generation_meta,
         theme_style=_emit_theme_style(theme),
     )
 
