@@ -493,9 +493,19 @@ def _build_generator_sql(cfg: Config, instance: L2Instance) -> str:
             cfg, instance, anchor=cfg.test_generator.end_date,
         )
     if scope == "exceptions_only":
-        raise NotImplementedError(
-            "test_generator.scope='exceptions_only' lands in X.4.g.9"
+        # X.4.g.9 — plants only, no baseline. The integrator's external
+        # data already lives in the demo DB (via step 2's etl_datasource
+        # pull); we just lay the L1/Investigation exception scenarios
+        # on top so the dashboards render planted violations against
+        # their data. ``emit_seed`` is the plants-only emitter that
+        # ``emit_full_seed`` wraps with a baseline; calling it directly
+        # skips the 90-day baseline insert.
+        from quicksight_gen.cli._helpers import build_default_scenario  # pyright: ignore[reportUnknownVariableType]  # WHY: helper has pending untyped-def waiver in cli/_helpers.py
+        from quicksight_gen.common.l2.seed import emit_seed
+        scenario = build_default_scenario(  # pyright: ignore[reportUnknownVariableType]  # WHY: same helper-untyped waiver propagates to the call expression
+            instance, anchor=cfg.test_generator.end_date,
         )
+        return emit_seed(instance, scenario, dialect=cfg.dialect)  # pyright: ignore[reportUnknownArgumentType]  # WHY: build_default_scenario returns untyped-def ScenarioPlant per the same waiver
     if scope == "uncovered_rails":
         raise NotImplementedError(
             "test_generator.scope='uncovered_rails' lands in X.4.g.10"

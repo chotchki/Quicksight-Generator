@@ -201,7 +201,7 @@ Theme + Persona are L2-instance attributes (singletons, not lists). They need a 
 - [x] **X.4.g.6** — Step 2 pull: cross-dialect copy from `etl_datasource` to `demo_database_url`, filtered to `≤ end_date`. Reuse `common/sql/dialect.py` + Oracle batcher.
 - [x] **X.4.g.7** — Step 3 generator: `emit_full_seed` against the current `test_generator:` knobs; always additive (the wipe was step 2).
 - [x] **X.4.g.8** — Step 3 — `scope: full` mode (today's behavior; byte-matches locked seeds when no `etl_datasource`).
-- [ ] **X.4.g.9** — Step 3 — `scope: exceptions_only` mode (skip baseline, plants only on top of whatever step 2 produced).
+- [x] **X.4.g.9** — Step 3 — `scope: exceptions_only` mode (skip baseline, plants only on top of whatever step 2 produced).
 - [ ] **X.4.g.10** — Step 3 — `scope: uncovered_rails` mode (inspect `demo_database_url` post-step-2, fill baseline only for rails without rows).
 - [ ] **X.4.g.11** — Step 4 matview refresh: existing `refresh_matviews_sql(instance)`.
 - [ ] **X.4.g.12** — Step 5 reload: bump a process-local `data_generation_id`; Dashboards' open page polls (or subscribes to) the counter and reloads its current URL on bump.

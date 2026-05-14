@@ -803,7 +803,44 @@ def test_step_3_generator_full_anchor_determinism(
 
 # ---------- not-yet-implemented modes ----------
 
-def test_step_3_generator_exceptions_only_not_implemented(
+def test_step_3_generator_exceptions_only_writes_fewer_than_full(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """X.4.g.9 — exceptions_only skips the 90-day baseline; row counts
+    should be strictly less than scope=full at the same anchor."""
+    from datetime import date
+
+    def _run(scope: str, label: str) -> tuple[int, int]:
+        sub = tmp_path / label
+        sub.mkdir()
+        cfg = replace(
+            _sqlite_cfg(sub),
+            test_generator=TestGeneratorConfig(
+                scope=scope,  # pyright: ignore[reportArgumentType]  # WHY: parametrized over Literal at the call site
+                end_date=date(2030, 1, 1),
+            ),
+        )
+        _apply_demo_schema_only(cfg, spec_example_instance)
+        return asyncio.run(
+            step_3_generator(cfg, spec_example_instance, dev_log=None),
+        )
+
+    full_tx, full_bal = _run("full", "full")
+    exc_tx, exc_bal = _run("exceptions_only", "exc")
+
+    assert exc_tx > 0, "exceptions_only should plant some transactions"
+    assert exc_tx < full_tx, (
+        "exceptions_only must skip the 90-day baseline so it writes "
+        f"strictly fewer transactions than full (got exc={exc_tx}, "
+        f"full={full_tx})"
+    )
+    # Daily balances may or may not appear in the plants layer
+    # (depends on which scenarios touch balance rows). Just verify
+    # exc_bal <= full_bal — never higher.
+    assert exc_bal <= full_bal
+
+
+def test_step_3_generator_exceptions_only_emits_lifecycle_events(
     tmp_path: Path, spec_example_instance: L2Instance,
 ) -> None:
     cfg = replace(
@@ -811,10 +848,16 @@ def test_step_3_generator_exceptions_only_not_implemented(
         test_generator=TestGeneratorConfig(scope="exceptions_only"),
     )
     _apply_demo_schema_only(cfg, spec_example_instance)
-    with pytest.raises(NotImplementedError, match="X.4.g.9"):
-        asyncio.run(
-            step_3_generator(cfg, spec_example_instance, dev_log=None),
-        )
+    sink = _EventCollector()
+    asyncio.run(
+        step_3_generator(cfg, spec_example_instance, dev_log=sink),
+    )
+    kinds = sink.kinds()
+    assert kinds[0] == "deploy:step3:generator:start"
+    assert kinds[-1] == "deploy:step3:generator:done"
+    assert sink.by_kind("deploy:step3:generator:start")[0]["scope"] == (
+        "exceptions_only"
+    )
 
 
 def test_step_3_generator_uncovered_rails_not_implemented(
