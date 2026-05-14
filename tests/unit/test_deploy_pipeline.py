@@ -860,18 +860,137 @@ def test_step_3_generator_exceptions_only_emits_lifecycle_events(
     )
 
 
-def test_step_3_generator_uncovered_rails_not_implemented(
+def test_step_3_generator_uncovered_rails_empty_db_full_baseline(
     tmp_path: Path, spec_example_instance: L2Instance,
 ) -> None:
+    """No rails covered (empty demo DB) ⇒ uncovered_rails emits the
+    full baseline. Should match scope=full minus the plants layer."""
+    from datetime import date
     cfg = replace(
         _sqlite_cfg(tmp_path),
-        test_generator=TestGeneratorConfig(scope="uncovered_rails"),
+        test_generator=TestGeneratorConfig(
+            scope="uncovered_rails", end_date=date(2030, 1, 1),
+        ),
     )
     _apply_demo_schema_only(cfg, spec_example_instance)
-    with pytest.raises(NotImplementedError, match="X.4.g.10"):
-        asyncio.run(
+    tx, bal = asyncio.run(
+        step_3_generator(cfg, spec_example_instance, dev_log=None),
+    )
+    assert tx > 0, (
+        "with no covered rails, uncovered_rails should still emit "
+        "baseline for every rail"
+    )
+    assert bal > 0
+
+
+def test_step_3_generator_uncovered_rails_skips_covered(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """Pre-populate ONE rail's row in the demo DB; verify uncovered_rails
+    emits strictly fewer transactions than the empty-DB case (the
+    covered rail's baseline is skipped)."""
+    from datetime import date
+
+    def _empty_db_run(label: str) -> int:
+        sub = tmp_path / label
+        sub.mkdir()
+        cfg = replace(
+            _sqlite_cfg(sub),
+            test_generator=TestGeneratorConfig(
+                scope="uncovered_rails", end_date=date(2030, 1, 1),
+            ),
+        )
+        _apply_demo_schema_only(cfg, spec_example_instance)
+        tx, _bal = asyncio.run(
             step_3_generator(cfg, spec_example_instance, dev_log=None),
         )
+        return tx
+
+    full_count = _empty_db_run("full")
+
+    # Now plant one row with a real rail name and re-run.
+    sub = tmp_path / "partial"
+    sub.mkdir()
+    cfg = replace(
+        _sqlite_cfg(sub),
+        test_generator=TestGeneratorConfig(
+            scope="uncovered_rails", end_date=date(2030, 1, 1),
+        ),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    # Pick the first rail in the L2 to "cover" — its baseline should
+    # be skipped on the next emit.
+    covered_rail_name = str(spec_example_instance.rails[0].name)
+    p = spec_example_instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"INSERT INTO {p}_transactions ("
+                "id, account_id, account_scope, amount_money, "
+                "amount_direction, status, posting, transfer_id, "
+                "transfer_type, rail_name, origin"
+                ") VALUES ("
+                "'op-1', 'op-acct', 'internal', 50.00, 'Credit', "
+                "'posted', '2030-01-01 00:00:00', 'op-tr', "
+                "'cash_withdrawal', ?, 'inbound')",
+                (covered_rail_name,),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+
+    partial_tx, _ = asyncio.run(
+        step_3_generator(cfg, spec_example_instance, dev_log=None),
+    )
+    # partial_tx counts post-step-3 totals, including the 1 planted
+    # row. Subtract it to get just step-3's contribution; that should
+    # be strictly less than full_count (since one rail is skipped).
+    step3_contribution = partial_tx - 1
+    assert step3_contribution < full_count, (
+        f"uncovered_rails should skip rail {covered_rail_name!r} so "
+        f"step 3 emits fewer rows (got {step3_contribution} vs "
+        f"empty-DB={full_count})"
+    )
+
+
+def test_covered_rail_names_distinct_set(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """Helper: verify _covered_rail_names returns the de-duplicated set
+    of rail_name values from <prefix>_transactions."""
+    from quicksight_gen.common.l2.deploy_pipeline import _covered_rail_names
+    cfg = _sqlite_cfg(tmp_path)
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    # Empty table → empty set.
+    assert _covered_rail_names(cfg, spec_example_instance) == frozenset()
+    # Plant 3 rows with 2 distinct rail_names.
+    p = spec_example_instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            for i, rail in enumerate(["RailA", "RailB", "RailA"]):
+                cur.execute(
+                    f"INSERT INTO {p}_transactions ("
+                    "id, account_id, account_scope, amount_money, "
+                    "amount_direction, status, posting, transfer_id, "
+                    "transfer_type, rail_name, origin"
+                    ") VALUES ("
+                    f"'t{i}', 'a', 'internal', 1.00, 'Credit', 'posted', "
+                    f"'2030-01-01', 'g{i}', 'cash_withdrawal', ?, 'inbound')",
+                    (rail,),
+                )
+            conn.commit()
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+    covered = _covered_rail_names(cfg, spec_example_instance)
+    assert {str(c) for c in covered} == {"RailA", "RailB"}
 
 
 # ---------- additive contract ----------

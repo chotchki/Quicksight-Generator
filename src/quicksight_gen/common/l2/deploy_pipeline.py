@@ -35,6 +35,7 @@ from quicksight_gen.common.db import (
     oracle_dsn,
     sqlite_path,
 )
+from quicksight_gen.common.l2.primitives import Identifier
 from quicksight_gen.common.l2.schema import (
     BASE_DAILY_BALANCES_COLUMNS,
     BASE_TRANSACTIONS_COLUMNS,
@@ -507,8 +508,49 @@ def _build_generator_sql(cfg: Config, instance: L2Instance) -> str:
         )
         return emit_seed(instance, scenario, dialect=cfg.dialect)  # pyright: ignore[reportUnknownArgumentType]  # WHY: build_default_scenario returns untyped-def ScenarioPlant per the same waiver
     if scope == "uncovered_rails":
-        raise NotImplementedError(
-            "test_generator.scope='uncovered_rails' lands in X.4.g.10"
+        # X.4.g.10 — fill baseline only for rails the operator's
+        # external DB hasn't already populated (via step 2's pull).
+        # Inspect <prefix>_transactions for distinct rail_name values
+        # — that's the covered set; emit baseline for everything else.
+        # No plants in this mode: the operator's data is what they want
+        # to see; we just patch the gaps so dashboards aren't empty.
+        from quicksight_gen.common.l2.seed import emit_baseline_seed
+        covered = _covered_rail_names(cfg, instance)
+        return emit_baseline_seed(
+            instance,
+            anchor=cfg.test_generator.end_date,
+            dialect=cfg.dialect,
+            skip_rails=covered,
         )
     # Defensive — Literal[ScopeKind] should make this unreachable.
     raise ValueError(f"Unknown test_generator.scope: {scope!r}")
+
+
+def _covered_rail_names(
+    cfg: Config, instance: L2Instance,
+) -> frozenset[Identifier]:
+    """Return the set of rail names that already have rows in the demo
+    DB's ``<prefix>_transactions`` table.
+
+    X.4.g.10 — used by ``scope: uncovered_rails`` to decide which rails
+    to skip in the baseline emit. Covered = "operator's external data
+    populated this rail (via step 2's etl_datasource pull)";
+    uncovered = "no rows yet, fill the gap with baseline".
+    """
+    p = instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"SELECT DISTINCT rail_name FROM {p}_transactions"
+                " WHERE rail_name IS NOT NULL"
+            )
+            return frozenset(
+                Identifier(str(row[0])) for row in cur.fetchall()
+                if row[0] is not None
+            )
+        finally:
+            cur.close()
+    finally:
+        conn.close()

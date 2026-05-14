@@ -795,6 +795,7 @@ def emit_baseline_seed(
     window_days: int = 90,
     anchor: date | None = None,
     dialect: Dialect = Dialect.POSTGRES,
+    skip_rails: frozenset[Identifier] = frozenset(),
 ) -> str:
     """Emit a 3-month healthy-baseline INSERT script for the L2 instance.
 
@@ -813,6 +814,11 @@ def emit_baseline_seed(
         tests to keep the SHA256 hash-lock deterministic across runs.
       dialect: SQL dialect for timestamp literals + INSERT shape (PG vs
         Oracle). Same flag the legacy ``emit_seed`` accepts.
+      skip_rails: X.4.g.10 — rail names to skip in the per-rail leg
+        loop. Used by the deploy pipeline's `scope: uncovered_rails`
+        mode to fill baseline only for rails the operator's external
+        DB hasn't already populated. Default empty (no rails skipped)
+        keeps byte-identical-to-locked-seeds output.
 
     Returns:
       A SQL script string. R.2.a (this commit) returns a valid header +
@@ -884,6 +890,13 @@ def emit_baseline_seed(
     txn_rows: list[str] = list(opening_rows)
     txn_counter = _Counter(start=1)
     for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        # X.4.g.10 — operator's external data already covers this rail;
+        # skip its baseline emit so we don't duplicate transactions.
+        # state.firings stays empty for this rail, so chains / cascade
+        # credits / daily balances naturally produce nothing for it
+        # downstream too.
+        if rail.name in skip_rails:
+            continue
         rail_rng = random.Random(_seed_for_rail(rail.name))
         if rail.aggregating:
             rail_rows = _emit_baseline_for_aggregating_rail(
