@@ -39,6 +39,7 @@ from quicksight_gen.common.l2.primitives import Identifier
 from quicksight_gen.common.l2.schema import (
     BASE_DAILY_BALANCES_COLUMNS,
     BASE_TRANSACTIONS_COLUMNS,
+    refresh_matviews_sql,
     wipe_demo_data_sql,
 )
 from quicksight_gen.common.sql import Dialect
@@ -554,3 +555,51 @@ def _covered_rail_names(
             cur.close()
     finally:
         conn.close()
+
+
+# X.4.g.11 — Step 4: refresh L1 invariant + Investigation matviews so
+# every dashboard re-derives off the post-step-3 base-table state.
+
+async def step_4_matviews(
+    cfg: Config,
+    instance: L2Instance,
+    *,
+    dev_log: DevLogWriter | None = None,
+) -> None:
+    """Run ``refresh_matviews_sql(instance, dialect=cfg.dialect)`` against
+    the demo DB.
+
+    The schema helper picks the right shape per dialect:
+      - PG / Oracle: ``REFRESH MATERIALIZED VIEW`` + ``ANALYZE`` per name.
+      - SQLite (matview-as-table): ``DROP TABLE`` + ``CREATE TABLE … AS``
+        per name (re-runs the matview body).
+
+    No-op safe — the SQL is dependency-ordered + idempotent at the
+    schema level. Sync DB-API work runs in ``asyncio.to_thread`` so the
+    studio's POST /deploy doesn't block other requests for the refresh
+    duration (matview refresh is the slowest pipeline step on a
+    multi-million-row demo).
+    """
+    sql = refresh_matviews_sql(instance, dialect=cfg.dialect)
+    await _emit(dev_log, {
+        "event": "deploy:step4:matviews:start",
+        "instance": instance.instance,
+        "dialect": cfg.dialect.value,
+    })
+
+    def _run_refresh() -> None:
+        conn = connect_demo_db(cfg)
+        try:
+            cur = conn.cursor()
+            try:
+                execute_script(cur, sql, dialect=cfg.dialect)
+                conn.commit()
+            finally:
+                cur.close()
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_run_refresh)
+    await _emit(dev_log, {
+        "event": "deploy:step4:matviews:done",
+    })

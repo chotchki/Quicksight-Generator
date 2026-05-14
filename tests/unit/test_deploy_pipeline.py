@@ -30,6 +30,7 @@ from quicksight_gen.common.l2.deploy_pipeline import (
     step_2_pull,
     step_2_wipe,
     step_3_generator,
+    step_4_matviews,
 )
 from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.primitives import L2Instance
@@ -1016,3 +1017,93 @@ def test_step_3_generator_full_adds_to_existing_rows(
     # Generator's contribution = total - 1 plant row already present.
     assert tx > 1
     assert bal > 1
+
+
+# =====================================================================
+# X.4.g.11 — Step 4 matview refresh
+# =====================================================================
+
+def test_step_4_matviews_refresh_emits_lifecycle_events(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """SQLite refresh path: drops + re-creates every matview-as-table.
+    Lifecycle = start → done."""
+    cfg = _sqlite_cfg(tmp_path)
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    sink = _EventCollector()
+    asyncio.run(
+        step_4_matviews(cfg, spec_example_instance, dev_log=sink),
+    )
+    assert sink.kinds() == [
+        "deploy:step4:matviews:start",
+        "deploy:step4:matviews:done",
+    ]
+    start = sink.by_kind("deploy:step4:matviews:start")[0]
+    assert start["instance"] == spec_example_instance.instance
+    assert start["dialect"] == cfg.dialect.value
+
+
+def test_step_4_matviews_idempotent_on_empty_db(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """Running matview refresh on an empty (post-wipe) DB must succeed —
+    matviews exist (from the schema apply) but resolve to zero rows.
+    Re-running is safe (drops + recreates)."""
+    cfg = _sqlite_cfg(tmp_path)
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    asyncio.run(
+        step_4_matviews(cfg, spec_example_instance, dev_log=None),
+    )
+    # Second invocation must not raise (refresh is idempotent).
+    asyncio.run(
+        step_4_matviews(cfg, spec_example_instance, dev_log=None),
+    )
+    # And every matview still exists (and is empty).
+    p = spec_example_instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {p}_drift")
+            assert int(cur.fetchone()[0]) == 0
+            cur.execute(f"SELECT COUNT(*) FROM {p}_overdraft")
+            assert int(cur.fetchone()[0]) == 0
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+
+
+def test_step_4_matviews_picks_up_new_rows(
+    tmp_path: Path, spec_example_instance: L2Instance,
+) -> None:
+    """After step 3 emits rows, step 4 must surface a non-empty
+    current_transactions matview (it's the leaf that all L1 invariants
+    derive from)."""
+    from datetime import date
+    cfg = replace(
+        _sqlite_cfg(tmp_path),
+        test_generator=TestGeneratorConfig(end_date=date(2030, 1, 1)),
+    )
+    _apply_demo_schema_only(cfg, spec_example_instance)
+    asyncio.run(
+        step_3_generator(cfg, spec_example_instance, dev_log=None),
+    )
+    asyncio.run(
+        step_4_matviews(cfg, spec_example_instance, dev_log=None),
+    )
+    p = spec_example_instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {p}_current_transactions")
+            n = int(cur.fetchone()[0])
+            assert n > 0, (
+                "step_4_matviews must surface step_3's writes into the "
+                "current_transactions matview"
+            )
+        finally:
+            cur.close()
+    finally:
+        conn.close()
