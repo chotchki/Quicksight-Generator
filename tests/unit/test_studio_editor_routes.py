@@ -520,12 +520,12 @@ def test_put_account_id_rename_does_not_cascade(
     ]
 
 
-def test_transfer_template_edit_form_renders_leg_rails_multi_select(
+def test_transfer_template_edit_form_renders_leg_rails_checkbox_group(
     writable_l2_yaml: Path,
 ) -> None:
     """X.4.f.10 — TransferTemplate edit form exposes leg_rails as a
-    <select multiple> populated from the L2's rail list, with the
-    template's current leg_rails pre-selected."""
+    checkbox group (one <input type=checkbox> per available rail),
+    not a <select multiple> — easier to use than Cmd/Ctrl-click."""
     app = _build_app(writable_l2_yaml)
     pre = load_instance(writable_l2_yaml)
     if not pre.transfer_templates:
@@ -536,17 +536,15 @@ def test_transfer_template_edit_form_renders_leg_rails_multi_select(
         resp = c.get(f"/l2_shape/transfer_template/{tmpl_name}/edit")
     assert resp.status_code == 200
     body = resp.text
-    # multi_select renders <select multiple>.
-    assert (
-        '<select id="field-leg_rails" name="leg_rails" multiple'
-        in body
-    )
-    # Each currently-attached leg_rail is preselected.
+    # Checkbox-group container present.
+    assert 'class="multi-select-group"' in body
+    # NO <select multiple> for leg_rails (the old shape we replaced).
+    assert 'name="leg_rails" multiple' not in body
+    # Each currently-attached leg_rail is checked.
     for rn in tmpl.leg_rails:
         assert (
-            f'value="{escape_html(str(rn))}" selected'
-            in body or f'value="{escape_html(str(rn))}"  selected' in body
-        ) or f'value="{escape_html(str(rn))}" selected>' in body
+            f'value="{escape_html(str(rn))}" checked' in body
+        )
     # Hidden marker so the save handler can distinguish "field rendered
     # with empty selection" from "field absent".
     assert 'name="leg_rails__present"' in body
@@ -625,6 +623,39 @@ def test_put_transfer_template_with_empty_leg_rails_returns_400(
         t for t in reloaded.transfer_templates if str(t.name) == tmpl_name
     )
     assert saved.leg_rails == tmpl.leg_rails
+
+
+def test_put_chain_edit_renders_card_after_save(
+    writable_l2_yaml: Path,
+) -> None:
+    """X.4.f.10 — chain entries use a composite addressing key
+    ``parent::child``. Without the post-mutate composite-rebuild fix,
+    the save handler's ``_find_entity_or_none`` lookup uses just
+    ``new_fields["parent"]`` (the addressing field's first half)
+    against ``_entity_id`` which returns the full composite — they
+    mismatch and the post-PUT card renders as the literal "saved"
+    string. This test asserts the actual chain card comes back."""
+    app = _build_app(writable_l2_yaml)
+    pre = load_instance(writable_l2_yaml)
+    if not pre.chains:
+        return
+    chain = pre.chains[0]
+    composite = f"{chain.parent}::{chain.child}"
+    # Round-trip the same parent/child + required so the save validates;
+    # the test's point is the post-PUT render path, not a model change.
+    data = {
+        "parent": str(chain.parent),
+        "child": str(chain.child),
+        "required": "true" if chain.required else "false",
+    }
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.put(f"/l2_shape/chain/{composite}", data=data)
+    assert resp.status_code == 200, resp.text
+    # The post-PUT body MUST be a real read card, not the "saved"
+    # placeholder string.
+    assert resp.text != "saved"
+    assert 'class="entity-card"' in resp.text
+    assert f"{chain.parent}::{chain.child}" in resp.text
 
 
 def test_chain_create_form_renders_parent_child_dropdowns(

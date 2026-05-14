@@ -280,6 +280,39 @@ body.create-page {
   min-height: 4rem;
 }
 
+/* X.4.f.10 — multi_select renders a checkbox group (easier than
+ * Cmd/Ctrl-click on <select multiple>). Two-column layout when there
+ * are many options; collapses to one column on narrow screens.
+ */
+.multi-select-group {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.3rem 0.75rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--studio-border);
+  border-radius: 0.25rem;
+  background: white;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+@media (min-width: 28rem) {
+  .multi-select-group {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.multi-select-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400;
+  font-size: 0.875rem;
+  cursor: pointer;
+  color: var(--studio-fg);
+}
+.multi-select-item input[type="checkbox"] {
+  cursor: pointer;
+}
+
 .field-helper {
   font-size: 0.75rem;
   color: var(--studio-muted);

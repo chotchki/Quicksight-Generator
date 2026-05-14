@@ -615,11 +615,12 @@ def _render_field(
     )
 
     if spec.kind == "multi_select":
-        # Render <select multiple>. The browser submits one form-data
-        # entry per selected option; the save handler uses getlist(name)
-        # to reconstruct the tuple. Hidden marker ensures the field is
+        # Render a checkbox group — easier than Cmd/Ctrl-clicking a
+        # <select multiple>. Each checkbox submits its own form-data
+        # entry on check; getlist(name) on the server side
+        # reconstructs the tuple. Hidden marker ensures the field is
         # always present in the form so an empty selection (operator
-        # cleared all rails) is distinguishable from "field absent" —
+        # unchecked everything) is distinguishable from "field absent" —
         # which lets the validator catch the empty-leg_rails case.
         if spec.select_from is None:
             raise ValueError(
@@ -627,23 +628,26 @@ def _render_field(
             )
         options, _ = _resolve_select_options(spec.select_from, instance, "")
         selected = _multi_value_as_strs(value)
-        # Make sure any current value not in the option set still shows
-        # (defensively handles a stale reference; the validator surfaces
-        # the broken reference separately).
+        # Defensive: any current value not in the option set still
+        # shows (stale reference; validator surfaces the broken ref
+        # separately).
         for v in selected:
             if v not in options:
                 options = (*options, v)
-        opt_blocks = [
-            f'<option value="{escape(o)}"'
-            f'{" selected" if o in selected else ""}>{escape(o)}</option>'
+        check_blocks = [
+            f'<label class="multi-select-item">'
+            f'<input type="checkbox" name="{escape(spec.name)}" '
+            f'value="{escape(o)}"'
+            f'{" checked" if o in selected else ""}>'
+            f' {escape(o)}</label>'
             for o in options
         ]
         input_html = (
             # Hidden marker — see comment above.
             f'<input type="hidden" name="{escape(spec.name)}__present" value="1">'
-            f'<select id="field-{spec.name}" name="{escape(spec.name)}" '
-            f'multiple size="{min(len(options) or 1, 8)}">'
-            f'{"".join(opt_blocks)}</select>'
+            f'<div id="field-{spec.name}" class="multi-select-group" '
+            f'role="group">'
+            f'{"".join(check_blocks)}</div>'
         )
     elif spec.kind == "select":
         val_str = _value_to_input_str(value)
@@ -1260,11 +1264,12 @@ def _make_handlers(cache: L2InstanceCache) -> dict[str, Any]:  # typing-smell: i
             )
 
         cache.save(new_inst)
+        # If the form changed the addressing key, the entity is now
+        # keyed under the NEW value. Composite kinds (chain /
+        # limit_schedule) need both halves rebuilt — see helper.
         new_entity = _find_entity_or_none(
             new_inst, kind,
-            # If the form changed the addressing key (id/name/role),
-            # the entity is now keyed under the NEW value.
-            str(new_fields.get(_addressing_field(kind), entity_id)),
+            _post_mutate_entity_id(kind, new_fields, entity_id),
         )
         resp = HTMLResponse(
             _render_read_card(kind, new_entity, new_inst)
@@ -1405,6 +1410,41 @@ def _addressing_field(kind: EntityKind) -> str:
         "chain": "parent",
         "limit_schedule": "parent_role",
     }[kind]
+
+
+def _post_mutate_entity_id(
+    kind: EntityKind,
+    new_fields: Mapping[str, object],
+    old_entity_id: str,
+) -> str:
+    """Compute the addressing string the just-mutated entity now lives
+    under, given the field changes the operator submitted.
+
+    Single-key kinds (account/template/rail) — pull the new value of
+    the addressing field if it changed; otherwise keep the old.
+    Composite kinds (chain / limit_schedule) — REBUILD the
+    "<half1>::<half2>" composite from the new field values, falling
+    back to the old halves where the form didn't touch them. Without
+    this fix, ``_find_entity_or_none`` can't locate a chain whose
+    parent or child the operator just changed (it'd compare a single
+    half against the composite and miss).
+    """
+    if kind == "chain":
+        old_parent, _, old_child = old_entity_id.partition("::")
+        parent = str(new_fields.get("parent", old_parent) or old_parent)
+        child = str(new_fields.get("child", old_child) or old_child)
+        return f"{parent}::{child}"
+    if kind == "limit_schedule":
+        old_parent_role, _, old_tt = old_entity_id.partition("::")
+        parent_role = str(
+            new_fields.get("parent_role", old_parent_role) or old_parent_role,
+        )
+        transfer_type = str(
+            new_fields.get("transfer_type", old_tt) or old_tt,
+        )
+        return f"{parent_role}::{transfer_type}"
+    addr = _addressing_field(kind)
+    return str(new_fields.get(addr, old_entity_id) or old_entity_id)
 
 
 def _rename_trigger_field(kind: EntityKind) -> str | None:
