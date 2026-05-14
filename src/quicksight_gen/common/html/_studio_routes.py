@@ -690,6 +690,137 @@ _PLANT_LABELS: tuple[tuple[PlantKind, str], ...] = (
     ("supersession", "Supersession"),
 )
 
+
+def _build_state_url(tg_cache: TestGeneratorCache) -> str:
+    """X.4.h.url — encode the trainer cache state as a /data URL.
+
+    Bookmarkable + shareable: every knob mutation pushes this URL via
+    ``HX-Push-Url`` so the browser bar reflects state, history works,
+    and reload restores it. Default-valued knobs are omitted from the
+    URL to keep it clean — `/data` with no params == "all defaults".
+    """
+    from urllib.parse import urlencode  # noqa: PLC0415
+
+    tg = tg_cache.get()
+    window_start, window_end = tg_cache.get_window()
+    today = date.today()  # typing-smell: ignore[no-datetime-now]: trainer-mode URL default-detection — wall-clock today defines the omit-when-default threshold; not a determinism path
+    default_window_end = today
+    default_window_start = today - timedelta(
+        days=DEFAULT_BASELINE_WINDOW_DAYS - 1,
+    )
+    params: list[tuple[str, str]] = []
+    if window_start != default_window_start:
+        params.append(("window_start", window_start.isoformat()))
+    if window_end != default_window_end:
+        params.append(("window_end", window_end.isoformat()))
+    if tg.end_date is not None:
+        params.append(("end_date", tg.end_date.isoformat()))
+    if tg.scope != "full":
+        params.append(("scope", tg.scope))
+    if tg.seed is not None:
+        params.append(("seed", str(tg.seed)))
+    if tg.plants:
+        params.append(("plants", ",".join(tg.plants)))
+    if not params:
+        return "/data"
+    return f"/data?{urlencode(params)}"
+
+
+def _apply_state_url_to_cache(
+    request: Request,
+    tg_cache: TestGeneratorCache,
+) -> None:
+    """X.4.h.url — read /data URL query params + apply to the cache.
+
+    Called on every ``GET /data`` so a bookmarked / reloaded URL
+    restores the trainer's prior knob state. Invalid values silently
+    drop (same posture as the PUT routes' validation — bad input
+    leaves the cache in its prior state).
+
+    Idempotent: applying the same URL twice yields the same cache
+    state. Absent params leave the cache untouched (so the natural
+    default-cache-from-from_config stays).
+    """
+    from typing import cast as _cast  # noqa: PLC0415
+
+    qp = request.query_params
+    new_window_start: date | None = None
+    new_window_end: date | None = None
+    raw_ws = qp.get("window_start")
+    if raw_ws:
+        try:
+            new_window_start = date.fromisoformat(raw_ws)
+        except ValueError:
+            pass
+    raw_we = qp.get("window_end")
+    if raw_we:
+        try:
+            new_window_end = date.fromisoformat(raw_we)
+        except ValueError:
+            pass
+    if new_window_start is not None or new_window_end is not None:
+        tg_cache.update_window(
+            start=new_window_start
+            if new_window_start is not None
+            else _UNSET_LOCAL,
+            end=new_window_end
+            if new_window_end is not None
+            else _UNSET_LOCAL,
+        )
+
+    raw_end = qp.get("end_date")
+    if raw_end is not None:  # explicit empty = clear to None
+        if raw_end == "":
+            tg_cache.update(end_date=None)
+        else:
+            try:
+                tg_cache.update(end_date=date.fromisoformat(raw_end))
+            except ValueError:
+                pass
+
+    raw_scope = qp.get("scope")
+    if raw_scope is not None:
+        from quicksight_gen.common.config import (  # noqa: PLC0415
+            ScopeKind,
+        )
+        from typing import get_args as _get_args  # noqa: PLC0415
+
+        if raw_scope in _get_args(ScopeKind):
+            tg_cache.update(scope=_cast(ScopeKind, raw_scope))
+
+    raw_seed = qp.get("seed")
+    if raw_seed is not None:
+        if raw_seed == "":
+            tg_cache.update(seed=None)
+        else:
+            try:
+                tg_cache.update(seed=int(raw_seed))
+            except ValueError:
+                pass
+
+    raw_plants = qp.get("plants")
+    if raw_plants is not None:
+        # Empty string → clear to () == "all kinds" per SPEC.
+        from typing import get_args as _get_args2  # noqa: PLC0415
+
+        known: set[PlantKind] = set(_get_args2(PlantKind))
+        if raw_plants == "":
+            tg_cache.update(plants=())
+        else:
+            picked = tuple(
+                _cast(PlantKind, p)
+                for p in raw_plants.split(",")
+                if p in known
+            )
+            tg_cache.update(plants=picked)
+
+
+# Sentinel that mirrors the cache's _UNSET — needed because
+# update_window's signature takes ``date | object`` for each bound
+# (sentinel = "leave alone"), and we want to leave one alone when
+# only the other was sent.
+_UNSET_LOCAL: object = object()
+
 _SCOPE_LABELS: tuple[tuple[ScopeKind, str, str], ...] = (
     # (value, short label, hover hint pulled from deploy_pipeline docstrings)
     (
@@ -1347,7 +1478,13 @@ def make_studio_routes(
     async def landing(_request: Request) -> HTMLResponse:
         return HTMLResponse(_render_home_page(cache, dev_log))
 
-    async def data(_request: Request) -> HTMLResponse:
+    async def data(request: Request) -> HTMLResponse:
+        # X.4.h.url — read URL query params into the cache so a
+        # bookmarked / reloaded /data?... restores trainer state.
+        # Absent params leave the cache alone (so a bare /data still
+        # picks up wherever the operator left off in this session).
+        if tg_cache is not None:
+            _apply_state_url_to_cache(request, tg_cache)
         return HTMLResponse(_render_data_page(cache, dev_log, tg_cache=tg_cache))
 
     async def data_timeline(_request: Request) -> HTMLResponse:
@@ -1455,7 +1592,10 @@ def make_studio_routes(
             bound_tg.update(plants=new_plants)
             return HTMLResponse(
                 _render_plants_strip(new_plants),
-                headers={"HX-Trigger": "trainer-knobs-changed"},
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
             )
 
         routes.append(Route("/data/knobs/plants", put_plants, methods=["PUT"]))
@@ -1513,7 +1653,10 @@ def make_studio_routes(
             bound_tg.update(end_date=new_up_to)
             return HTMLResponse(
                 _render_up_to_strip(new_up_to, window_start, window_end),
-                headers={"HX-Trigger": "trainer-knobs-changed"},
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
             )
 
         routes.append(
@@ -1562,7 +1705,10 @@ def make_studio_routes(
             new_window_start, new_window_end = bound_tg.get_window()
             return HTMLResponse(
                 _render_window_strip(new_window_start, new_window_end),
-                headers={"HX-Trigger": "trainer-knobs-changed"},
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
             )
 
         routes.append(
@@ -1607,7 +1753,10 @@ def make_studio_routes(
             bound_tg.update(seed=new_seed)
             return HTMLResponse(
                 _render_seed_strip(new_seed),
-                headers={"HX-Trigger": "trainer-knobs-changed"},
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
             )
 
         routes.append(
@@ -1640,7 +1789,10 @@ def make_studio_routes(
             bound_tg.update(scope=new_scope)
             return HTMLResponse(
                 _render_scope_strip(new_scope),
-                headers={"HX-Trigger": "trainer-knobs-changed"},
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
             )
 
         routes.append(

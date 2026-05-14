@@ -838,6 +838,103 @@ def test_put_scope_route_absent_without_cache(
 
 
 # ---------------------------------------------------------------------------
+# X.4.h.url — URL state round-trip (HX-Push-Url + GET /data?... restore)
+# ---------------------------------------------------------------------------
+
+
+def test_put_emits_hx_push_url_with_state(
+    writable_l2_yaml: Path,
+) -> None:
+    """Every knob PUT carries HX-Push-Url alongside the existing
+    HX-Trigger header so the browser bar reflects current cache
+    state. Bookmark + share + reload all flow through this URL."""
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        window_start=date(2026, 5, 1),
+        window_end=date(2026, 5, 31),
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(
+            c, "/data/knobs/end_date", [("end_date", "2026-05-15")],
+        )
+    assert resp.headers.get("HX-Push-Url") is not None  # type: ignore[attr-defined]: TestClient stub return is Any
+    push_url = resp.headers["HX-Push-Url"]  # type: ignore[attr-defined]: TestClient stub return is Any
+    # Window bounds + end_date all surface in the URL.
+    assert "window_start=2026-05-01" in push_url
+    assert "window_end=2026-05-31" in push_url
+    assert "end_date=2026-05-15" in push_url
+
+
+def test_default_state_url_is_clean(
+    writable_l2_yaml: Path,
+) -> None:
+    """All-default cache emits a clean /data URL — no query params.
+    Operator should see a tidy bar when nothing's been touched."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    # window_start / window_end default to "today - 89 / today" via
+    # the cache's __init__ → matches the URL builder's default
+    # detection, so they get omitted.
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        # PUT with empty plants (default) — nothing to push beyond /data.
+        resp = _put_form(c, "/data/knobs/plants", [])
+    assert resp.headers.get("HX-Push-Url") == "/data"  # type: ignore[attr-defined]: TestClient stub return is Any
+
+
+def test_get_data_with_url_params_restores_cache(
+    writable_l2_yaml: Path,
+) -> None:
+    """GET /data?... reads the URL into the cache so a bookmark or
+    reload restores trainer state. Round-trips for every knob."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.get(
+            "/data?window_start=2026-04-01&window_end=2026-05-31"
+            "&end_date=2026-05-15&scope=exceptions_only"
+            "&seed=12345&plants=drift,overdraft",
+        )
+    assert resp.status_code == 200
+    # Cache mutated by the GET parsing.
+    assert tg_cache.get_window() == (date(2026, 4, 1), date(2026, 5, 31))
+    assert tg_cache.get().end_date == date(2026, 5, 15)
+    assert tg_cache.get().scope == "exceptions_only"
+    assert tg_cache.get().seed == 12345
+    assert tg_cache.get().plants == ("drift", "overdraft")
+
+
+def test_get_data_invalid_url_params_silently_drop(
+    writable_l2_yaml: Path,
+) -> None:
+    """Malformed URL params don't crash — they leave the cache alone
+    (same posture as PUT routes' validation). Operator-friendly: a
+    truncated bookmark or stale share-link still loads the page."""
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(end_date=date(2026, 5, 14)),
+        window_start=date(2026, 5, 1),
+        window_end=date(2026, 5, 31),
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = c.get(
+            "/data?window_start=not-a-date&end_date=garbage"
+            "&seed=abc&scope=made_up&plants=fake_kind,drift",
+        )
+    assert resp.status_code == 200
+    # Window untouched (window_start was junk).
+    assert tg_cache.get_window() == (date(2026, 5, 1), date(2026, 5, 31))
+    # end_date untouched (junk silently dropped).
+    assert tg_cache.get().end_date == date(2026, 5, 14)
+    # seed untouched.
+    assert tg_cache.get().seed is None
+    # scope unchanged (junk dropped).
+    assert tg_cache.get().scope == "full"
+    # plants kept only the known value.
+    assert tg_cache.get().plants == ("drift",)
+
+
+# ---------------------------------------------------------------------------
 # X.4.h.6.b/c — plant-timeline section + HX-Trigger refresh wiring
 # ---------------------------------------------------------------------------
 
