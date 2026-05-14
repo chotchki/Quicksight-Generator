@@ -998,8 +998,8 @@ def _multi_value_as_strs(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(
             str(v)  # pyright: ignore[reportUnknownArgumentType]  # WHY: tuple element type isn't narrowed by isinstance; values stringify safely
-            for v in value  # pyright: ignore[reportUnknownVariableType]  # WHY: same
-            if str(v)  # pyright: ignore[reportUnknownArgumentType]  # WHY: same
+            for v in value  # pyright: ignore[reportUnknownVariableType]  # WHY: tuple element type isn't narrowed by isinstance
+            if str(v)  # pyright: ignore[reportUnknownArgumentType]  # WHY: tuple element type isn't narrowed by isinstance
         )
     s = str(value)
     return (s,) if s else ()
@@ -1025,14 +1025,14 @@ def _value_to_input_str(value: object) -> str:
     # on tuple-of-2-tuples-with-tuple-second specifically and dump as
     # YAML; flat tuples fall through to the comma-join below.
     if isinstance(value, tuple) and value and all(
-        isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], tuple)  # pyright: ignore[reportUnknownArgumentType]  # WHY: tuple element type isn't narrowed
-        for item in value  # pyright: ignore[reportUnknownVariableType]  # WHY: same
+        isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], tuple)  # pyright: ignore[reportUnknownArgumentType]  # WHY: tuple element type isn't narrowed by isinstance
+        for item in value  # pyright: ignore[reportUnknownVariableType]  # WHY: tuple element type isn't narrowed by isinstance
     ):
-        return _metadata_value_examples_to_yaml(value)  # pyright: ignore[reportUnknownArgumentType]  # WHY: shape narrowed by the all() above
+        return _metadata_value_examples_to_yaml(value)  # pyright: ignore[reportUnknownArgumentType]  # WHY: shape narrowed by the all() guard above
     if isinstance(value, tuple):
         return ", ".join(
             str(v)  # pyright: ignore[reportUnknownArgumentType]  # WHY: tuple element type isn't narrowed by isinstance
-            for v in value  # pyright: ignore[reportUnknownVariableType]  # WHY: same
+            for v in value  # pyright: ignore[reportUnknownVariableType]  # WHY: tuple element type isn't narrowed by isinstance
         )
     return str(value)
 

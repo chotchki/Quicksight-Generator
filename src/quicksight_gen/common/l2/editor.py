@@ -280,7 +280,7 @@ def create_l2_entity(
                 ),
                 posted_requirements=posted_requirements_v,  # pyright: ignore[reportArgumentType]  # WHY: form-typed tuple[Identifier, ...]
                 max_pending_age=max_pending_age_v,  # pyright: ignore[reportArgumentType]  # WHY: form-coerced via _load_duration → timedelta or None
-                max_unbundled_age=max_unbundled_age_v,  # pyright: ignore[reportArgumentType]  # WHY: same
+                max_unbundled_age=max_unbundled_age_v,  # pyright: ignore[reportArgumentType]  # WHY: form-coerced via _load_duration to timedelta or None
                 aggregating=aggregating,
                 bundles_activity=bundles_activity_v,  # pyright: ignore[reportArgumentType]  # WHY: form-typed tuple[Identifier, ...]
                 description=fields.get("description"),
@@ -296,7 +296,7 @@ def create_l2_entity(
             source_role: tuple[Identifier, ...] = (
                 tuple(
                     Identifier(str(x))  # pyright: ignore[reportUnknownArgumentType]  # WHY: form-data tuple elements are untyped Any per Mapping[str, Any] contract
-                    for x in src_raw  # pyright: ignore[reportUnknownVariableType]  # WHY: same
+                    for x in src_raw  # pyright: ignore[reportUnknownVariableType]  # WHY: form-data tuple elements are untyped Any per contract
                 )
                 if isinstance(src_raw, (list, tuple))
                 else ()
@@ -304,7 +304,7 @@ def create_l2_entity(
             destination_role: tuple[Identifier, ...] = (
                 tuple(
                     Identifier(str(x))  # pyright: ignore[reportUnknownArgumentType]  # WHY: form-data tuple elements are untyped Any per Mapping[str, Any] contract
-                    for x in dst_raw  # pyright: ignore[reportUnknownVariableType]  # WHY: same
+                    for x in dst_raw  # pyright: ignore[reportUnknownVariableType]  # WHY: form-data tuple elements are untyped Any per contract
                 )
                 if isinstance(dst_raw, (list, tuple))
                 else ()
@@ -329,7 +329,7 @@ def create_l2_entity(
                 expected_net=fields.get("expected_net"),  # pyright: ignore[reportArgumentType]  # WHY: form-coerced Decimal via money kind, or None
                 posted_requirements=posted_requirements_v,  # pyright: ignore[reportArgumentType]  # WHY: form-typed tuple[Identifier, ...]
                 max_pending_age=max_pending_age_v,  # pyright: ignore[reportArgumentType]  # WHY: form-coerced via _load_duration → timedelta or None
-                max_unbundled_age=max_unbundled_age_v,  # pyright: ignore[reportArgumentType]  # WHY: same
+                max_unbundled_age=max_unbundled_age_v,  # pyright: ignore[reportArgumentType]  # WHY: form-coerced via _load_duration to timedelta or None
                 aggregating=aggregating,
                 bundles_activity=bundles_activity_v,  # pyright: ignore[reportArgumentType]  # WHY: form-typed tuple[Identifier, ...]
                 description=fields.get("description"),
@@ -485,7 +485,7 @@ def singleton_save_l2(
         if kind == "theme":
             new_theme = _load_theme(parsed, path=kind)  # pyright: ignore[reportUnknownArgumentType]  # WHY: yaml.safe_load returns Any-typed dict; the loader validates the shape
             return dataclasses.replace(instance, theme=new_theme)
-        new_persona = _load_persona(parsed, path=kind)  # pyright: ignore[reportUnknownArgumentType]  # WHY: same
+        new_persona = _load_persona(parsed, path=kind)  # pyright: ignore[reportUnknownArgumentType]  # WHY: yaml.safe_load returns Any-typed dict; the loader validates the shape
         return dataclasses.replace(instance, persona=new_persona)
     except L2LoaderError as exc:
         raise ValueError(str(exc)) from exc

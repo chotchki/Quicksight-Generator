@@ -193,9 +193,9 @@ Theme + Persona are L2-instance attributes (singletons, not lists). They need a 
 
 #### X.4.g — The "Deploy changes" pipeline
 
-- [ ] **X.4.g.1** — `etl_hook` config field + V.1.b allowlist entry.
-- [ ] **X.4.g.2** — `etl_datasource` config block (URL + `transactions` / `daily_balances` table allowlist) + V.1.b allowlist entry.
-- [ ] **X.4.g.3** — `test_generator:` config block (`enabled` / `scope` / `end_date` / `seed` / `plants` / `only_template` / `derive_balances`) + V.1.b allowlist entry. Defaults preserve byte-identical-to-locked-seeds output.
+- [x] **X.4.g.1** — `etl_hook` config field + V.1.b allowlist entry.
+- [x] **X.4.g.2** — `etl_datasource` config block (URL + `transactions` / `daily_balances` table allowlist) + V.1.b allowlist entry.
+- [x] **X.4.g.3** — `test_generator:` config block (`enabled` / `scope` / `end_date` / `seed` / `plants` / `only_template` / `derive_balances`) + V.1.b allowlist entry. Defaults preserve byte-identical-to-locked-seeds output.
 - [ ] **X.4.g.4** — Step 1 (`etl_hook` gate): subprocess run; stream stdout/stderr to `/dev_log`; exit-code halts BEFORE step 2 if non-zero (demo DB never touched).
 - [ ] **X.4.g.5** — Step 2 wipe: call `wipe_demo_data_sql(instance, dialect)` against `demo_database_url`, always (when we reach this step).
 - [ ] **X.4.g.6** — Step 2 pull: cross-dialect copy from `etl_datasource` to `demo_database_url`, filtered to `≤ end_date`. Reuse `common/sql/dialect.py` + Oracle batcher.
