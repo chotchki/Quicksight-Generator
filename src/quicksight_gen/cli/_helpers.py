@@ -93,7 +93,7 @@ _DEFAULT_BROKEN_COUNT = 15
 _DEFAULT_FANOUT_MULTIPLIER = 5
 
 
-def build_default_scenario(instance, *, anchor=None, density: float = 1.0):  # type: ignore[no-untyped-def]: instance/anchor untyped pending CLI-wide sweep
+def build_default_scenario(instance, *, anchor=None, density: float = 1.0, plants=None):  # type: ignore[no-untyped-def]: instance/anchor/plants untyped pending CLI-wide sweep
     """Build the densified+broken+boosted default scenario.
 
     Shared by ``build_full_seed_sql`` (X.4.g.8 scope:full) and
@@ -111,6 +111,15 @@ def build_default_scenario(instance, *, anchor=None, density: float = 1.0):  # t
     ``density=2.0`` doubles; ``density=0.5`` halves. Multiplications
     use ``int(...)`` so values stay deterministic.
 
+    ``plants`` (X.4.h.0.a) — optional subset of ``PlantKind`` strings
+    selecting which L1 SHOULD-violation kinds to keep. ``None`` or
+    empty ⇒ all 6 kinds (today's behavior, byte-identical to the
+    locked seeds). Non-empty ⇒ only the named kinds; the others are
+    zeroed out at the very end of the pipeline (after densify / broken
+    / boost so the in-flight seed numbers don't shift between the
+    "all" and "subset" paths). L2-shape fixtures (rail firings,
+    template plants, fanout) always pass through.
+
     Returned scenario is ready to feed either ``emit_full_seed`` (for
     baseline + plants) or ``emit_seed`` (plants only).
     """
@@ -119,6 +128,7 @@ def build_default_scenario(instance, *, anchor=None, density: float = 1.0):  # t
         boost_inv_fanout_plants,
         default_scenario_for,
         densify_scenario,
+        filter_scenario_plants,
     )
 
     base = default_scenario_for(
@@ -130,12 +140,13 @@ def build_default_scenario(instance, *, anchor=None, density: float = 1.0):  # t
     broken = add_broken_rail_plants(
         dense, instance, broken_count=int(_DEFAULT_BROKEN_COUNT * density),
     )
-    return boost_inv_fanout_plants(
+    boosted = boost_inv_fanout_plants(
         broken, amount_multiplier=int(_DEFAULT_FANOUT_MULTIPLIER * density),
     )
+    return filter_scenario_plants(boosted, plants)
 
 
-def build_full_seed_sql(cfg, instance, *, anchor=None, density: float = 1.0) -> str:  # type: ignore[no-untyped-def]: cfg/instance/anchor untyped pending CLI-wide sweep
+def build_full_seed_sql(cfg, instance, *, anchor=None, density: float = 1.0, plants=None) -> str:  # type: ignore[no-untyped-def]: cfg/instance/anchor/plants untyped pending CLI-wide sweep
     """Compose the demo seed pipeline (90-day baseline + plant overlays).
 
     ``anchor`` pins the calendar date used by both ``default_scenario_for``
@@ -146,12 +157,12 @@ def build_full_seed_sql(cfg, instance, *, anchor=None, density: float = 1.0) -> 
     machines and run dates.
 
     See ``build_default_scenario`` for the scenario construction +
-    density semantics.
+    density + plants-filter semantics.
     """
     from quicksight_gen.common.l2.seed import emit_full_seed
 
     final = build_default_scenario(
-        instance, anchor=anchor, density=density,
+        instance, anchor=anchor, density=density, plants=plants,
     )
     return emit_full_seed(
         instance, final, dialect=cfg.dialect, anchor=anchor,

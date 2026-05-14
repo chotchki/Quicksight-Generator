@@ -243,10 +243,10 @@ Theme + Persona are L2-instance attributes (singletons, not lists). They need a 
 
 Today: `cfg.test_generator.plants` and `.seed` are read into the orchestration log but the generator IGNORES them — `_build_generator_sql` calls `build_default_scenario(instance, anchor=…)` / `build_full_seed_sql(cfg, instance, anchor=…)` with no plants / no seed forwarded. h.0 closes that gap so the UI in h.1+ has something to drive.
 
-- [ ] **X.4.h.0.a** — Thread `tg.plants` filter into `build_default_scenario` + `build_full_seed_sql`. Empty/None tuple = today's behavior (all plants — the locked-seed default). Non-empty = subset filter.
+- [x] **X.4.h.0.a** — Thread `tg.plants` filter into `build_default_scenario` + `build_full_seed_sql`. Empty/None tuple = today's behavior (all plants — the locked-seed default). Non-empty = subset filter. Helper: `filter_scenario_plants(base, kinds)` in `common/l2/auto_scenario.py` — pure projection over the 6 `PlantKind` tuples; non-PlantKind fixtures (`failed_transaction_plants`, `transfer_template_plants`, `rail_firing_plants`, `inv_fanout_plants`) pass through. Wired through `_build_generator_sql` (deploy_pipeline.py) for both `scope=full` and `scope=exceptions_only`.
 - [ ] **X.4.h.0.b** — Thread `tg.seed` into the scenario randomizer. None = today's deterministic anchor (locked-seed default). Int = override the RNG seed before plant placement.
-- [ ] **X.4.h.0.c** — Locked-seed determinism still holds with defaults: `tests/data/test_locked_seeds.py::test_locked_seed_matches_fresh_emit` stays green (the byte-identity guarantee from the SPEC's hard constraint).
-- [ ] **X.4.h.0.d** — Unit tests: per-plant filter (e.g. `plants=("drift",)` → only drift rows in the scenario), seed propagation (different seeds → different plant placements, same seed → same).
+- [x] **X.4.h.0.c** — Locked-seed determinism still holds with defaults: `tests/data/test_locked_seeds.py::test_locked_seed_matches_fresh_emit` 8 tests pass with `plants=None` short-circuit (identity return; no copy → byte-identical SQL).
+- [x] **X.4.h.0.d** — Unit tests: per-plant filter (5 tests in `tests/unit/test_l2_auto_scenario.py` — None/empty short-circuits, single-kind keeps drift only, two-kind keeps both, non-L1 fixtures pass through). Seed-propagation tests deferred to h.0.b alongside the seed wiring.
 
 ##### h.1 — `/data` route + chrome shell (no knobs wired yet)
 
