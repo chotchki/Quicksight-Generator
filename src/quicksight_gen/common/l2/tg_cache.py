@@ -65,13 +65,17 @@ class TestGeneratorCache:
     Studio-resolved value lives only inside the patched-cfg clone.
     """
 
-    __slots__ = ("_state", "_window_start", "_window_end")
+    __slots__ = (
+        "_state", "_window_start", "_window_end", "_etl_hook_enabled",
+    )
 
     def __init__(
         self,
         state: TestGeneratorConfig,
         window_start: date | None = None,
         window_end: date | None = None,
+        *,
+        etl_hook_enabled: bool = True,
     ) -> None:
         if window_end is None:
             window_end = date.today()  # typing-smell: ignore[no-datetime-now]: trainer-mode default window — wall-clock today is the operator-friendly anchor for "last 90 days"; not a determinism path
@@ -82,6 +86,12 @@ class TestGeneratorCache:
         self._state = state
         self._window_start = window_start
         self._window_end = window_end
+        # X.4.h.etl-toggle — when False, patched_config nukes
+        # cfg.etl_hook for that deploy without erasing the configured
+        # command. Lets the trainer skip the upstream re-seed step on
+        # iterative deploys (faster) while preserving the YAML config
+        # for the next "fresh start" deploy.
+        self._etl_hook_enabled = etl_hook_enabled
 
     @classmethod
     def from_config(cls, cfg: Config) -> TestGeneratorCache:
@@ -104,6 +114,20 @@ class TestGeneratorCache:
     def get_window(self) -> tuple[date, date]:
         """Return ``(window_start, window_end)`` — always concrete dates."""
         return (self._window_start, self._window_end)
+
+    def is_etl_hook_enabled(self) -> bool:
+        """Return whether ``cfg.etl_hook`` will run on the next Deploy.
+
+        True (default) ⇒ ``patched_config`` keeps ``cfg.etl_hook`` as
+        configured. False ⇒ ``patched_config`` clears it to None for
+        that deploy (the cfg's stored command is unaffected — the
+        operator can flip the toggle back on without re-typing).
+        """
+        return self._etl_hook_enabled
+
+    def set_etl_hook_enabled(self, enabled: bool) -> None:
+        """Toggle ``cfg.etl_hook`` execution on the next Deploy."""
+        self._etl_hook_enabled = enabled
 
     def get_up_to(self) -> date:
         """Resolve the "up to" / scrub-head date.
@@ -213,4 +237,26 @@ class TestGeneratorCache:
             end_date=cfg_anchor,
             cutoff_date=cfg_cutoff,
         )
-        return dataclasses.replace(cfg, test_generator=resolved)
+        # X.4.h.etl-toggle — "upstream re-seed" is a coupled pair:
+        # step_1_etl_hook (the shell command, usually fetches /
+        # refreshes the upstream source) AND step_2_pull (copies
+        # from cfg.etl_datasource into the demo DB). When the
+        # trainer flips the toggle off, BOTH are nuked on the
+        # patched cfg — step 1 + step 2-pull both no-op for this
+        # deploy. Decoupling them produces 500s when the operator's
+        # etl_datasource only exists *because* the hook started it
+        # (e.g. local postgres the hook brings up). The original
+        # cfg's stored fields are untouched — re-enable + re-deploy
+        # restores both.
+        new_etl_hook = (
+            cfg.etl_hook if self._etl_hook_enabled else None
+        )
+        new_etl_datasource = (
+            cfg.etl_datasource if self._etl_hook_enabled else None
+        )
+        return dataclasses.replace(
+            cfg,
+            test_generator=resolved,
+            etl_hook=new_etl_hook,
+            etl_datasource=new_etl_datasource,
+        )

@@ -721,6 +721,8 @@ def _build_state_url(tg_cache: TestGeneratorCache) -> str:
         params.append(("seed", str(tg.seed)))
     if tg.plants:
         params.append(("plants", ",".join(tg.plants)))
+    if not tg_cache.is_etl_hook_enabled():
+        params.append(("etl_hook", "disabled"))
     if not params:
         return "/data"
     return f"/data?{urlencode(params)}"
@@ -814,6 +816,15 @@ def _apply_state_url_to_cache(
             )
             tg_cache.update(plants=picked)
 
+    raw_etl_hook = qp.get("etl_hook")
+    if raw_etl_hook is not None:
+        # Only "disabled" / "enabled" recognized; bad values silently
+        # drop (same posture as other URL params).
+        if raw_etl_hook == "disabled":
+            tg_cache.set_etl_hook_enabled(False)
+        elif raw_etl_hook == "enabled":
+            tg_cache.set_etl_hook_enabled(True)
+
 
 # Sentinel that mirrors the cache's _UNSET — needed because
 # update_window's signature takes ``date | object`` for each bound
@@ -879,6 +890,72 @@ def _render_plants_strip(
         f'hx-target="#data-knob-plants" '
         f'hx-swap="outerHTML">'
         f'<span class="data-knob-label">plants:</span>'
+        f"{body}"
+        f"</form>"
+    )
+
+
+def _render_etl_hook_strip(
+    command: str | None,
+    enabled: bool,
+) -> str:
+    """X.4.h.etl-toggle — render the upstream-re-seed enable/disable strip.
+
+    Surfaces ``cfg.etl_hook`` (the shell command) as the visible
+    representative of the "upstream re-seed" pair: step 1 (run the
+    hook) + step 2 pull (copy from ``cfg.etl_datasource`` into the
+    demo DB). The toggle disables BOTH for the next Deploy without
+    erasing either cfg field — flip back on later to restore the
+    whole pair without re-configuring. (The label says "etl hook"
+    because that's the operator-facing name for the workflow; the
+    implementation skips both halves.)
+
+    Three render states:
+      - ``command is None`` ⇒ disabled toggle, "(not configured)"
+        text. Operator hasn't wired one in cfg.yaml; toggle is moot.
+      - ``command`` set, ``enabled=True`` ⇒ active checkbox,
+        ``<code>`` showing the command (truncated with ``title=`` for
+        the full text on hover).
+      - ``command`` set, ``enabled=False`` ⇒ unchecked checkbox,
+        ``<code>`` greyed out; deploy will skip step 1.
+
+    Wired with HTMX: the checkbox PUTs ``enabled=on`` (HTML form
+    default for checked checkboxes — absence = unchecked) to
+    ``/data/knobs/etl_hook``. The route flips the cache flag and
+    re-renders the strip.
+    """
+    common_attrs = (
+        'hx-put="/data/knobs/etl_hook" '
+        'hx-target="#data-knob-etl-hook" '
+        'hx-swap="outerHTML" '
+        'hx-trigger="change"'
+    )
+    if command is None:
+        body = (
+            '<input type="checkbox" disabled '
+            'aria-label="etl_hook (not configured)"/>'
+            '<code class="etl-hook-command etl-hook-command--missing">'
+            "(not configured)</code>"
+        )
+    else:
+        checked = "checked " if enabled else ""
+        cmd_class = (
+            "etl-hook-command"
+            if enabled
+            else "etl-hook-command etl-hook-command--disabled"
+        )
+        body = (
+            f'<input type="checkbox" name="enabled" value="on" '
+            f'{checked}'
+            f'class="etl-hook-toggle" '
+            f'aria-label="Run etl_hook on next deploy" '
+            f"{common_attrs}/>"
+            f'<code class="{cmd_class}" title="{escape(command)}">'
+            f"{escape(command)}</code>"
+        )
+    return (
+        f'<form id="data-knob-etl-hook" class="data-knob data-knob-etl-hook">'
+        f'<span class="data-knob-label">etl hook:</span>'
         f"{body}"
         f"</form>"
     )
@@ -1296,6 +1373,7 @@ def _render_data_page(
     dev_log: bool,
     *,
     tg_cache: TestGeneratorCache | None = None,
+    etl_hook_command: str | None = None,
 ) -> str:
     """X.4.h.1 — Studio "trainer mode" data-shaping panel shell.
 
@@ -1344,6 +1422,12 @@ def _render_data_page(
         tg_cache.get().scope if tg_cache is not None else "full"
     )
     scope_strip = _render_scope_strip(selected_scope)
+    etl_hook_enabled = (
+        tg_cache.is_etl_hook_enabled() if tg_cache is not None else True
+    )
+    etl_hook_strip = _render_etl_hook_strip(
+        etl_hook_command, etl_hook_enabled,
+    )
     timeline_section = _render_timeline_section(instance, tg_cache)
 
     return f"""<!doctype html>
@@ -1408,6 +1492,7 @@ def _render_data_page(
 
   <script src="https://unpkg.com/htmx.org@1.9.10"></script>
   <div class="data-knobs" id="data-knobs">
+    {etl_hook_strip}
     {scope_strip}
     {window_strip}
     {end_date_strip}
@@ -1485,7 +1570,12 @@ def make_studio_routes(
         # picks up wherever the operator left off in this session).
         if tg_cache is not None:
             _apply_state_url_to_cache(request, tg_cache)
-        return HTMLResponse(_render_data_page(cache, dev_log, tg_cache=tg_cache))
+        etl_hook_command = cfg.etl_hook if cfg is not None else None
+        return HTMLResponse(_render_data_page(
+            cache, dev_log,
+            tg_cache=tg_cache,
+            etl_hook_command=etl_hook_command,
+        ))
 
     async def data_timeline(_request: Request) -> HTMLResponse:
         """X.4.h.6.c — refresh just the timeline section.
@@ -1797,6 +1887,39 @@ def make_studio_routes(
 
         routes.append(
             Route("/data/knobs/scope", put_scope, methods=["PUT"]),
+        )
+
+        async def put_etl_hook(request: Request) -> HTMLResponse:
+            """X.4.h.etl-toggle — flip the etl_hook enable/disable knob.
+
+            Form contract:
+                - ``enabled=on`` (HTML form default for checked
+                  checkboxes) → enable. Absence → disable.
+
+            The toggle is meaningful even when ``cfg.etl_hook is None``
+            (the renderer surfaces it as disabled + "(not configured)"),
+            but the cache flag is still respected — Deploy ignores it
+            because the cfg field is None either way.
+            """
+            form = await request.form()
+            enabled_raw = form.get("enabled")
+            new_enabled = (
+                isinstance(enabled_raw, str) and enabled_raw == "on"
+            )
+            bound_tg.set_etl_hook_enabled(new_enabled)
+            etl_hook_command = (
+                cfg.etl_hook if cfg is not None else None
+            )
+            return HTMLResponse(
+                _render_etl_hook_strip(etl_hook_command, new_enabled),
+                headers={
+                    "HX-Trigger": "trainer-knobs-changed",
+                    "HX-Push-Url": _build_state_url(bound_tg),
+                },
+            )
+
+        routes.append(
+            Route("/data/knobs/etl_hook", put_etl_hook, methods=["PUT"]),
         )
 
     # X.4.c.5.c — coverage JSON route. Mounted only when a pool exists

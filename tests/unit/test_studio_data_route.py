@@ -51,10 +51,17 @@ def _build_app(
     yaml_path: Path,
     *,
     tg_cache: TestGeneratorCache | None = None,
+    cfg: object = None,
 ) -> object:
+    """Build a Studio test app.
+
+    ``cfg=None`` (default) preserves the legacy contract — POST /deploy
+    is omitted and the etl_hook strip renders "(not configured)". Pass
+    a real Config (with optional etl_hook= override) to exercise the
+    deploy + etl-hook surfaces.
+    """
     cache = L2InstanceCache.from_path(yaml_path)
-    cfg = make_test_config()
-    tree_app, sheet = build_smoke_app(cfg)
+    tree_app, sheet = build_smoke_app(make_test_config())
     served = ServedDashboard(
         tree_app=tree_app, sheet=sheet, title="smoke",
         data_fetcher=stub_money_trail_fetcher,
@@ -62,7 +69,11 @@ def _build_app(
     )
     return make_app(
         dashboards={"smoke": served},
-        studio_routes=make_studio_routes(cache, tg_cache=tg_cache),
+        studio_routes=make_studio_routes(
+            cache,
+            tg_cache=tg_cache,
+            cfg=cfg,  # type: ignore[arg-type]: tests pass either a real Config or None; make_studio_routes accepts Config | None
+        ),
     )
 
 
@@ -1103,3 +1114,194 @@ def test_timeline_day_button_writes_end_date(
     assert "hx-target=\"#data-knob-end-date\"" in body
     # hx-vals end_date payload — the JSON structure we emit.
     assert 'hx-vals=\'{"end_date": "' in body
+
+
+# ---------------------------------------------------------------------------
+# X.4.h.etl-toggle — etl_hook enable/disable strip
+# ---------------------------------------------------------------------------
+
+
+def test_etl_hook_strip_renders_not_configured_without_cfg(
+    writable_l2_yaml: Path,
+) -> None:
+    """Without cfg wired, the strip surfaces "(not configured)" + a
+    disabled checkbox. The toggle is moot — Deploy is also absent."""
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    assert 'id="data-knob-etl-hook"' in body
+    assert "(not configured)" in body
+    assert "etl-hook-command--missing" in body
+    assert 'type="checkbox" disabled' in body
+
+
+def test_etl_hook_strip_renders_command_when_configured(
+    writable_l2_yaml: Path,
+) -> None:
+    """With cfg.etl_hook set + toggle enabled (default), the strip
+    surfaces the command in a <code> + a checked checkbox."""
+    cfg = make_test_config(etl_hook="echo upstream-pull && sync")
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    assert 'id="data-knob-etl-hook"' in body
+    # Command surfaces in a <code> with title= for full hover text.
+    assert "echo upstream-pull &amp;&amp; sync" in body
+    assert "etl-hook-toggle" in body
+    # Default = enabled ⇒ checkbox checked.
+    assert 'type="checkbox" name="enabled" value="on" checked' in body
+    assert "etl-hook-command--missing" not in body
+
+
+def test_etl_hook_strip_renders_disabled_state(
+    writable_l2_yaml: Path,
+) -> None:
+    """When the cache flag is off but cfg.etl_hook is set, the
+    checkbox renders unchecked + the command shows greyed out
+    (line-through). The command isn't erased — the toggle is the only
+    thing that changes."""
+    cfg = make_test_config(etl_hook="echo upstream-pull")
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        etl_hook_enabled=False,
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        body = c.get("/data").text
+
+    assert 'id="data-knob-etl-hook"' in body
+    # Unchecked: the rendered tag must not have ``checked`` after value=on.
+    assert 'name="enabled" value="on" checked' not in body
+    assert 'name="enabled" value="on"' in body
+    # Command still shown, but with the disabled style class.
+    assert "echo upstream-pull" in body
+    assert "etl-hook-command--disabled" in body
+
+
+def test_put_etl_hook_disable(
+    writable_l2_yaml: Path,
+) -> None:
+    """PUT with no `enabled` field flips the cache to disabled
+    (HTML form default for unchecked checkboxes)."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    assert tg_cache.is_etl_hook_enabled() is True
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        # Empty form payload mirrors what HTMX sends for an unchecked
+        # checkbox change event.
+        resp = _put_form(c, "/data/knobs/etl_hook", [])
+    assert resp.status_code == 200  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert tg_cache.is_etl_hook_enabled() is False
+    # Returned strip has the disabled-state styling.
+    assert "etl-hook-command--disabled" in resp.text  # type: ignore[attr-defined]: TestClient stub return is Any
+
+
+def test_put_etl_hook_enable(
+    writable_l2_yaml: Path,
+) -> None:
+    """PUT with `enabled=on` flips the cache to enabled."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        etl_hook_enabled=False,
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(c, "/data/knobs/etl_hook", [("enabled", "on")])
+    assert resp.status_code == 200  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert tg_cache.is_etl_hook_enabled() is True
+    assert 'name="enabled" value="on" checked' in resp.text  # type: ignore[attr-defined]: TestClient stub return is Any
+
+
+def test_put_etl_hook_emits_hx_headers(
+    writable_l2_yaml: Path,
+) -> None:
+    """The PUT response carries the same HX-Trigger + HX-Push-Url
+    contract every other knob does — so the timeline section refreshes
+    + the URL bar reflects state."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(c, "/data/knobs/etl_hook", [])
+    assert resp.headers.get("HX-Trigger") == "trainer-knobs-changed"  # type: ignore[attr-defined]: TestClient stub return is Any
+    push_url = resp.headers.get("HX-Push-Url")  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert push_url is not None
+    # Disabled state surfaces as ?etl_hook=disabled.
+    assert "etl_hook=disabled" in push_url
+
+
+def test_put_etl_hook_url_clean_when_enabled(
+    writable_l2_yaml: Path,
+) -> None:
+    """Default state (enabled) keeps the URL clean — etl_hook param
+    only appears when explicitly disabled."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        etl_hook_enabled=False,
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(c, "/data/knobs/etl_hook", [("enabled", "on")])
+    push_url = resp.headers.get("HX-Push-Url")  # type: ignore[attr-defined]: TestClient stub return is Any
+    assert push_url is not None
+    assert "etl_hook=" not in push_url
+
+
+def test_get_data_with_etl_hook_url_param_restores_state(
+    writable_l2_yaml: Path,
+) -> None:
+    """GET /data?etl_hook=disabled flips the cache (bookmark / reload
+    restore). Idempotent: applying twice is a no-op."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    assert tg_cache.is_etl_hook_enabled() is True
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        c.get("/data?etl_hook=disabled")
+    assert tg_cache.is_etl_hook_enabled() is False
+
+
+def test_get_data_with_etl_hook_enabled_url_param(
+    writable_l2_yaml: Path,
+) -> None:
+    """?etl_hook=enabled is the inverse — flips back on."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        etl_hook_enabled=False,
+    )
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        c.get("/data?etl_hook=enabled")
+    assert tg_cache.is_etl_hook_enabled() is True
+
+
+def test_get_data_with_bad_etl_hook_url_param_silently_drops(
+    writable_l2_yaml: Path,
+) -> None:
+    """Garbage values silently drop — same posture as other knobs."""
+    cfg = make_test_config(etl_hook="echo x")
+    tg_cache = TestGeneratorCache(TestGeneratorConfig())
+    app = _build_app(writable_l2_yaml, tg_cache=tg_cache, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        c.get("/data?etl_hook=garbage")
+    # Cache state preserved (default = True).
+    assert tg_cache.is_etl_hook_enabled() is True
+
+
+def test_put_etl_hook_route_absent_without_cache(
+    writable_l2_yaml: Path,
+) -> None:
+    """Severability rule — without tg_cache the route doesn't mount."""
+    cfg = make_test_config(etl_hook="echo x")
+    app = _build_app(writable_l2_yaml, tg_cache=None, cfg=cfg)
+    with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
+        resp = _put_form(c, "/data/knobs/etl_hook", [("enabled", "on")])
+    assert resp.status_code in (404, 405)  # type: ignore[attr-defined]: TestClient stub return is Any

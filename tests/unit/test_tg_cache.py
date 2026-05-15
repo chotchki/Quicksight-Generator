@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 from quicksight_gen.common.config import (
+    EtlDatasourceConfig,
     PlantKind,
     TestGeneratorConfig,
 )
@@ -114,3 +115,84 @@ def test_multiple_updates_compose() -> None:
     assert final.plants == ("drift",)
     assert final.seed == 12345
     assert final.scope == "exceptions_only"
+
+
+# ----- X.4.h.etl-toggle — etl_hook enable/disable knob -----
+
+
+def test_etl_hook_enabled_default_true() -> None:
+    cache = TestGeneratorCache(TestGeneratorConfig())
+    assert cache.is_etl_hook_enabled() is True
+
+
+def test_set_etl_hook_enabled_round_trip() -> None:
+    cache = TestGeneratorCache(TestGeneratorConfig())
+    cache.set_etl_hook_enabled(False)
+    assert cache.is_etl_hook_enabled() is False
+    cache.set_etl_hook_enabled(True)
+    assert cache.is_etl_hook_enabled() is True
+
+
+def test_init_kwarg_seeds_etl_hook_state() -> None:
+    cache = TestGeneratorCache(
+        TestGeneratorConfig(),
+        etl_hook_enabled=False,
+    )
+    assert cache.is_etl_hook_enabled() is False
+
+
+def test_patched_config_keeps_etl_hook_pair_when_enabled() -> None:
+    """When the toggle is on, both cfg.etl_hook and cfg.etl_datasource
+    flow through unchanged — they're a coupled "upstream re-seed" pair
+    (step 1 fetch + step 2 pull)."""
+    etl_ds = EtlDatasourceConfig(
+        url="postgresql://localhost/upstream",
+        transactions_table="up_tx",
+        daily_balances_table="up_bal",
+    )
+    cfg = make_test_config(
+        etl_hook="echo upstream-pull",
+        etl_datasource=etl_ds,
+    )
+    cache = TestGeneratorCache.from_config(cfg)
+    assert cache.is_etl_hook_enabled() is True
+    patched = cache.patched_config(cfg)
+    assert patched.etl_hook == "echo upstream-pull"
+    assert patched.etl_datasource is etl_ds
+
+
+def test_patched_config_clears_etl_hook_pair_when_disabled() -> None:
+    """When the toggle is off, BOTH etl_hook and etl_datasource get
+    nuked on the patched cfg — step 1 + step 2-pull both no-op for
+    that deploy. Original cfg's stored fields are untouched (re-enable
+    + re-deploy gets the whole pair back)."""
+    etl_ds = EtlDatasourceConfig(
+        url="postgresql://localhost/upstream",
+        transactions_table="up_tx",
+        daily_balances_table="up_bal",
+    )
+    cfg = make_test_config(
+        etl_hook="echo upstream-pull",
+        etl_datasource=etl_ds,
+    )
+    cache = TestGeneratorCache.from_config(cfg)
+    cache.set_etl_hook_enabled(False)
+    patched = cache.patched_config(cfg)
+    assert patched.etl_hook is None
+    assert patched.etl_datasource is None
+    # Original cfg's fields preserved (no mutation).
+    assert cfg.etl_hook == "echo upstream-pull"
+    assert cfg.etl_datasource is etl_ds
+
+
+def test_patched_config_disable_with_no_pair_is_noop() -> None:
+    """When neither field is configured, the toggle's disabled-arm
+    still produces None for both — no spurious churn."""
+    cfg = make_test_config()
+    assert cfg.etl_hook is None
+    assert cfg.etl_datasource is None
+    cache = TestGeneratorCache.from_config(cfg)
+    cache.set_etl_hook_enabled(False)
+    patched = cache.patched_config(cfg)
+    assert patched.etl_hook is None
+    assert patched.etl_datasource is None
