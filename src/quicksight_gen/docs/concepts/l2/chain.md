@@ -1,25 +1,27 @@
 # Chain
 
-A **chain entry** declares "when ``parent`` fires, ``child`` SHOULD
-also fire". Each chain edge is one piece of L2 hygiene the system
-checks against runtime data: did the child actually fire when the
-parent did?
+A **chain row** declares "when ``parent`` fires, one of these
+``children`` SHOULD also fire". Each chain row is one piece of L2
+hygiene the system checks against runtime data: did the expected
+child actually fire when the parent did?
 
-Each chain entry has:
+Each chain row has:
 
-- ``parent`` and ``child`` — both reference either a
-  [Rail](rail.md) name or a [Transfer Template](transfer-template.md)
-  name. The endpoints can mix-and-match (rail → rail, rail →
-  template, template → rail, template → template).
-- ``required`` — boolean. ``true`` means the L2 Flow Tracing app's
-  Chain Orphans check fails when a parent fires without the child.
-  ``false`` means the chain documents an expected pattern but
-  doesn't gate; the orphans check ignores it.
-- ``xor_group`` — optional string. Multiple chain entries sharing
-  the same ``xor_group`` value encode "exactly one of these
-  children MUST fire when the parent fires". Used for branching
-  cycles (e.g. an ACH return MUST fire as one of "NSF",
-  "stop-pay", "duplicate" — not zero, not two).
+- ``parent`` — references either a [Rail](rail.md) name or a
+  [Transfer Template](transfer-template.md) name.
+- ``children`` — a list of one or more rail or template names. The
+  shape of the list encodes the firing semantics:
+    - **One child** = required. Every parent firing MUST invoke that
+      child; a parent firing without it surfaces as a Chain Orphan.
+    - **Two or more children** = XOR alternation. Exactly one of the
+      listed children MUST fire per parent invocation. Used for
+      branching cycles (e.g. an ACH return MUST fire as one of "NSF",
+      "stop-pay", "duplicate" — not zero, not two; or a merchant
+      payout MUST take exactly one of three vehicles: ACH, wire,
+      check).
+
+Endpoints can mix-and-match: rail → rail, rail → template, template
+→ rail, template → template.
 
 Chains are the modeling tool for "this rail's firing has downstream
 consequences" without forcing those downstream firings to be inside

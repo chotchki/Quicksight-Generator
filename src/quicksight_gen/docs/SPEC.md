@@ -531,32 +531,37 @@ Parent → child relationships between Rails or Transfer Templates. Used to:
 - Generate orphan checks (every required parent SHOULD have a corresponding child).
 
 ```
-ChainEntry: (
+Chain: (
   Parent: RailName | TransferTemplateName,
-  Child:  RailName | TransferTemplateName,
-  Required: Boolean,
-  XorGroup?: Identifier,
-  Description?: Value,                   # see "Description fields" above
+  Children: [RailName | TransferTemplateName, ...],   # one or more
+  Description?: Value,                                  # see "Description fields" above
 )
 ```
+
+The shape of `Children` encodes the firing semantics:
+
+- **One child** = required. Every `Parent` firing MUST invoke that child;
+  a missing child surfaces as a Chain Orphan exception.
+- **Two or more children** = XOR alternation. Exactly one of the listed
+  children MUST fire per `Parent` firing.
 
 Resolution:
 - When `Parent` is a Rail, child Transfers' L1 `Parent` reference points to the parent Rail's Transfer.
 - When `Parent` is a TransferTemplate, child Transfers' L1 `Parent` reference points to the shared Transfer (not to any one of its component leg postings).
 
-`Required: true` — every parent Transfer firing SHOULD eventually have at least one matching child Transfer firing. A missing child surfaces as an orphan exception (RFC 2119 SHOULD: violation surfaces as a dashboard exception, not a hard failure).
+A missing child fires as an orphan exception (RFC 2119 SHOULD: violation surfaces as a dashboard exception, not a hard failure).
 
-When a chain entry has `Required: true`, the child Rail's `parent_transfer_id` field is **auto-derived as a `PostedRequirement`** — the child can't be Posted without naming its parent. (When `Required: false`, the parent is genuinely optional; `parent_transfer_id` may be NULL on the child's Posted legs.)
+When a chain row has a singleton `Children` list, the child Rail's `parent_transfer_id` field is **auto-derived as a `PostedRequirement`** — the child can't be Posted without naming its parent. (Multi-children rows make `parent_transfer_id` optional on the child's Posted legs — only one of the XOR siblings fires per parent invocation.)
 
-#### XOR groups
+#### XOR alternation
 
-When several chain entries share the same `Parent` AND the same `XorGroup`, exactly one of them SHOULD fire per parent Transfer instance. Without `XorGroup`, multiple `Required: false` children allow any combination including none.
+A multi-children chain row encodes "exactly one of these MUST fire per parent Transfer instance" — the same XOR semantics older versions of this SPEC spread across separate `Required: false` + `XorGroup: <name>` entries. Each Chain row IS its own XOR group.
 
-XOR groups capture flows like:
+XOR alternation captures flows like:
 - "Exactly one of {success path, reversal path} happens for an escrow transfer."
 - "Exactly one of {ACH payout, wire payout, internal payout} fires per settlement cycle."
 
-The library evaluates XOR-group membership: missing-firings AND multiple-firings both surface as exceptions when at least one chain entry in the group has `Required: true`. (If all `Required: false` and `XorGroup` is set, it means "at most one" rather than "exactly one.")
+The library evaluates XOR membership: missing-firings AND multiple-firings both surface as exceptions.
 
 #### Reversals
 
@@ -820,21 +825,15 @@ Every rule below is enforced at YAML load time — `load_instance(path)` runs th
   # By design it sweeps drift into an external counterparty.
 ```
 
-### Chain — XOR group with TransferTemplate parent
+### Chain — XOR alternation with TransferTemplate parent
 ```yaml
 - parent: MerchantSettlementCycle
-  child: MerchantPayoutACH
-  required: false
-  xor_group: PayoutVehicle
-- parent: MerchantSettlementCycle
-  child: MerchantPayoutWire
-  required: false
-  xor_group: PayoutVehicle
-- parent: MerchantSettlementCycle
-  child: MerchantPayoutInternal
-  required: false
-  xor_group: PayoutVehicle
-# Exactly one of the three vehicles fires per settlement cycle.
+  children:
+    - MerchantPayoutACH
+    - MerchantPayoutWire
+    - MerchantPayoutInternal
+# Multi-children = XOR alternation: exactly one of the three vehicles
+# fires per settlement cycle.
 ```
 
 ### Chain — fan-out (one parent, many children)
@@ -975,16 +974,12 @@ transfer_templates:
 
 # ---- Chains -----------------------------------------------------------------
 chains:
-  # Exactly one payout vehicle per settled merchant — XOR group:
+  # Exactly one payout vehicle per settled merchant — multi-children
+  # row encodes XOR alternation:
   - parent: MerchantSettlementCycle
-    child: MerchantPayoutACH
-    required: false
-    xor_group: PayoutVehicle
-
-  - parent: MerchantSettlementCycle
-    child: MerchantPayoutInternal
-    required: false
-    xor_group: PayoutVehicle
+    children:
+      - MerchantPayoutACH
+      - MerchantPayoutInternal
 
 # ---- Limit schedules --------------------------------------------------------
 limit_schedules:
