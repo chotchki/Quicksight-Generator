@@ -315,12 +315,12 @@ Queued AFTER X.4.h ships and the trainer flow is operator-validated. These are p
 
 #### X.4.k — Wrap + release (v10.0.0)
 
-- [ ] **X.4.k.1** — Update CLAUDE.md "Quick Reference" + Commands section: add `studio` / `dashboards`; remove all `serve app2 apply` references.
-- [ ] **X.4.k.2** — README: add a "Studio" section near the top; rename "Self-hosted renderer (App 2)" → "Self-hosted renderer (Dashboards)".
-- [ ] **X.4.k.3** — Update `docs/reference/self-host.md` for the rename.
+- [x] **X.4.k.1** — CLAUDE.md Commands section now lists `studio` + `dashboards` alongside the five-artifact CLI surface, with a runnable example apiece. Studio entry calls out the sidefile-persistence (X.4.h.7), the four scope modes (full / uncovered_rails / exceptions_only / only_template — X.4.i.1), and the `derive_balances` composing flag (X.4.i.2 — control-account default + per-L2 override).
+- [x] **X.4.k.2** — README's "Self-hosted renderer (Dashboards)" section was already current from X.4.a; the new sidefile + only_template + derive_balances behaviors are surfaced through the Studio mention there + the bullet that points readers at the in-package handbook for the deep walkthrough.
+- [x] **X.4.k.3** — `src/quicksight_gen/docs/reference/self-host.md` updated: title dropped "App 2", body uses "Dashboards" throughout (one explanatory aside left noting that internal module names still say "app2"), Studio cross-mentioned alongside Dashboards as the second renderer that builds on the same machinery.
 - [ ] **X.4.k.4** — RELEASE_NOTES v10.0.0 entry (major: CLI verbs renamed, `serve app2 apply` removed, Studio shipped).
 - [ ] **X.4.k.5** — Bump `__version__` to 10.0.0.
-- [ ] **X.4.k.6** — End-of-phase verify: `./run_tests.sh up_to=app2` green; full pytest sweep green; one live AWS deploy still green.
+- [x] **X.4.k.6** — Verified: 0 pyright errors, 1757 unit tests pass + 73 skipped (`.venv/bin/pytest tests/unit/ -q -n auto`). One latent date-roll bug in `test_timeline_dense_window_renders_anchor_and_full_window` surfaced (window_end defaulted to `today()`; today rolled to 2026-05-15) — fixed by pinning `window_start`/`window_end` explicitly in the test fixture. `up_to=app2` chain verify + live AWS deploy held for v10.0.0 GA per the existing X.4.k.4-7 hold.
 - [ ] **X.4.k.7** — Tag v10.0.0; merge to main; push.
 - [ ] **X.4.k.8** — Sweep X.4 detail to PLAN_ARCHIVE.md; collapse the in-PLAN entry to a one-line done summary.
 

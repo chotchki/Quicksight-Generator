@@ -1058,8 +1058,17 @@ def test_timeline_dense_window_renders_anchor_and_full_window(
     id for scrollIntoView."""
     from quicksight_gen.common.l2.seed import DEFAULT_BASELINE_WINDOW_DAYS
 
+    # Pin window_end too — the timeline window anchors on window_end
+    # (which defaults to date.today()), NOT cfg.end_date. Without this
+    # pin the test rolls a day every midnight.
+    window_end = date(2026, 5, 14)
+    window_start = window_end - timedelta(
+        days=DEFAULT_BASELINE_WINDOW_DAYS - 1,
+    )
     tg_cache = TestGeneratorCache(
-        TestGeneratorConfig(end_date=date(2026, 5, 14), scope="full"),
+        TestGeneratorConfig(end_date=window_end, scope="full"),
+        window_start=window_start,
+        window_end=window_end,
     )
     app = _build_app(writable_l2_yaml, tg_cache=tg_cache)
     with TestClient(app) as c:  # type: ignore[arg-type]: TestClient stubs accept ASGI apps but the inferred return type from make_app is Any
@@ -1076,8 +1085,7 @@ def test_timeline_dense_window_renders_anchor_and_full_window(
     # Inline script wires the scrollIntoView call.
     assert "scrollIntoView" in body
     # First (oldest) row is window_days - 1 days back from anchor.
-    earliest = date(2026, 5, 14) - timedelta(days=DEFAULT_BASELINE_WINDOW_DAYS - 1)
-    assert f'>{earliest.isoformat()}<' in body
+    assert f'>{window_start.isoformat()}<' in body
 
 
 def test_timeline_anchors_on_today_when_end_date_none(
