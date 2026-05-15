@@ -380,6 +380,60 @@ The per-cell chain `unit → seed_variant → db → app2 → deploy → api →
 
 ---
 
+## Phase AA — Dashboard UX + exception literacy (no yaml impact)
+
+Bundles operator-feedback UX work that surfaced during X.4 trainer use. **No yaml grammar touched** — orthogonal to Phase Z's P.10 gate, can ship before / after / interleaved with Z. Four sub-phases parallelizable.
+
+**Sequencing context.** The "QS multiselect dropdowns suck — no select-none / pick-one" pain (originating thread, 2026-05-14) traces to the X.2.t.2 sentinel-guard pattern (forced by AWS's 32-element dataset-parameter default cap). User feedback confirmed analyst workflow is "drill to one value" 99% of the time, not multi-select. Single-select collapses the whole problem space — sentinel-guard SQL becomes `('ALL' = <<$pX>>) OR (col = <<$pX>>)`, the 32-cap is a non-issue, Y parity (parameter pushdown both renderers) stays intact. This is the load-bearing change in AA.A; the rest are operator-asked nits piling on the same UX-pass.
+
+### AA.A — Dropdown-control flip (multi → single-select)
+
+The originating thread. Every "pick one rail / chain / template" dropdown across L1 / L2FT / Inv flips from multi-select to single-select. Compare-N keepers (if any) stay multi.
+
+- [ ] **AA.A.1 — Audit existing multi-select dropdowns.** Walk L1 / L2FT / Inv ParameterDropDown nodes; mark each as "drill-to-one" (flip) vs "compare-N keeper" (stay). Output a one-page table to `docs/audits/aa_a_dropdown_audit.md`. The X.2.u.4.e App2Driver `set_dropdown` verb makes this scriptable — but the workflow classification is operator judgment, not derivable from the tree.
+- [ ] **AA.A.2 — Single-select primitive + sentinel-guard variant.** Extend `ParameterDropDownControl` (or add a `single_select=True` flag) so the tree node carries the intent. SQL helper: `app2_param_eq` already handles `=` binding; add `app2_param_eq_with_all_sentinel` for the "preserve show-all default" case. QS side: `MappedDataSetParameters` bridge stays unchanged (parameter is now scalar string, not multi-value list).
+- [ ] **AA.A.3 — Flip the audited dropdowns.** Per AA.A.1's table. Mechanical change per sheet: `multiselect=True` → `single_select=True`, dataset SQL `IN (<<$pX>>)` → `('ALL' = <<$pX>>) OR (col = <<$pX>>)` (or bare `= <<$pX>>` if no all-default), parameter declaration scalar instead of list.
+- [ ] **AA.A.4 — Browser e2e parity.** Existing X.2.u.4.e drill tests cover single-select round-trips already; extend `test_l1_filters.py` / `test_inv_filters.py` / `test_l2ft_filters.py` to walk the flipped dropdowns ([qs, app2] both renderers).
+- [ ] **AA.A.5 — Live verify + commit.** Aurora deploy (`json apply --execute`), browser-walk a few flipped sheets, confirm "show all on load" still works, confirm pick-one is one click.
+
+### AA.B — Daily Statement fixes
+
+Two operator-asked changes on the same sheet. Pair them.
+
+- [ ] **AA.B.1 — Add account_role dropdown filter to Daily Statement.** Single-select (per AA.A pattern) sourcing from `<prefix>_daily_balances.account_role`. Default to "ALL" sentinel. Wire the SQL pushdown through.
+- [ ] **AA.B.2 — Filter accounts we don't track balances for off Daily Statement.** Unconditional, not toggleable. The shape of the filter matters: the right test is "does this account have `<prefix>_daily_balances` rows?" — not a blanket `account_scope = 'internal'` (an external clearing account that we DO track would over-filter). Likely fix: ensure the Daily Statement dataset reads from `daily_balances` as its anchor and joins out to transactions, instead of reading from transactions and pulling counterparty legs. Verify the actual misbehavior shape in Studio first; the fix shape follows.
+- [ ] **AA.B.3 — Sheet description tweak.** Subtitle / sheet description gains a one-line note: "Internal accounts only. Filter by role to narrow further."
+- [ ] **AA.B.4 — Browser e2e + commit.** Extend Daily Statement test (or add one if missing) to (a) assert no `external` rows, (b) round-trip the new role dropdown.
+
+### AA.C — Exception literacy (sticky on-sheet panel + trainer pane)
+
+Operators don't crack open the manual. The exception-type vocabulary + remediation guidance has to live where they're already looking. Source of truth is `src/quicksight_gen/docs/L1_Invariants.md` (already structured per-invariant under `### N. <name>` headings) — the panel content reads from there at generate time, not net-new prose.
+
+- [ ] **AA.C.1 — Spike: rich-text panel placement on QS sheets.** Find the QS pattern for a sheet-bottom rich-text box that scrolls below the visuals (not modal, not tooltip — sticky-at-bottom or end-of-canvas). The existing Getting Started sheets use `SheetTextBox` with `common/rich_text.py` markup; verify the same primitive works at sheet-bottom and survives QS's auto-layout. Output: 1-page audit doc, schema for the panel.
+- [ ] **AA.C.2 — `L1_Invariants.md` per-invariant section parser.** Helper that walks `### N. <name>` headings + body prose, returns `dict[invariant_kind, str]`. Lives in `common/handbook/` (Phase O.1 vocabulary infrastructure already nearby). Source-of-truth single-file pattern — the docs handbook keeps the long form; the dashboard panel pulls a clipped/excerpted version. Pin: which invariant kind maps to which sheet (Drift, Overdraft, Limit Breach, Pending Aging, Unbundled Aging, Supersession Audit, Today's Exceptions; plus L2FT Hygiene Exceptions if it has its own vocabulary).
+- [ ] **AA.C.3 — Wire each L1 invariant sheet's bottom panel.** Drift / Overdraft / Limit Breach / Pending Aging / Unbundled Aging / Supersession Audit / Today's Exceptions. Each gets a SheetTextBox at sheet-bottom with the L1_Invariants.md excerpt for that invariant + a "what to do" line. App2 renderer mirrors the QS placement.
+- [ ] **AA.C.4 — Wire L2FT Hygiene Exceptions panel.** L2FT has its own exception vocabulary (cascade-broken rails, MerchantPayoutCheck, etc.). Source content from existing handbook sections; if no canonical doc, author one in `src/quicksight_gen/docs/L2FT_Exceptions.md` first, then mirror the AA.C.3 wiring.
+- [ ] **AA.C.5 — Studio trainer pane (X.4.h.9 placeholder).** The X.4.h trainer page has a `<section class="data-training">` with a "training pane lands in X.4.h.9" placeholder. Wire it: scroll-through list of exception kinds, each entry shows `(kind, plain-English description, what-to-do, link to dashboard sheet)`. Same source as AA.C.3 — the L1_Invariants.md parser. Closes the X.4.h.9 placeholder properly. **Deep-link target = Dashboards (App2)**, not the QS embed — the URL-param/control-sync defect (`project_qs_url_parameter_no_control_sync` quirk) breaks initial-load filter narrowing on the QS leg, so trainer → trainee deep-linking only works cleanly on Dashboards. The trainer pane's link href points at App2 routes.
+- [ ] **AA.C.6 — Browser e2e + commit.** Per-sheet test asserts the bottom panel is present + carries a non-empty body for each invariant kind. Trainer-pane test asserts every L1 invariant kind appears in the list.
+
+### AA.D — Label hygiene
+
+- [ ] **AA.D.1 — Rename "magnitude" → "count" on L2FT Exceptions.** Surface the audit doc / pyright errors first to know if this is a column rename (matview), measure rename (analysis-only), or visual label (one-line). Cascade through any test assertions that reference the old name. Re-deploy + browser-verify.
+
+### AA.E — Search by name AND id
+
+- [ ] **AA.E.1 — Decide pattern (concat calc field vs two-column table vs smart input).** Today the Account Network anchor dropdown shows `name (id)` from a dedicated dataset; other sheets show one or the other. Operator wants both visible AND searchable across all sheets that show accounts. Pick one of: (a) calc field concatenating `name || ' (' || id || ')'` everywhere, (b) split into two adjacent columns sortable independently, (c) single-search input that matches either field. Output decision in commit message.
+- [ ] **AA.E.2 — Wire across affected sheets.** Likely Daily Statement, Today's Exceptions, Transactions, plus L2FT exception tables. Per-sheet judgment on which form fits the visual layout.
+- [ ] **AA.E.3 — Browser e2e + commit.** Sortability + searchability of the new column form, per renderer.
+
+### AA.F — End-of-phase
+
+- [ ] **AA.F.1 — Verify chain (unit + db + browser).** Full `./run_tests.sh up_to=browser` passes against the deployed dashboards.
+- [ ] **AA.F.2 — Tag v10.1.0a1 + RELEASE_NOTES + push.** Or fold into Phase Z if Z lands close behind — single tag covers both. Decide at end-of-phase based on Z timing.
+- [ ] **AA.F.3 — PLAN_ARCHIVE sweep + summary line.**
+
+---
+
 ## Phase Z — L2 grammar cleanup: chain collapse + transfer_type promotion
 
 Two distinct grammar reshapes that share the migration cost (fixture rewrites + seed re-lock + editor UI + docs sweep), bundled here so the operator yaml grammar settles in one motion before the next public release.
