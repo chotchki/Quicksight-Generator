@@ -154,13 +154,22 @@ def test_trace_zip_not_written_on_clean_exit_without_trace_all(
     )
 
 
-def test_failure_path_writes_trace_and_all_four_dumps(
+def test_failure_path_writes_trace_and_all_five_dumps(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Env set + exception → trace.zip + screenshot.png + console.txt
-    + network.txt + qs_errors.txt all land in
+    """Env set + exception → trace.zip + screenshot.png + dom.html +
+    console.txt + network.txt + qs_errors.txt all land in
     ``$QS_GEN_RUN_DIR/browser/<test_id>/``. This is the c.11 contract:
-    one click and you have everything you need to diagnose."""
+    one click and you have everything you need to diagnose.
+
+    The ``dom.html`` artifact was added after a real-world bug where
+    Money Trail's "click target not found" failure left only a
+    screenshot (pixels), and the screenshot couldn't tell us *why*
+    the test's selector didn't match — only that the visual area
+    looked occupied. The DOM dump fills that gap: ``screenshot.png``
+    shows what's visually there, ``dom.html`` shows what the
+    test's selectors were actually looking at.
+    """
     _try_webkit_launch_or_skip()
     # See trace_all sibling for why mkdir is needed.
     run_dir = tmp_path / "run"
@@ -181,7 +190,7 @@ def test_failure_path_writes_trace_and_all_four_dumps(
     capture_dir = (
         run_dir / "browser" / "tests_unit_test_browser_trace_smoke__failure"
     )
-    expected = ["trace.zip", "screenshot.png", "console.txt",
+    expected = ["trace.zip", "screenshot.png", "dom.html", "console.txt",
                 "network.txt", "qs_errors.txt"]
     for name in expected:
         path = capture_dir / name
@@ -189,7 +198,76 @@ def test_failure_path_writes_trace_and_all_four_dumps(
             f"{name} should land in {capture_dir} on exception "
             f"(found: {sorted(p.name for p in capture_dir.iterdir())})"
         )
+    # dom.html should actually contain the served HTML, not be empty —
+    # otherwise the "DOM at failure" claim is hollow.
+    dom_text = (capture_dir / "dom.html").read_text(encoding="utf-8")
+    assert "<h1>hello</h1>" in dom_text, (
+        f"dom.html missing the test page content; got: {dom_text!r}"
+    )
     # Extracted trace dir alongside the zip — for grepability.
     assert (capture_dir / "trace").is_dir(), (
         f"trace/ extracted dir should land alongside trace.zip on failure"
     )
+
+
+def test_failure_path_handles_parametrized_test_id_with_specials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Regression guard for the May 2026 bug: parametrized e2e tests
+    whose IDs contain spaces / em-dashes / parens produced zero
+    artifacts at all — the whole capture path silently no-op'd. This
+    test reproduces that exact ``PYTEST_CURRENT_TEST`` shape and
+    asserts every artifact still lands, under a sanitized
+    bracket-disambiguated test_id.
+
+    If this test fails (or any of the 6 expected files is missing),
+    the next forensic session will be back to "screenshot? what
+    screenshot?" — fail loud here so the regression surfaces in unit
+    layer instead of after a 15-minute browser e2e run."""
+    _try_webkit_launch_or_skip()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setenv(QS_GEN_RUN_DIR.name, str(run_dir))
+    monkeypatch.delenv(QS_GEN_TRACE_ALL.name, raising=False)
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "tests/e2e/test_parameter_anchored_sheets.py::"
+        "test_inv_anchor_control_present_and_populated"
+        "[qs-Money Trail-Chain root transfer-Money Trail — Hop-by-Hop] (call)",
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with webkit_page(headless=True) as page:
+            page.goto(_HELLO_PAGE)
+            page.wait_for_selector("h1")
+            raise RuntimeError("boom")
+
+    # The capture dir name is sanitized: spaces / em-dashes / parens
+    # collapse to ``_`` runs; brackets stay.
+    browser_dir = run_dir / "browser"
+    assert browser_dir.is_dir(), (
+        f"browser/ dir should exist after a failing webkit_page block; "
+        f"contents of run_dir: {sorted(p.name for p in run_dir.iterdir())}"
+    )
+    capture_subdirs = [p for p in browser_dir.iterdir() if p.is_dir()]
+    assert len(capture_subdirs) == 1, (
+        f"expected exactly one capture subdir under browser/, got "
+        f"{[p.name for p in capture_subdirs]}"
+    )
+    capture_dir = capture_subdirs[0]
+    # Sanitized form: no spaces, no em-dash, no parens, brackets kept.
+    assert " " not in capture_dir.name
+    assert "—" not in capture_dir.name
+    assert "[" in capture_dir.name and "]" in capture_dir.name
+    expected = ["trace.zip", "screenshot.png", "dom.html", "console.txt",
+                "network.txt", "qs_errors.txt"]
+    for name in expected:
+        path = capture_dir / name
+        assert path.exists(), (
+            f"{name} missing for parametrized-id test "
+            f"(this is the regression mode from May 2026 — see "
+            f"tests/unit/test_browser_helpers.py::"
+            f"TestSanitizeTestId for context). "
+            f"capture_dir: {capture_dir.name}; "
+            f"contents: {sorted(p.name for p in capture_dir.iterdir())}"
+        )

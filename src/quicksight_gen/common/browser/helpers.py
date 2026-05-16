@@ -14,6 +14,8 @@ itself is deployed in another region.
 from __future__ import annotations
 
 import os
+import re
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -141,11 +143,16 @@ def webkit_page(
 ) -> Generator[Page, None, None]:
     """Yield a Playwright WebKit page; tears down browser on exit.
 
-    On exception inside the ``with`` body, captures five diagnostics
+    On exception inside the ``with`` body, captures six diagnostics
     per failing test:
 
     - ``screenshot.png`` (or ``<test_id>.png`` in legacy mode) —
       full-page screenshot of the failure state
+    - ``dom.html`` — serialized DOM of the top-level frame at failure
+      moment (``page.content()``). Pairs with the screenshot: the
+      pixels show what's visually there, the DOM shows what the
+      test's selectors were actually looking at. Critical for
+      "click target not found" / "control didn't mount" failures.
     - ``console.txt`` — every JS console message + uncaught
       ``pageerror`` accumulated since page creation (M.4.4.11 pattern,
       lifted from ``_harness_browser._attach_console_capture``)
@@ -160,18 +167,25 @@ def webkit_page(
     - ``trace.zip`` (Y.2.gate.c.11) — Playwright trace bundle:
       full action timeline, DOM snapshots per action, screenshots,
       network, and console. Open with ``playwright show-trace
-      trace.zip``.
+      trace.zip``. Plain-text artifacts (``dom.html``) cover the
+      grep-able path; trace.zip is for full-UI replay.
 
     Output destination depends on ``QS_GEN_RUN_DIR``:
 
     - **Set** (running under the test layer chain runner):
-      ``$QS_GEN_RUN_DIR/browser/<test_id>/{screenshot.png,console.txt,
-      qs_errors.txt,network.txt,trace.zip}`` — per-test directory so
-      artifacts cluster cleanly.
+      ``$QS_GEN_RUN_DIR/browser/<test_id>/{screenshot.png,dom.html,
+      console.txt,qs_errors.txt,network.txt,trace.zip}`` — per-test
+      directory so artifacts cluster cleanly.
     - **Unset** (legacy ``./run_e2e.sh`` / direct ``pytest`` invocation):
       ``tests/e2e/screenshots/_failures/<test_id>.png`` etc., flat
       directory with per-file ``<test_id>_`` prefix to disambiguate.
       Trace.zip is NOT written in legacy mode (no run-dir to put it in).
+
+    The test_id is snapshotted at ``webkit_page`` entry (when pytest's
+    ``PYTEST_CURRENT_TEST`` env var is reliably set inside the test body)
+    rather than re-read inside the ``except`` handler — that handler
+    can run during fixture teardown after pytest has cleared the var,
+    which would silently demote captures to ``unknown/``.
 
     Trace capture policy:
     - On exception → trace always written (under the run-dir mode).
@@ -179,8 +193,12 @@ def webkit_page(
       (operator opt-in for "I want the full trace even on green tests";
       flag plumbed by ``Y.2.gate.c.7``).
 
-    All capture is best-effort — exceptions inside the dump path are
-    swallowed so the original assertion bubbles up unchanged.
+    Capture is best-effort: each capture function catches its own
+    exceptions and emits a ``[CAPTURE FAILURE] <artifact>: <type>: <msg>``
+    line to stderr (loud-fail). The original assertion still bubbles
+    up unmasked — but a regression in the capture path is visible in
+    the layer's ``stderr.log`` instead of being invisible until the
+    next forensic session.
     """
     from playwright.sync_api import sync_playwright
 
@@ -207,23 +225,33 @@ def webkit_page(
         network_responses: list[str] = []
         _attach_console_capture(page, console_messages)
         _attach_network_capture(page, network_responses)
+        # Snapshot the test ID at entry — pytest sets PYTEST_CURRENT_TEST
+        # for the duration of the test body, but it can be cleared by the
+        # time fixture teardown runs the ``except`` handler. Resolving
+        # the test_id once here pins each capture to the right
+        # ``browser/<test_id>/`` dir regardless of when the exception
+        # actually surfaces.
+        test_id = _test_id_from_pytest_env()
         failed = False
         try:
             yield page
         except BaseException:
             failed = True
-            _capture_failure_screenshot(page)
-            _capture_failure_console(console_messages)
-            _capture_failure_qs_errors(page)
-            _capture_failure_network(network_responses)
+            _capture_failure_screenshot(page, test_id)
+            _capture_failure_dom(page, test_id)
+            _capture_failure_console(console_messages, test_id)
+            _capture_failure_qs_errors(page, test_id)
+            _capture_failure_network(network_responses, test_id)
             raise
         finally:
-            _stop_and_maybe_save_trace(context, failed=failed)
+            _stop_and_maybe_save_trace(context, failed=failed, test_id=test_id)
             context.close()
             browser.close()
 
 
-def _stop_and_maybe_save_trace(context: object, *, failed: bool) -> None:
+def _stop_and_maybe_save_trace(
+    context: object, *, failed: bool, test_id: str,
+) -> None:
     """Y.2.gate.c.11 — finalize the Playwright trace.
 
     Saves + unpacks to ``$QS_GEN_RUN_DIR/browser/<test_id>/`` when:
@@ -244,7 +272,12 @@ def _stop_and_maybe_save_trace(context: object, *, failed: bool) -> None:
       trace viewer — operator-friendly for "what did this test
       actually do" inspection.
 
-    All errors swallowed (sidecar contract; matches c.2 / c.10 / c.12).
+    ``test_id`` is passed in (snapshotted by the caller at ``webkit_page``
+    entry) rather than re-derived here — pytest may have cleared
+    ``PYTEST_CURRENT_TEST`` by the time fixture teardown runs.
+
+    Errors emit a loud-fail ``[CAPTURE FAILURE]`` line to stderr;
+    they don't re-raise (sidecar contract).
     """
     import zipfile
 
@@ -262,7 +295,7 @@ def _stop_and_maybe_save_trace(context: object, *, failed: bool) -> None:
     try:
         if should_save:
             trace_dir = (
-                Path(run_dir) / "browser" / _test_id_from_pytest_env()  # type: ignore[arg-type]: run_dir narrowed truthy by the bool() above
+                Path(run_dir) / "browser" / test_id  # type: ignore[arg-type]: run_dir narrowed truthy by the bool() above
             )
             trace_dir.mkdir(parents=True, exist_ok=True)
             zip_path = trace_dir / "trace.zip"
@@ -274,12 +307,12 @@ def _stop_and_maybe_save_trace(context: object, *, failed: bool) -> None:
                 extract_dir = trace_dir / "trace"
                 with zipfile.ZipFile(zip_path) as zf:
                     zf.extractall(extract_dir)
-            except Exception:
-                pass
+            except Exception as exc:
+                _warn_capture_failure("trace/", exc)
         else:
             context.tracing.stop()  # type: ignore[attr-defined]: Playwright duck-typed tracing API
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_capture_failure("trace.zip", exc)
 
 
 def _capture_dir_for(test_id: str) -> Path:
@@ -382,46 +415,107 @@ def _attach_network_capture(page: Page, sink: list[str]) -> None:
     page.on("response", _on_response)
 
 
+# Filename-portable charset: ASCII alphanumerics + `_`, `-`, `[`, `]`, `.`.
+# Brackets stay so parametrized IDs disambiguate (`[qs-Rail]` vs `[qs-Bundle]`);
+# everything else (spaces, em-dashes, parens, colons, slashes, etc.) collapses
+# to `_` so the resulting filename works on every filesystem the artifact
+# bundle has to traverse (macOS APFS, ext4, NTFS, GHA artifact upload, zip).
+_TEST_ID_SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_\-\[\].]+")
+
+
+def _sanitize_test_id(raw: str) -> str:
+    """Collapse runs of non-portable chars in a test ID to a single ``_``."""
+    return _TEST_ID_SAFE_CHARS_RE.sub("_", raw)
+
+
 def _test_id_from_pytest_env(raw: str | None = None) -> str:
     """Derive a filename-safe test ID from ``PYTEST_CURRENT_TEST``.
 
     pytest sets the env var to a string like
     ``"tests/e2e/test_foo.py::test_bar (call)"`` (or with a class
     segment + parametrization brackets). Strip the trailing
-    ``(setup|call|teardown)`` phase suffix and convert ``/`` + ``::``
-    to underscores so the result is a valid filename. ``"unknown"``
-    when the env var is unset — covers running outside pytest or
-    after pytest cleared the var on test exit.
+    ``(setup|call|teardown)`` phase suffix, convert ``/`` + ``::``
+    to underscores, then sanitize remaining non-portable chars via
+    ``_sanitize_test_id`` so the result works on every filesystem.
+    ``"unknown"`` when the env var is unset — covers running outside
+    pytest or after pytest cleared the var on test exit.
     """
     if raw is None:
         raw = os.environ.get("PYTEST_CURRENT_TEST", "")
     if not raw:
         return "unknown"
-    return (
+    after_basics = (
         raw.split(" (")[0]
         .replace("/", "_")
         .replace("::", "__")
         .replace(".py", "")
     )
+    # Parametrized IDs from pytest carry spaces / em-dashes / parens inside
+    # `[…]` (e.g. `[qs-Money Trail — Hop-by-Hop]`). The basic replace chain
+    # above only strips the path separators; the inner-bracket content can
+    # still be unfriendly to downstream consumers (GHA artifact zips, Windows,
+    # shell-glob patterns). Sanitize here so the test_id is portable across
+    # ALL the places the captured artifact has to land.
+    return _sanitize_test_id(after_basics)
 
 
-def _capture_failure_screenshot(page: Page) -> None:
+def _warn_capture_failure(artifact_name: str, exc: BaseException) -> None:
+    """Loud-fail sidecar for capture functions.
+
+    Capture must NEVER mask the original test failure (closed page,
+    missing env var, full disk, OS quota, etc.) — historically each
+    `_capture_failure_*` swallowed exceptions silently. That
+    bit us when the dump path quietly stopped producing artifacts and
+    the next failure had no diagnostics. New contract: still don't
+    raise (test failure stays the surfaced one), but emit a `[CAPTURE
+    FAILURE]` line to stderr so a future regression is visible in the
+    test layer's `stderr.log` instead of being invisible until the
+    next forensic session.
+    """
+    print(
+        f"[CAPTURE FAILURE] {artifact_name}: {type(exc).__name__}: {exc}",
+        file=sys.stderr,
+    )
+
+
+def _capture_failure_screenshot(page: Page, test_id: str) -> None:
     """Best-effort failure screenshot. Writes to
     ``<capture_dir>/screenshot.png`` (or legacy ``<test_id>.png``).
-    All errors swallowed — a screenshot-capture exception must never
-    mask the original test failure (closed page, missing env var,
-    full disk, etc.).
+    Exceptions are caught + logged to stderr (loud-fail) so the
+    original assertion still bubbles up unmasked, but capture
+    regressions are visible in the layer's stderr.log.
     """
     try:
-        test_id = _test_id_from_pytest_env()
         path = _capture_path("screenshot.png", test_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(path), full_page=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_capture_failure("screenshot.png", exc)
 
 
-def _capture_failure_console(messages: list[str]) -> None:
+def _capture_failure_dom(page: Page, test_id: str) -> None:
+    """Dump the live DOM to ``<capture_dir>/dom.html`` (or legacy
+    ``<test_id>_dom.html``).
+
+    Single most-useful diagnostic for "click target not found" /
+    "control didn't mount" failures — the screenshot shows what's
+    visually there, the DOM shows what the test's selectors were
+    actually looking at. ``page.content()`` returns the serialized
+    HTML of the top-level document; iframe contents aren't inlined
+    (QS embeds the dashboard in a same-origin iframe — the iframe's
+    DOM is captured in the trace.zip's snapshot stream, but for a
+    grep-able plain-text artifact the top-level frame is the start
+    of the trail).
+    """
+    try:
+        path = _capture_path("dom.html", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(page.content(), encoding="utf-8")
+    except Exception as exc:
+        _warn_capture_failure("dom.html", exc)
+
+
+def _capture_failure_console(messages: list[str], test_id: str) -> None:
     """Dump accumulated JS console + pageerror messages to
     ``<capture_dir>/console.txt`` (or legacy ``<test_id>_console.txt``).
     Empty file when nothing was logged (so the artifact bundle
@@ -429,15 +523,14 @@ def _capture_failure_console(messages: list[str]) -> None:
     a signal).
     """
     try:
-        test_id = _test_id_from_pytest_env()
         path = _capture_path("console.txt", test_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(messages), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_capture_failure("console.txt", exc)
 
 
-def _capture_failure_network(responses: list[str]) -> None:
+def _capture_failure_network(responses: list[str], test_id: str) -> None:
     """Dump the captured non-2xx HTTP responses to
     ``<capture_dir>/network.txt`` (or legacy ``<test_id>_network.txt``).
     Empty file when every request succeeded (so the artifact bundle
@@ -445,15 +538,14 @@ def _capture_failure_network(responses: list[str]) -> None:
     a signal).
     """
     try:
-        test_id = _test_id_from_pytest_env()
         path = _capture_path("network.txt", test_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(responses), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_capture_failure("network.txt", exc)
 
 
-def _capture_failure_qs_errors(page: Page) -> None:
+def _capture_failure_qs_errors(page: Page, test_id: str) -> None:
     """Dump the text of any QuickSight error overlays visible on the
     page to ``<capture_dir>/qs_errors.txt`` (or legacy
     ``<test_id>_qs_errors.txt``). Targets the well-known QS error
@@ -462,7 +554,6 @@ def _capture_failure_qs_errors(page: Page) -> None:
     nothing matched.
     """
     try:
-        test_id = _test_id_from_pytest_env()
         path = _capture_path("qs_errors.txt", test_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         # JS-side scan: collect text from any DOM nodes whose
@@ -493,8 +584,8 @@ def _capture_failure_qs_errors(page: Page) -> None:
             }"""
         )
         path.write_text("\n".join(errors or []), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_capture_failure("qs_errors.txt", exc)
 
 
 def wait_for_dashboard_loaded(page: Page, timeout_ms: int) -> None:

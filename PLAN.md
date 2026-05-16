@@ -435,6 +435,16 @@ Operators don't crack open the manual. The exception-type vocabulary + remediati
 - [x] **AA.G.2 — Verify suite stays green.** Implicit — `c0c2d2f` is on main and subsequent merges have flown through CI.
 - [x] **AA.G.3 — Confirm Dependabot closes the alerts.** Both alerts now `state:fixed`.
 
+### AA.H — Browser-capture infra fix *(landed mid-phase; AA.A.5 triage exposed the gap)*
+
+The `webkit_page` failure-capture path was silently broken for parametrized e2e tests — the May 16 Money Trail anchor failure dropped zero artifacts (no screenshot, no console, no qs_errors, no network), and the most recent legacy artifacts in `tests/e2e/screenshots/_failures/` were 12 days old (pre-parametrize refactor). Triage required reading SQL + tree code to guess; if the capture had worked we'd have had DOM + screenshot in seconds.
+
+- [x] **AA.H.1 — Sanitize test_id chars.** Added `_sanitize_test_id` in `common/browser/helpers.py` — collapses any non-`[A-Za-z0-9_\-\[\].]` char (or run thereof) to a single `_`. Brackets stay (parametrize ID disambiguation); spaces / em-dashes / parens / colons collapse. Filename is now portable across macOS APFS / ext4 / NTFS / GHA artifact zip / shell-glob.
+- [x] **AA.H.2 — Snapshot test_id at `webkit_page` entry.** `PYTEST_CURRENT_TEST` is reliably set inside the test body but can be cleared by the time fixture teardown runs the `except` handler — silently demoting captures to `unknown/`. Resolve once at entry, pass down to every `_capture_failure_*` function.
+- [x] **AA.H.3 — Add `dom.html` capture.** New 6th artifact: `page.content()` → `<capture_dir>/dom.html`. Pairs with the screenshot — pixels show what's visually there, DOM shows what the test's selectors were actually looking at. The single most-useful diagnostic for "click target not found" / "control didn't mount" failures (which is exactly the Money Trail shape).
+- [x] **AA.H.4 — Loud-fail capture exceptions.** New `_warn_capture_failure(artifact, exc)` helper emits a `[CAPTURE FAILURE] <artifact>: <type>: <msg>` line to stderr. Replaces the 5× `except Exception: pass` silent-fail blocks. Test failure still surfaces as the primary error (sidecar contract); but a capture-path regression now lands in the layer's `stderr.log` instead of being invisible until the next forensic session.
+- [x] **AA.H.5 — Regression guard test.** New `test_failure_path_handles_parametrized_test_id_with_specials` (in `tests/unit/test_browser_trace_smoke.py`) reproduces the exact `PYTEST_CURRENT_TEST` shape that bit us — `[qs-Money Trail-Chain root transfer-Money Trail — Hop-by-Hop]` with spaces, em-dash, parens, brackets — and asserts all 6 artifacts land under a sanitized capture dir. Plus 6 new `TestSanitizeTestId` unit tests covering edge cases (alphanumeric kept, run collapsing, paren/colon stripping). 27 browser-helper tests green; 1755 full unit suite green.
+
 ### AA.F — End-of-phase
 
 - [ ] **AA.F.1 — Verify chain (unit + db + browser).** Full `./run_tests.sh up_to=browser` passes against the deployed dashboards.
