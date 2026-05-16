@@ -2069,7 +2069,15 @@ def _wire_daily_statement_filters(
         parameter=ds_account, title="Account",
         type="SINGLE_SELECT",
         selectable_values=LinkedValues.from_column(
-            datasets[DS_L1_ACCOUNTS]["account_id"],
+            # AA.E.2 fix: bind to ``account_display`` so the picker's
+            # bound value matches the dataset SQL's display-format
+            # WHERE clause (``(account_name || ' (' || account_id || ')')
+            # = <<$pL1DsAccount>>``). AA.E.2 flipped 7 dropdowns via
+            # ``_populate_pushdown_*`` helpers but missed this direct
+            # ``add_parameter_dropdown`` call — Daily Statement stayed
+            # silently broken (account picked → page empty) until
+            # AA.E.3's browser test caught it.
+            datasets[DS_L1_ACCOUNTS]["account_display"],
         ),
         hidden_select_all=True,
     )

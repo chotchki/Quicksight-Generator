@@ -1692,6 +1692,51 @@ def test_aa_b_1_l1_accounts_dataset_is_role_cascaded() -> None:
     assert rp.DefaultValues.StaticValues == [L1_ALL_SENTINEL]
 
 
+def test_aa_e_2_daily_statement_account_dropdown_binds_display_column() -> None:
+    """AA.E.2 fix (caught by AA.E.3): the Daily Statement Account
+    dropdown's ``LinkedValues`` must bind to ``account_display`` so the
+    picked value matches the dataset SQL's display-format WHERE
+    (``(account_name || ' (' || account_id || ')') = <<$pL1DsAccount>>``).
+
+    The original AA.E.2 sweep flipped 7 dropdowns via the
+    ``_populate_pushdown_*`` helpers but missed this direct
+    ``add_parameter_dropdown`` callsite — picking an account left the
+    Daily Statement page silently empty (bound bare id never matched
+    display-format WHERE). This test pins the fix so the regression
+    can't recur.
+    """
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    daily_statement = _sheet_by_name(app, "Daily Statement")
+    # Find the Account ParameterDropdown control.
+    accountish = [
+        c for c in daily_statement.parameter_controls
+        if hasattr(c, "title") and c.title == "Account"
+    ]
+    assert len(accountish) == 1, (
+        f"Daily Statement should have exactly one 'Account' control; "
+        f"found {len(accountish)}: {[c.title for c in daily_statement.controls if hasattr(c, 'title')]}"
+    )
+    account_ctrl = accountish[0]
+    # The Account dropdown's selectable_values must read account_display
+    # — see the AA.E.2 fix comment in apps/l1_dashboard/app.py.
+    assert hasattr(account_ctrl, "selectable_values"), (
+        f"Account control should carry selectable_values; got "
+        f"{type(account_ctrl).__name__}"
+    )
+    linked = account_ctrl.selectable_values
+    assert linked is not None, "Account dropdown must have LinkedValues"
+    # LinkedValues carries ``dataset`` + ``column_name`` — assert the
+    # name is account_display, not account_id (QS's single-column
+    # LinkToDataSetColumn means the bound value IS the displayed string).
+    assert linked.column_name == "account_display", (
+        f"Daily Statement Account dropdown must bind 'account_display' "
+        f"(matches the display-format WHERE clause); bound "
+        f"{linked.column_name!r} instead — that's the AA.E.2 miss "
+        f"that left Daily Statement silently empty post-pick."
+    )
+
+
 def test_y2g_no_per_sheet_category_filter_groups_remain() -> None:
     """The X.1.g/M.2b.3 per-sheet ``fg-l1-<sheet>-<col>`` category-filter
     FilterGroups (the cold-fetch footgun source) are gone — the
