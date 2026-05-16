@@ -95,7 +95,7 @@ DS_TT_LEGS = "l2ft-tt-legs-ds"
 DS_UNIFIED_L2_EXCEPTIONS = "l2ft-unified-exceptions-ds"
 # M.3.7 — six L2 exception sections, each backed by its own narrow dataset.
 DS_EXC_CHAIN_ORPHANS = "l2ft-exc-chain-orphans-ds"
-DS_EXC_UNMATCHED_TRANSFER_TYPE = "l2ft-exc-unmatched-transfer-type-ds"
+DS_EXC_UNMATCHED_RAIL_NAME = "l2ft-exc-unmatched-rail-name-ds"
 DS_EXC_DEAD_RAILS = "l2ft-exc-dead-rails-ds"
 DS_EXC_DEAD_BUNDLES_ACTIVITY = "l2ft-exc-dead-bundles-activity-ds"
 DS_EXC_DEAD_METADATA = "l2ft-exc-dead-metadata-ds"
@@ -333,7 +333,7 @@ EXC_CHAIN_ORPHANS_CONTRACT = DatasetContract(columns=[
 
 # L2.2 — Posted Transactions whose rail_name doesn't match any
 # declared Rail.rail_name.
-EXC_UNMATCHED_TRANSFER_TYPE_CONTRACT = DatasetContract(columns=[
+EXC_UNMATCHED_RAIL_NAME_CONTRACT = DatasetContract(columns=[
     ColumnSpec("rail_name", "STRING"),
     ColumnSpec("posting_count", "INTEGER"),
 ])
@@ -1161,7 +1161,7 @@ def build_exc_chain_orphans_dataset(
     )
 
 
-def build_exc_unmatched_transfer_type_dataset(
+def build_exc_unmatched_rail_name_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
     """L2.2 — Posted Transactions whose ``rail_name`` doesn't
@@ -1174,7 +1174,7 @@ def build_exc_unmatched_transfer_type_dataset(
     that type — the table reveals what's leaking past the L2's rails.
     """
     prefix = cfg.db_table_prefix
-    declared = _declared_transfer_types_cte(l2_instance, cfg.dialect)
+    declared = _declared_rail_names_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared_types AS (\n{declared}\n)\n"
         f"SELECT\n"
@@ -1187,11 +1187,11 @@ def build_exc_unmatched_transfer_type_dataset(
         f"ORDER BY posting_count DESC, t.rail_name"
     )
     return build_dataset(
-        cfg, cfg.prefixed("l2ft-exc-unmatched-transfer-type-dataset"),
-        "L2 Exc — Unmatched Transfer Type",
-        "l2ft-exc-unmatched-transfer-type",
-        sql, EXC_UNMATCHED_TRANSFER_TYPE_CONTRACT,
-        visual_identifier=DS_EXC_UNMATCHED_TRANSFER_TYPE,
+        cfg, cfg.prefixed("l2ft-exc-unmatched-rail-name-dataset"),
+        "L2 Exc — Unmatched Rail Name",
+        "l2ft-exc-unmatched-rail-name",
+        sql, EXC_UNMATCHED_RAIL_NAME_CONTRACT,
+        visual_identifier=DS_EXC_UNMATCHED_RAIL_NAME,
     )
 
 
@@ -1357,7 +1357,7 @@ def build_unified_l2_exceptions_dataset(
     """
     prefix = cfg.db_table_prefix
     declared_chains = _declared_chains_cte(l2_instance, cfg.dialect)
-    declared_types = _declared_transfer_types_cte(l2_instance, cfg.dialect)
+    declared_types = _declared_rail_names_cte(l2_instance, cfg.dialect)
     declared_rails = _declared_rails_cte(l2_instance, cfg.dialect)
     declared_bundles = _declared_bundles_activity_cte(l2_instance, cfg.dialect)
     declared_limits = _declared_limit_schedules_cte(l2_instance, cfg.dialect)
@@ -1694,7 +1694,7 @@ def _sql_nullable_str(value: str | None) -> str:
 # -- M.3.7 CTE helpers -------------------------------------------------------
 
 
-def _declared_transfer_types_cte(
+def _declared_rail_names_cte(
     l2_instance: L2Instance, dialect: Dialect,
 ) -> str:
     """Distinct rail-type identifiers, one per SELECT row.

@@ -86,7 +86,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     l1_check_type_values,
     l1_rail_values,
     l1_supersede_reason_values,
-    l1_transfer_type_values,
+    l1_rail_universe_values,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -1788,7 +1788,7 @@ def _wire_per_sheet_dropdowns(
     ds_tx_facets = datasets[DS_L1_TX_FACETS]
 
     role_values = l1_account_role_values(l2_instance)
-    type_values = l1_transfer_type_values(l2_instance)
+    type_values = l1_rail_universe_values(l2_instance)
     rail_values = l1_rail_values(l2_instance)
 
     # --- Drift sheet — Account (data-value) + Account Role (enum),

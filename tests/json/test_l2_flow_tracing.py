@@ -828,8 +828,8 @@ def test_tt_pushdown_params_bridge_to_both_datasets() -> None:
 
 _EXC_DATASETS = (
     ("l2ft-exc-chain-orphans-ds", "build_exc_chain_orphans_dataset"),
-    ("l2ft-exc-unmatched-transfer-type-ds",
-     "build_exc_unmatched_transfer_type_dataset"),
+    ("l2ft-exc-unmatched-rail-name-ds",
+     "build_exc_unmatched_rail_name_dataset"),
     ("l2ft-exc-dead-rails-ds", "build_exc_dead_rails_dataset"),
     ("l2ft-exc-dead-bundles-activity-ds",
      "build_exc_dead_bundles_activity_dataset"),
@@ -897,12 +897,12 @@ def test_exc_chain_orphans_filters_required_only() -> None:
     assert "WHERE e.required = 'Required'" in sql
 
 
-def test_exc_unmatched_transfer_type_excludes_declared_types() -> None:
-    """L2.2 LEFT JOINs on declared types and filters to the unmatched
-    side (NULL after join). All declared transfer_types appear as
+def test_exc_unmatched_rail_name_excludes_declared() -> None:
+    """L2.2 LEFT JOINs on declared rails and filters to the unmatched
+    side (NULL after join). All declared rail names appear as
     SELECT-literal rows in the declared_types CTE."""
     sql = _exc_dataset_sql(
-        "build_exc_unmatched_transfer_type_dataset", SASQUATCH_PR_YAML,
+        "build_exc_unmatched_rail_name_dataset", SASQUATCH_PR_YAML,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
     declared_types = {str(r.name) for r in inst.rails}
@@ -922,9 +922,9 @@ def test_exc_dead_rails_filters_zero_postings_only() -> None:
 
 
 def test_exc_dead_bundles_activity_checks_both_attributions() -> None:
-    """L2.4: bundles_activity refs MAY name a rail OR a transfer_type
-    — the SQL's NOT EXISTS checks BOTH attributions to avoid false
-    positives."""
+    """L2.4: bundles_activity refs name a Rail.name (post-Z.B); the
+    SQL's NOT EXISTS checks the rail_name match to surface zero-runtime
+    bundles_activity targets."""
     sql = _exc_dataset_sql(
         "build_exc_dead_bundles_activity_dataset", SASQUATCH_PR_YAML,
     )
@@ -955,9 +955,10 @@ def test_exc_dead_metadata_uses_static_json_paths() -> None:
 
 def test_exc_dead_limit_schedules_filters_outbound_debit() -> None:
     """L2.6 only counts a LimitSchedule cell as 'used' if there's
-    outbound DEBIT flow against the parent_role + transfer_type. A
-    cap on inbound flow doesn't make sense; matching credit-only
-    flow would give a false 'alive' signal."""
+    outbound DEBIT flow against the parent_role + rail_name (Z.B
+    subsumed transfer_type into rail). A cap on inbound flow doesn't
+    make sense; matching credit-only flow would give a false 'alive'
+    signal."""
     sql = _exc_dataset_sql(
         "build_exc_dead_limit_schedules_dataset", SASQUATCH_PR_YAML,
     )
@@ -973,8 +974,8 @@ def test_exc_dataset_contract_columns_match_builder(
     import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
     contract_name_map = {
         "l2ft-exc-chain-orphans-ds": "EXC_CHAIN_ORPHANS_CONTRACT",
-        "l2ft-exc-unmatched-transfer-type-ds":
-            "EXC_UNMATCHED_TRANSFER_TYPE_CONTRACT",
+        "l2ft-exc-unmatched-rail-name-ds":
+            "EXC_UNMATCHED_RAIL_NAME_CONTRACT",
         "l2ft-exc-dead-rails-ds": "EXC_DEAD_RAILS_CONTRACT",
         "l2ft-exc-dead-bundles-activity-ds":
             "EXC_DEAD_BUNDLES_ACTIVITY_CONTRACT",

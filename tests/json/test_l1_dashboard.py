@@ -1529,7 +1529,7 @@ def test_y2g_enum_value_helpers_reflect_l2_instance() -> None:
         l1_check_type_values,
         l1_rail_values,
         l1_supersede_reason_values,
-        l1_transfer_type_values,
+        l1_rail_universe_values,
     )
 
     instance = default_l2_instance()
@@ -1540,7 +1540,7 @@ def test_y2g_enum_value_helpers_reflect_l2_instance() -> None:
 
     declared_types = {str(r.name) for r in instance.rails}
     declared_types |= {str(ls.rail) for ls in instance.limit_schedules}
-    assert set(l1_transfer_type_values(instance)) == declared_types
+    assert set(l1_rail_universe_values(instance)) == declared_types
 
     declared_roles = {str(a.role) for a in instance.accounts if a.role}
     declared_roles |= {str(t.role) for t in instance.account_templates}

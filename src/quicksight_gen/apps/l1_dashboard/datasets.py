@@ -143,11 +143,14 @@ _L1_SUPERSEDE_REASON_VALUES: tuple[str, ...] = (
 )
 
 
-def l1_transfer_type_values(l2_instance: L2Instance) -> list[str]:
+def l1_rail_universe_values(l2_instance: L2Instance) -> list[str]:
     """Sorted distinct ``rail_name`` values declared across the L2's
     rails + limit schedules — the universe the L1 matviews' ``rail_name``
-    column draws from. Drives the StaticValues default + dropdown options
-    on every L1 sheet with a transfer-type dropdown.
+    column draws from (Z.B 2026-05-15 subsumed ``transfer_type`` into the
+    rail). Drives the StaticValues default + dropdown options on every L1
+    sheet with a rail-keyed dropdown. Broader source set than
+    :func:`l1_rail_values` because limit_breach can surface rows for a
+    rail declared only via a LimitSchedule.
     """
     types: set[str] = {str(r.name) for r in l2_instance.rails}
     types |= {str(ls.rail) for ls in l2_instance.limit_schedules}
@@ -420,7 +423,7 @@ LIMIT_BREACH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_role", "STRING"),
     ColumnSpec("account_parent_role", "STRING"),
     ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("outbound_total", "DECIMAL"),
     ColumnSpec("cap", "DECIMAL"),
 ])
@@ -443,7 +446,7 @@ TODAYS_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_role", "STRING"),
     ColumnSpec("account_parent_role", "STRING"),
     ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("magnitude", "DECIMAL"),
 ])
 
@@ -488,7 +491,7 @@ DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("posting", "DATETIME"),
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("amount_money", "DECIMAL"),
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("status", "STRING"),
@@ -511,7 +514,7 @@ TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_parent_role", "STRING"),
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("transfer_parent_id", "STRING"),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("amount_money", "DECIMAL"),
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("status", "STRING"),
@@ -546,7 +549,7 @@ STUCK_PENDING_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_role", "STRING"),
     ColumnSpec("account_parent_role", "STRING"),
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("amount_money", "DECIMAL"),
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("posting", "DATETIME"),
@@ -563,7 +566,7 @@ STUCK_UNBUNDLED_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_role", "STRING"),
     ColumnSpec("account_parent_role", "STRING"),
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("amount_money", "DECIMAL"),
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("posting", "DATETIME"),
@@ -589,7 +592,7 @@ SUPERSESSION_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
     ColumnSpec("account_name", "STRING"),
     ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
-    ColumnSpec("rail_name", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.RAIL_NAME),
     ColumnSpec("amount_money", "DECIMAL"),
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("status", "STRING"),
