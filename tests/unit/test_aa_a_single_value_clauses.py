@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from quicksight_gen.apps.l1_dashboard.datasets import (
     L1_ALL_SENTINEL,
+    _account_display_clause,
     _data_value_clause,
 )
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
@@ -74,3 +75,39 @@ def test_l2ft_match_all_in_clause_uses_scalar_eq_not_in() -> None:
 def test_l2ft_match_all_in_clause_uses_l2ft_sentinel() -> None:
     clause = _match_all_in_clause("completion_status", "pL2ftChainsCompletion")
     assert f"'{L2FT_ALL_SENTINEL}'" in clause
+
+
+# ---------------------------------------------------------------------------
+# AA.E.2 — _account_display_clause shape
+# ---------------------------------------------------------------------------
+
+
+def test_aa_e_2_account_display_clause_shape() -> None:
+    """Inline-concat WHERE shape against the source view's ``account_name``
+    + ``account_id`` columns. Sentinel-guard same as
+    :func:`_data_value_clause`, so a show-all default keeps every row on
+    initial load."""
+    clause = _account_display_clause("pL1DriftAccount")
+    assert clause == (
+        "('__l1_all__' = <<$pL1DriftAccount>>"
+        " OR (account_name || ' (' || account_id || ')') = <<$pL1DriftAccount>>)"
+    )
+
+
+def test_aa_e_2_account_display_clause_uses_l1_sentinel() -> None:
+    """Pin that the show-all sentinel is the same one
+    ``_data_value_clause`` uses — flipping a single dropdown's WHERE
+    to the display clause shouldn't change which sentinel its
+    ``_all_sentinel_sv_param`` default already emits."""
+    clause = _account_display_clause("pL1OverdraftAccount")
+    assert f"'{L1_ALL_SENTINEL}'" in clause
+
+
+def test_aa_e_2_account_display_clause_concats_name_then_id() -> None:
+    """Pin the display *order* — ``name (id)``, not ``id (name)``. The
+    dropdown options dataset must produce the same shape (the
+    ``DS_L1_ACCOUNTS`` SQL aliases ``account_name || ' (' || account_id
+    || ')' AS account_display``). If the two ever diverge, every L1
+    account dropdown silently narrows to zero rows."""
+    clause = _account_display_clause("pL1TxAccount")
+    assert "account_name || ' (' || account_id || ')'" in clause

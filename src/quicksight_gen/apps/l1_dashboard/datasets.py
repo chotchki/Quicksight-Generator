@@ -238,6 +238,38 @@ def _sv_dataset_param(
     ))
 
 
+def _account_display_clause(param_name: str) -> str:
+    """AA.E.2 — WHERE-fragment that matches the dropdown-picked
+    ``account_display`` value (``"Sasquatch Cash Master (external-001)"``)
+    against the source-view's ``account_name`` + ``account_id`` columns
+    inline. Same sentinel-guard shape as :func:`_data_value_clause` so a
+    show-all default (``L1_ALL_SENTINEL``) on initial load still passes
+    every row.
+
+    Pattern:
+        ``('__l1_all__' = <<$p>> OR (account_name || ' (' || account_id || ')') = <<$p>>)``
+
+    QS's ``LinkToDataSetColumn`` carries one column, which drives BOTH
+    the dropdown label AND the bound value (no separate label-vs-value
+    columns) — so when the dropdown options come from
+    ``DS_L1_ACCOUNTS.account_display`` the value bridged through the
+    ``MappedDataSetParameters`` IS the display string, and the consuming
+    dataset's WHERE clause must match against the same shape. Inlining
+    the concat avoids requiring every consuming dataset to expose an
+    ``account_display`` column of its own — every L1 matview already
+    surfaces ``account_name`` and ``account_id``, so this works
+    everywhere AA.E.2 needs it.
+
+    Portable across all three supported dialects (PG / Oracle / SQLite
+    all accept ``||`` for string concat with the same semantics).
+    """
+    expr = "(account_name || ' (' || account_id || ')')"
+    return (
+        f"({_L1_ALL_SENTINEL_SQL} = <<${param_name}>>"
+        f" OR {expr} = <<${param_name}>>)"
+    )
+
+
 def _data_value_clause(col: str, param_name: str) -> str:
     """WHERE-fragment for a SINGLE_VALUED pushdown dropdown: ``('__l1_all__'
     = <<$p>> OR col = <<$p>>)``. On load (and when the dropdown is emptied,
@@ -585,9 +617,17 @@ L1_ACCOUNTS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
     # AA.B.1 — account_role threads through so the Daily Statement Role
     # cascade can narrow the account picker via the ``pL1DsRole`` dataset
-    # param. The column isn't surfaced in the dropdown (which still
-    # renders ``account_id``); it just enables the WHERE-clause filter.
+    # param. The column isn't surfaced in the dropdown; it just enables
+    # the WHERE-clause filter.
     ColumnSpec("account_role", "STRING"),
+    # AA.E.2 — account_name + account_display drive the searchable
+    # ``Sasquatch Cash Master (external-001)`` dropdown labels. The
+    # dropdown's ``LinkedValues`` reads ``account_display``; QS's
+    # one-column LinkToDataSetColumn means the bound value is the same
+    # display string, so consuming datasets match against
+    # ``_account_display_clause(...)``.
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY),
 ])
 
 # AA.B.1 — distinct account_role for the Daily Statement Role dropdown.
@@ -645,7 +685,7 @@ def build_drift_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
     prefix = cfg.db_table_prefix
     sql_template = (
         f"SELECT * FROM {prefix}_drift\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_DRIFT_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_DRIFT_ACCOUNT)}\n"
         f"  AND {_data_value_clause('account_role', P_L1_DRIFT_ROLE)}\n"
         f"  {{date_filter}}"
     )
@@ -677,7 +717,7 @@ def build_ledger_drift_dataset(
     prefix = cfg.db_table_prefix
     sql_template = (
         f"SELECT * FROM {prefix}_ledger_drift\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_DRIFT_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_DRIFT_ACCOUNT)}\n"
         f"  AND {_data_value_clause('account_role', P_L1_DRIFT_ROLE)}\n"
         f"  {{date_filter}}"
     )
@@ -722,7 +762,7 @@ def build_overdraft_dataset(
     prefix = cfg.db_table_prefix
     sql_template = (
         f"SELECT * FROM {prefix}_overdraft\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_OVERDRAFT_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_OVERDRAFT_ACCOUNT)}\n"
         f"  AND {_data_value_clause('account_role', P_L1_OVERDRAFT_ROLE)}\n"
         f"  {{date_filter}}"
     )
@@ -758,7 +798,7 @@ def build_limit_breach_dataset(
     prefix = cfg.db_table_prefix
     sql_template = (
         f"SELECT * FROM {prefix}_limit_breach\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_LIMIT_BREACH_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_LIMIT_BREACH_ACCOUNT)}\n"
         f"  AND {_data_value_clause('rail_name', P_L1_LIMIT_BREACH_TYPE)}\n"
         f"  {{date_filter}}"
     )
@@ -810,7 +850,7 @@ def build_todays_exceptions_dataset(
     sql_template = (
         f"SELECT * FROM {prefix}_todays_exceptions\n"
         f"WHERE {_data_value_clause('check_type', P_L1_TODAYS_EXC_CHECK_TYPE)}\n"
-        f"  AND {_data_value_clause('account_id', P_L1_TODAYS_EXC_ACCOUNT)}\n"
+        f"  AND {_account_display_clause(P_L1_TODAYS_EXC_ACCOUNT)}\n"
         f"  AND ({_data_value_clause('rail_name', P_L1_TODAYS_EXC_TYPE)}"
         f" OR rail_name IS NULL)\n"
         f"  {{date_filter}}"
@@ -874,7 +914,7 @@ def build_daily_statement_summary_dataset(
     prefix = cfg.db_table_prefix
     sql = (
         f"SELECT * FROM {prefix}_daily_statement_summary\n"
-        f"WHERE account_id = <<${P_L1_DS_ACCOUNT_DSP}>>"
+        f"WHERE (account_name || ' (' || account_id || ')') = <<${P_L1_DS_ACCOUNT_DSP}>>"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-daily-statement-summary-dataset"),
@@ -910,7 +950,7 @@ def _daily_statement_transactions_sql(prefix: str, dialect: Dialect) -> str:
         f"       tx.amount_money, tx.amount_direction,"
         f"       tx.status, tx.origin"
         f" FROM {prefix}_current_transactions tx"
-        f" WHERE tx.account_id = <<${P_L1_DS_ACCOUNT_DSP}>>"
+        f" WHERE (tx.account_name || ' (' || tx.account_id || ')') = <<${P_L1_DS_ACCOUNT_DSP}>>"
     )
 
 
@@ -974,7 +1014,7 @@ def build_transactions_dataset(
         f" amount_money, amount_direction, status, origin,"
         f" posting, transfer_completion"
         f" FROM {prefix}_current_transactions\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_TX_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_TX_ACCOUNT)}\n"
         f"  AND {_data_value_clause('transfer_id', P_L1_TX_TRANSFER_ID)}\n"
         f"  AND {_data_value_clause('status', P_L1_TX_STATUS)}\n"
         f"  AND {_data_value_clause('origin', P_L1_TX_ORIGIN)}\n"
@@ -1103,7 +1143,7 @@ def build_stuck_pending_dataset(
         f"  {_aging_bucket_case_sql('age_seconds', buckets=_PENDING_AGING_BUCKETS, overflow_label=_PENDING_AGING_OVERFLOW)}"
         f" AS stuck_pending_aging_bucket\n"
         f"FROM {prefix}_stuck_pending t\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_PENDING_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_PENDING_ACCOUNT)}\n"
         f"  AND {_data_value_clause('rail_name', P_L1_PENDING_TYPE)}\n"
         f"  AND {_data_value_clause('rail_name', P_L1_PENDING_RAIL)}"
     )
@@ -1137,7 +1177,7 @@ def build_stuck_unbundled_dataset(
         f"  {_aging_bucket_case_sql('age_seconds', buckets=_UNBUNDLED_AGING_BUCKETS, overflow_label=_UNBUNDLED_AGING_OVERFLOW)}"
         f" AS stuck_unbundled_aging_bucket\n"
         f"FROM {prefix}_stuck_unbundled t\n"
-        f"WHERE {_data_value_clause('account_id', P_L1_UNBUNDLED_ACCOUNT)}\n"
+        f"WHERE {_account_display_clause(P_L1_UNBUNDLED_ACCOUNT)}\n"
         f"  AND {_data_value_clause('rail_name', P_L1_UNBUNDLED_TYPE)}\n"
         f"  AND {_data_value_clause('rail_name', P_L1_UNBUNDLED_RAIL)}"
     )
@@ -1281,7 +1321,8 @@ def build_l1_accounts_dataset(
     """
     prefix = cfg.db_table_prefix
     sql = (
-        f"SELECT DISTINCT account_id, account_role"
+        f"SELECT DISTINCT account_id, account_role, account_name,"
+        f" (account_name || ' (' || account_id || ')') AS account_display"
         f" FROM {prefix}_current_daily_balances"
         f" WHERE {_data_value_clause('account_role', P_L1_DS_ROLE_DSP)}"
     )

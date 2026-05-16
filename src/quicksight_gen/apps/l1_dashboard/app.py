@@ -1798,7 +1798,7 @@ def _wire_per_sheet_dropdowns(
         bridges=[(ds_drift, P_L1_DRIFT_ACCOUNT),
                  (ds_ledger_drift, P_L1_DRIFT_ACCOUNT)],
         param_name=ParameterName(P_L1_DRIFT_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=drift_sheet, analysis=analysis,
@@ -1823,7 +1823,7 @@ def _wire_per_sheet_dropdowns(
         sheet=overdraft_sheet, analysis=analysis,
         bridges=[(ds_overdraft, P_L1_OVERDRAFT_ACCOUNT)],
         param_name=ParameterName(P_L1_OVERDRAFT_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=overdraft_sheet, analysis=analysis,
@@ -1837,7 +1837,7 @@ def _wire_per_sheet_dropdowns(
         sheet=limit_breach_sheet, analysis=analysis,
         bridges=[(ds_lb, P_L1_LIMIT_BREACH_ACCOUNT)],
         param_name=ParameterName(P_L1_LIMIT_BREACH_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=limit_breach_sheet, analysis=analysis,
@@ -1852,7 +1852,7 @@ def _wire_per_sheet_dropdowns(
         sheet=pending_aging_sheet, analysis=analysis,
         bridges=[(ds_sp, P_L1_PENDING_ACCOUNT)],
         param_name=ParameterName(P_L1_PENDING_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=pending_aging_sheet, analysis=analysis,
@@ -1873,7 +1873,7 @@ def _wire_per_sheet_dropdowns(
         sheet=unbundled_aging_sheet, analysis=analysis,
         bridges=[(ds_su, P_L1_UNBUNDLED_ACCOUNT)],
         param_name=ParameterName(P_L1_UNBUNDLED_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=unbundled_aging_sheet, analysis=analysis,
@@ -1909,7 +1909,7 @@ def _wire_per_sheet_dropdowns(
         sheet=todays_exceptions_sheet, analysis=analysis,
         bridges=[(ds_te, P_L1_TODAYS_EXC_ACCOUNT)],
         param_name=ParameterName(P_L1_TODAYS_EXC_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_enum_dropdown(
         sheet=todays_exceptions_sheet, analysis=analysis,
@@ -1925,7 +1925,7 @@ def _wire_per_sheet_dropdowns(
         sheet=transactions_sheet, analysis=analysis,
         bridges=[(ds_tx, P_L1_TX_ACCOUNT)],
         param_name=ParameterName(P_L1_TX_ACCOUNT), title="Account",
-        options_dataset=ds_accounts, options_column="account_id",
+        options_dataset=ds_accounts, options_column="account_display",
     )
     _populate_pushdown_value_dropdown(
         sheet=transactions_sheet, analysis=analysis,
