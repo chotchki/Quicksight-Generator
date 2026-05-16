@@ -55,6 +55,7 @@ from quicksight_gen.common.browser.helpers import (
     read_table_rows_dom,
     right_click_first_row_of_visual,
     scroll_visual_into_view,
+    set_dropdown_value,
     set_multi_select_values,
     set_parameter_datetime_value,
     set_parameter_slider_value,
@@ -424,16 +425,25 @@ class QsEmbedDriver:
             self._page.wait_for_timeout(80)
 
     def pick_filter(self, label: str, values: Sequence[str]) -> None:
-        # Post-Y.2.g the L1 / L2FT dropdowns are multi-select
-        # ParameterDropDownControls — set_multi_select_values deselects
-        # whatever's checked then ticks exactly ``values`` (a one-element
-        # list for a single-select pick), which is the protocol's
-        # "set the control to ``values``" semantics. Then block until the
-        # dataset re-query lands (per the protocol's "block until the
-        # affected visuals re-fetch").
-        set_multi_select_values(
-            self._page, label, list(values), self._page_timeout,
-        )
+        # Post-AA.A.3 the L1 / L2FT dropdowns are single-select
+        # ParameterDropDownControls (pre-AA.A.3 they were multi-select on
+        # the back of the X.2.t.2 sentinel-guard pattern). The protocol's
+        # "set the control to ``values``" semantics collapse to a single
+        # ``set_dropdown_value`` for ``len(values) == 1``; multi-element
+        # callers fall through to ``set_multi_select_values`` for the
+        # remaining genuine MULTI_SELECT controls (none in L1/L2FT after
+        # AA.A but the verb stays general for future compare-N keepers).
+        # Then block until the dataset re-query lands (per the protocol's
+        # "block until the affected visuals re-fetch").
+        vals = list(values)
+        if len(vals) == 1:
+            set_dropdown_value(
+                self._page, label, vals[0], self._page_timeout,
+            )
+        else:
+            set_multi_select_values(
+                self._page, label, vals, self._page_timeout,
+            )
         self._settle_after_param_change()
 
     def set_date_range(self, from_: str | None, to: str | None) -> None:
