@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from quicksight_gen.common.browser.helpers import (
+    bump_table_page_size_to_10000,
     click_context_menu_item,
     click_first_row_of_visual,
     click_sheet_tab,
@@ -57,6 +58,7 @@ from quicksight_gen.common.browser.helpers import (
     scroll_visual_into_view,
     set_dropdown_value,
     set_multi_select_values,
+    table_is_paginated,
     set_parameter_datetime_value,
     set_parameter_slider_value,
     sheet_control_titles,
@@ -338,18 +340,38 @@ class QsEmbedDriver:
         return read_table_rows_dom(self._page, visual_title)
 
     def table_row_count(self, visual_title: str) -> int:
-        # ``count_table_total_rows`` is the page-size-bump + scroll-
-        # accumulate dance that surfaces the post-filter total past the
-        # ~10-row rendered window. On a *small* table (no ``.grid-container``,
-        # so no pagination), it returns the sentinel ``-2`` — fall back
-        # to the DOM-cell count, which is the actual full count for a
-        # table small enough to render unpaginated. Other negative
-        # sentinels (``-1`` = no visual with that title) bubble up as
-        # 0 since callers expect a non-negative count.
+        # AA.H.11 — orchestrate {scroll-into-view → detect pagination → bump
+        # + WS-settle on overflow → count}. Pre-AA.H.11, a bundled helper
+        # ALWAYS did the bump + a fixed 500 ms wait, which raced the
+        # post-bump re-fetch on cold sheets and returned 0 for tables
+        # that actually had 2+ rows (the audit-agreement
+        # ``qs_count=0`` failure). The fix:
+        #
+        # 1. Scroll the visual into view so cells mount.
+        # 2. Cheap path: read DOM cells via ``count_table_rows`` —
+        #    correct for small tables (no pagination overflow). No
+        #    clicks, no re-render risk.
+        # 3. Bump path: if ``table_is_paginated`` returns True, the
+        #    table has more rows than fit on the current page — bump
+        #    page-size to 10000, ``_settle_after_param_change`` (WS
+        #    frames, NOT a fixed wait — user direction: time-based
+        #    waits are a major smell), then scroll-accumulate the now-
+        #    fully-paginated table.
+        scroll_visual_into_view(
+            self._page, visual_title, self._visual_timeout,
+        )
+        if not table_is_paginated(self._page, visual_title):
+            return max(0, count_table_rows(self._page, visual_title))
+        if bump_table_page_size_to_10000(
+            self._page, visual_title, self._visual_timeout,
+        ):
+            self._settle_after_param_change()
         total = count_table_total_rows(
             self._page, visual_title, self._visual_timeout,
         )
         if total == -2:
+            # ``.grid-container`` absent — single-row table, DOM-cell count
+            # IS the full set (same fallback as pre-AA.H.11).
             return max(0, count_table_rows(self._page, visual_title))
         return max(0, total)
 

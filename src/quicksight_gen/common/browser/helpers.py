@@ -1132,52 +1132,60 @@ def expand_all_tables_on_sheet(page: Page, *, timeout_ms: int = 10_000) -> int:
     return expanded
 
 
-def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> int:
-    """Return the full (post-filter) row count of a QS table visual.
+def table_is_paginated(page: Page, visual_title: str) -> bool:
+    """Cheap DOM probe — does this visual have a QS pagination control?
 
-    QS tables virtualize — ``count_table_rows`` only sees the ~10 rows
-    currently mounted in the DOM. For filter-narrowing assertions where
-    both pre and post totals exceed the viewport, DOM counts stay flat
-    and the assertion silently passes. This helper:
+    Returns True iff a ``simplePagedDisplayNav_dropdown_pageSize`` element
+    exists in the DOM, scoped to the visual whose title matches. Small
+    tables (≤ QS default page size, typically ~10–15 rows) render without
+    pagination — the DOM holds every row, so ``count_table_rows`` is the
+    exact total and no bump is needed.
 
-    1. Focuses the visual (click title) to reveal ``simplePagedDisplayNav_*``.
-    2. Sets page size to 10000 so all rows fit on one page.
-    3. Scrolls the inner ``.grid-container`` to the bottom, tracking the
-       highest ``sn-table-cell-N-*`` index seen.
-
-    Use this helper when the table's row count may exceed ~10 and you need
-    a precise total. Prefer ``count_table_rows`` when you already know the
-    table fits in the viewport — it's much faster.
-
-    Raises a timeout if the pagination controls never appear (i.e. the
-    visual isn't actually a paged table).
+    This is a pure read — no clicks, no timeouts, no re-render risk.
+    Critical for callers that previously triggered a spurious re-fetch
+    by clicking the page-size dropdown on small tables that didn't need
+    it (the AA.H.11 root cause: the click → re-fetch → ``getMaxRow`` read
+    the empty container mid-refetch → returned 0 even though cells were
+    about to mount).
     """
-    # Scroll the visual into view. Use scroll_visual_into_view when the
-    # table has data (cells present); otherwise fall back to a plain
-    # element.scrollIntoView, which still positions QS's inner scroll
-    # container correctly even when cells haven't mounted.
-    try:
-        scroll_visual_into_view(page, visual_title, timeout_ms=5000)
-    except Exception:
-        page.evaluate(
-            """(title) => {
-                const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
-                for (const v of visuals) {
-                    const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
-                    if (t && t.innerText.trim() === title) {
-                        v.scrollIntoView({block: 'center'});
-                        return;
-                    }
-                }
-            }""",
-            visual_title,
-        )
-        page.wait_for_timeout(2000)
-    # Focus the visual via a JS click dispatched directly on the title
-    # element. Playwright's locator.click() runs actionability checks that
-    # trigger auto-scroll within QS's re-rendering content and race against
-    # "element detached" errors — a raw DOM click avoids all of that and
-    # still reliably reveals simplePagedDisplayNav_*.
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                return v.querySelector(
+                    '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]'
+                ) !== null;
+            }
+            return false;
+        }""",
+        visual_title,
+    )
+
+
+def bump_table_page_size_to_10000(
+    page: Page, visual_title: str, timeout_ms: int,
+) -> bool:
+    """Click the visual's page-size dropdown → 10000, no scrolling or
+    counting. Returns True if the click sequence completed; False if the
+    pagination dropdown never appeared (table isn't actually paginated —
+    use ``table_is_paginated`` to pre-check and skip the call entirely).
+
+    **Does not wait for the post-bump re-fetch.** QS fires a fresh data
+    query when page size changes; caller must settle that re-fetch
+    separately (via ``QsEmbedDriver._settle_after_param_change``, which
+    keys off the WebSocket START/STOP frames — *not* a fixed
+    ``wait_for_timeout``). The original implementation's
+    ``wait_for_timeout(500)`` here was the AA.H.11 race trigger: 500 ms
+    wasn't enough for the re-fetch to land on cold visuals, and the
+    follow-up scroll-accumulate dance read the empty container.
+
+    The focus-click on the visual title (required to reveal the
+    pagination control) is the same JS-dispatched ``.click()`` pattern
+    used elsewhere — bypasses Playwright's actionability checks that
+    race against QS's re-render churn.
+    """
     clicked = page.evaluate(
         """(title) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
@@ -1192,16 +1200,8 @@ def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> in
         }""",
         visual_title,
     )
-    assert clicked, f"No visual with title {visual_title!r}"
-    # Wait for the paging controls to mount after the focus-click
-    # (instead of a fixed 1.5s + a 3s wait_for_selector). The 4.5s
-    # budget = the deleted 1.5s head start + the original 3s wait;
-    # ``wait_for_selector`` returns the moment it appears, so this is
-    # strictly faster-or-equal. On repeat calls the controls often
-    # don't re-mount (focus already consumed, or lost to a prior
-    # filter interaction) — the ``except`` below catches that and
-    # relies on the page size set by the first successful call
-    # persisting through the session.
+    if not clicked:
+        return False
     try:
         page.wait_for_selector(
             '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]',
@@ -1217,10 +1217,48 @@ def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> in
         page.locator(
             '[data-automation-id="simplePagedDisplayNav_menuItem_pageSize_10000"]'
         ).first.click()
-        page.wait_for_timeout(500)
+        return True
     except Exception:
-        pass
+        return False
 
+
+def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> int:
+    """Return the full (post-filter) row count of a QS table visual via
+    the scroll-accumulate dance.
+
+    QS tables virtualize — ``count_table_rows`` only sees the ~10 rows
+    currently mounted in the DOM. For filter-narrowing assertions where
+    both pre and post totals exceed the viewport, DOM counts stay flat
+    and the assertion silently passes. This helper:
+
+    1. Scrolls the inner ``.grid-container`` to the bottom, tracking the
+       highest ``sn-table-cell-N-*`` index seen.
+
+    Returns:
+        ``-1`` if the visual isn't on the page.
+        ``-2`` if the visual is present but has no ``.grid-container``
+        (e.g. a one-row table that QS renders without a scroll container).
+        The post-bump count otherwise (``max + 1``, or ``0`` if no cells).
+
+    **Caller must page-size-bump first** for tables exceeding the QS
+    default page size (~10–15 rows) — this helper only scrolls,
+    no longer bumps (the bump was extracted to
+    ``bump_table_page_size_to_10000``). For small tables (no pagination
+    control), ``count_table_rows`` is the exact total — pre-check via
+    ``table_is_paginated`` and skip the bump + scroll entirely.
+
+    Pre-AA.H.11 this helper bundled the focus-click + page-size-bump +
+    scroll into one call with a fixed ``wait_for_timeout(500)`` after
+    the bump. The 500 ms wasn't enough for the post-bump re-fetch to
+    land, so the scroll read an empty container and returned 0 —
+    causing the audit-agreement test to report ``qs_count=0`` on cold
+    sheets where the table actually had 2+ rows (verified via screenshot
+    + DOM capture). The fix split the orchestration so callers can:
+
+    1. Cheap-path-skip via ``table_is_paginated`` (no clicks, no risk).
+    2. Bump + WS-settle deterministically when overflow is real.
+    3. Read via the scroll-accumulate dance below.
+    """
     return page.evaluate(
         """async (title) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');

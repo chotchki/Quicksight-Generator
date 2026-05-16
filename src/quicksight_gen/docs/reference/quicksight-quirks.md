@@ -335,10 +335,32 @@ a bug per se, but it's surprising to anyone treating the table as
 "all rows in the DOM" for assertion purposes.
 
 **Workaround.** `count_table_rows` returns DOM-visible (saturates
-at ~10). For accurate post-filter counts, use
-`count_table_total_rows` which scrolls + accumulates the true
-total. Slower; bumps page size to 10000 and walks the inner
-`.grid-container`.
+at ~10). For accurate post-filter counts on tables with
+pagination overflow, the `QsEmbedDriver.table_row_count`
+orchestration does the right thing: it pre-checks
+`table_is_paginated`, skips the page-size bump entirely for small
+tables (DOM count IS the total), and on big tables bumps page
+size to 10000 → settles the WebSocket re-fetch via
+`_settle_after_param_change` (NOT a fixed `wait_for_timeout` —
+see AA.H.11 below) → scroll-accumulates via
+`count_table_total_rows`.
+
+**AA.H.11 race** (fixed 2026-05-16). Pre-fix, the bundled
+`count_table_total_rows` always clicked the page-size dropdown
+even on small tables, then waited a fixed `500 ms` for the QS
+re-fetch to land before scroll-counting. On cold sheets the 500
+ms wasn't enough — `getMaxRow` scanned an empty container and
+returned 0, so the audit-agreement test reported `qs_count=0`
+for tables that actually had 2+ rows (verified via screenshot +
+DOM capture: the table was rendered correctly by the time the
+failure-capture fired). The fix split the bundled helper into
+three primitives — `table_is_paginated` (cheap probe),
+`bump_table_page_size_to_10000` (just the clicks),
+`count_table_total_rows` (just the scroll) — and the
+`QsEmbedDriver` orchestration chains them with the WebSocket
+settle in between. The 500 ms time-based wait is gone — user
+direction: time-based waits are a major smell, replace with
+event-driven settles.
 
 **Suggested fix.** Either document the virtualization behavior or
 expose a "snapshot total row count" property the client can read
