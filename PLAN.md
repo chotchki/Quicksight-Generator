@@ -469,17 +469,12 @@ Queues after Phase AA. Source: `SPEC_gap_feedback.md` (4 enhancements surfaced d
 
 Plus the standard cuts: `Schema_v6.md` updated; handbook walkthroughs author one worked example per enhancement; seeds re-locked per dialect; PLAN sub-task ticks; quirks log entries when QS surfaces something the SPEC didn't predict.
 
-**Gap-doc decisions already locked** (re-read pass: gap doc's preferred-implementation-path + tradeoff text answered more than initial sketch credited):
+**Decisions locked before implementation** (gap doc + user ratification, 2026-05-15):
 
-- **AB.2 — two-template chain Parent disagreement**: gap doc §3 Tradeoffs explicitly leans **(a) reject as L1 Conservation-style violation** — surfaces the ETL bug rather than hiding it. Baked into AB.2.3 below.
-- **AB.3 — multi-Variable XOR resolution evidence**: gap doc §1 Tradeoffs says "Library validates that exactly one fired by the template's `Completion` deadline." Evidence is **implicit-from-firing-existence** — no separate `variant_selector` MetadataKey needed; validation reads the leg_rail rows that landed. Baked into AB.3.3 below.
-
-### AB.spike — Surface the open design questions the gap doc left unresolved, lock before AB.1 lands
-
-Two questions the gap doc raised but didn't answer. Pre-spike so implementation sub-tasks aren't churn-locked behind "should we even build it this way":
-
-- [ ] **AB.spike.1 — Inbound cap dashboard surface (AB.1).** Does Inbound limit breach land on the existing Limit Breach sheet (with a Direction column to disambiguate) or split into its own "AML Threshold Breach" sheet keyed off the AML-flag framing in the gap doc? Recommendation: same sheet, new column — CPAs read both as "cap breach" semantically; splitting is gap-doc copy mistaken for design. User to ratify.
-- [ ] **AB.spike.4 — N:1 fan-in chains: build (B) or document-only (C)? (AB.4)** Gap doc §2 explicitly raises this — "If batched payouts are the only meaningful example, (C) is defensible. If consolidated payouts, multi-source batch settlements, or similar patterns recur across integrators, (B) starts paying for itself." Spike: count N:1 patterns the user has hit in real systems. If <3 distinct patterns, ship (C) (dashboard-level recon checks documented in handbook); skip AB.4's implementation sub-tasks entirely. If ≥3, ship (B). Spike outcome locks AB.4 into either ~12 implementation sub-tasks or ~2 docs sub-tasks.
+- **AB.1 dashboard surface**: Inbound + Outbound on the **same Limit Breach sheet**, table gains a new "Direction" column. CPAs read both as "cap breach" semantically; splitting would be gap-doc copy mistaken for design. Baked into AB.1.8 below.
+- **AB.2 two-template chain Parent disagreement**: gap doc §3 Tradeoffs locks **(a) reject as L1 Conservation-style violation** — surfaces the ETL bug rather than hiding it. Baked into AB.2.3 below.
+- **AB.3 multi-Variable XOR resolution evidence**: gap doc §1 Tradeoffs locks **implicit-from-firing-existence** — no separate `variant_selector` MetadataKey; validation reads the leg_rail rows that landed. Baked into AB.3.3 below.
+- **AB.4 N:1 fan-in chains**: ship **(B) build the primitive** — `fan_in: bool` on Chain + multi-parent join table + new L1 invariant. User judgment: worth it given the consolidated-payout / multi-source-batch-settlement patterns that show up beyond the merchant-payout case. AB.4 ships its full ~12 sub-tasks; docs-only fallback dropped.
 
 ### AB.1 — Enhancement 4: Limit Breach inbound caps
 
@@ -494,7 +489,7 @@ Today's `OutboundFlow` theorem filters on `Amount.Direction = Debit`. Real-world
 - [ ] **AB.1.5 — `auto_scenario.py`: new `InboundCapBreachPlant`.** Mirror existing `LimitBreachPlant` but plants a day of inbound credits exceeding cap. `emit_seed` wires it. `TestScenarioCoverage` asserts ≥1 plant row lands in the inbound matview rows.
 - [ ] **AB.1.6 — `sasquatch_pr.yaml` real-world flavor.** Add 1 inbound cap (the gap-doc's "daily inbound ACH cap of $20K per customer DDA" — AML-flag threshold). Plants seed inbound days at $25K so the dashboard shows the violation.
 - [ ] **AB.1.7 — `editor.py` + Studio LimitSchedule card.** Add `direction` dropdown (Outbound / Inbound, default Outbound).
-- [ ] **AB.1.8 — Dashboard wiring.** Limit Breach sheet's table gains a "Direction" column (after AB.spike.1 lock — if separate-sheet wins, build the new sheet instead). Today's Exceptions inherits the new rows automatically (it reads the same matview).
+- [ ] **AB.1.8 — Dashboard wiring.** Limit Breach sheet's table gains a "Direction" column (Inbound / Outbound) — same sheet, no split. Today's Exceptions inherits the new rows automatically (it reads the same matview).
 - [ ] **AB.1.9 — Tests.** Validator (direction enum), schema (matview shape per dialect — pg + oracle + sqlite), seed (`InboundCapBreachPlant` deterministic + plant-coverage ≥1 row), audit PDF (limit_breach table includes inbound), 4-way agreement.
 - [ ] **AB.1.10 — Docs + handbook walkthrough.** `concepts/l2/index.md` documents the field. New `walkthroughs/customization/how-do-i-add-an-aml-inbound-cap.md` worked-example walkthrough. `Schema_v6.md`'s LimitSchedule section gains the direction note.
 - [ ] **AB.1.11 — Re-lock seeds, verify (unit + db + AW probe), commit.**
@@ -536,33 +531,26 @@ Today's C1 ("at most one Variable-direction leg per template") blocks the natura
 - [ ] **AB.3.10 — Docs + handbook walkthrough.** `concepts/transfer-template.md` documents the XOR pattern. New `walkthroughs/customization/how-do-i-add-multi-mode-settlement.md`. `Schema_v6.md` TransferTemplate section updated.
 - [ ] **AB.3.11 — Re-lock seeds, verify, commit.**
 
-### AB.4 — Enhancement 2: N:1 chain fan-in (CONDITIONAL on AB.spike.4 outcome)
+### AB.4 — Enhancement 2: N:1 chain fan-in
 
 Today's `Transfer.Parent` is single-valued. Chains where N parent firings want to share one child Transfer (the batched-payout pattern) can't be expressed structurally — integrators fall back to metadata-only correlation (`batch_id` on each leg + ETL discipline).
 
-**Gap-doc preferred shape** (gap doc §2(B)): new `fan_in: true` flag on Chain. Chains marked `fan_in` allow N parent firings to share one child Transfer; ETL provides multiple `parent_transfer_ids`; validator checks all parents resolve.
+**Preferred shape** (gap doc §2(B), user-ratified): new `fan_in: true` flag on Chain. Chains marked `fan_in` allow N parent firings to share one child Transfer; ETL provides multiple `parent_transfer_ids`; validator checks all parents resolve.
 
-**Spike-gated.** If AB.spike.4 ratifies option (B), the sub-tasks below ship. If (C) wins (document-only, recon stays metadata-driven), AB.4 collapses to AB.4.docs-only — 2 sub-tasks (handbook + Schema_v6 callout) and the rest of AB.4 is deleted.
-
-**AB.4 — option (B) implementation:**
+**Open sub-decision left to AB.4.3:** Transfer's `Parent` slot needs to accommodate N references — either a new `<prefix>_transfer_parents` join table (cleanest, breaks the single-column read pattern downstream) OR a comma-separated `parent_transfer_ids` text column on Transactions (hacky, additive). Decide at AB.4.3 implementation time after prototyping both against the AB.4.4 seed shape; flag back for ratification if non-obvious.
 
 - [ ] **AB.4.1 — `primitives.py`: `fan_in: bool = False` on Chain.** Backward-compat default.
-- [ ] **AB.4.2 — Loader + serializer + validator.** Loader parses; validator: if `fan_in=true`, child must be TransferTemplate (gap doc §2 footnotes — "what if fan_in child is a Rail" is undefined; close that door). Open question for spike: can a fan_in chain have multiple chains writing into one child? Probably yes — that's the whole point.
-- [ ] **AB.4.3 — Schema** — Transfer's `Parent` slot needs to accommodate N references. Options: new `<prefix>_transfer_parents` join table (cleanest, breaks the single-column read pattern), OR comma-separated `parent_transfer_ids` text column on Transactions. **Locked at spike-end:** join table is cleaner but disruptive; CSV-text is hacky but additive. Spike result drives choice.
+- [ ] **AB.4.2 — Loader + serializer + validator.** Loader parses; validator: if `fan_in=true`, child must be TransferTemplate (gap doc §2 footnotes — "what if fan_in child is a Rail" is undefined; close that door). A fan_in chain MAY have multiple chains writing into one child — that's the whole point; validator allows.
+- [ ] **AB.4.3 — Schema (sub-decision: join table vs CSV-text — flag for review).** Transfer's `Parent` slot accommodates N references. Prototype both shapes against the AB.4.4 seed; pick the one with cleaner downstream impact (matview SQL, audit PDF, App2 fetcher). Report which shape won + why before locking.
 - [ ] **AB.4.4 — `seed.py`: fan_in chain firings.** Multiple parent firings each write to the same child template's lookup-or-create; the join table (or CSV) absorbs all parents.
 - [ ] **AB.4.5 — `auto_scenario.py`: `FanInChainPlant` + `FanInChainMissingParentPlant` (orphan child — parent set incomplete) + `FanInChainExtraParentPlant` (parent set includes a Transfer that shouldn't be in the batch).**
 - [ ] **AB.4.6 — `sasquatch_pr.yaml`: add batched-payout flow** (gap doc §2's `MerchantPayoutBatch` example). Demo plants show healthy batching + the two violation cases.
 - [ ] **AB.4.7 — Schema matview: new L1 invariant** — "every fan_in child Transfer's contributions match its expected parent set" (the gap-doc audit-trail use case). Surfaces as `<prefix>_fan_in_disagreement` or folds into an existing matview.
 - [ ] **AB.4.8 — Dashboard + audit PDF: new violation kind** — fan-in disagreement on Today's Exceptions + a new per-invariant table on the audit PDF.
 - [ ] **AB.4.9 — Studio chain card + topology.** `fan_in` checkbox on Chain card; topology renders fan-in edges with a distinct visual treatment.
-- [ ] **AB.4.10 — Tests.** Validator (fan_in implies template-as-child), schema (join table / CSV per spike), seed (deterministic fan-in firings), L1 invariants (fan_in_disagreement fires when plants violate), 4-way agreement.
+- [ ] **AB.4.10 — Tests.** Validator (fan_in implies template-as-child), schema (join table / CSV per AB.4.3), seed (deterministic fan-in firings), L1 invariants (fan_in_disagreement fires when plants violate), 4-way agreement.
 - [ ] **AB.4.11 — Docs + walkthrough.** New `concepts/chain-fan-in.md` documenting the semantics + when to use fan_in. New `walkthroughs/customization/how-do-i-model-batched-payouts.md`. Schema_v6 chain section updated.
 - [ ] **AB.4.12 — Re-lock seeds, verify, commit.**
-
-**AB.4 — option (C) docs-only collapse:**
-
-- [ ] **AB.4.docs-only.1 — Handbook walkthrough** documenting the metadata-only correlation pattern (`batch_id` on each leg + the dashboard-level recon check). Position as the official answer for N:1 batching — not a "limitation," a "design decision."
-- [ ] **AB.4.docs-only.2 — Schema_v6.md callout** noting that `Transfer.Parent` is single-valued by design; cross-Transfer batching belongs in metadata.
 
 ### AB.5 — End-of-phase
 
