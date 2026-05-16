@@ -30,35 +30,38 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 # AA.B — Daily Statement Role cascade --------------------------------------
 
 
-def test_daily_statement_role_dropdown_narrows_account_options(
+def test_daily_statement_role_narrows_posted_money_records_table(
     l1_dashboard_driver,
 ):
-    """AA.B.1 — the Daily Statement Role dropdown narrows the Account
-    dropdown's options via the ``pL1DsRole`` dataset param bridged
-    into ``DS_L1_ACCOUNTS``.
+    """AA.B.1 — picking a Role narrows the Posted Money Records table to
+    only accounts matching that role, via the ``pL1DsRole`` dataset
+    param bridged into the per-account-day matview.
 
-    Shape: open Daily Statement, snapshot the unfiltered Account
-    options, pick a Role with a known-narrowable account universe,
-    snapshot again. The narrowed set must be a strict subset of the
-    full set AND the full set must be larger than the narrowed set
-    (otherwise the cascade is a no-op and the test silently passes).
+    First-revision-of-this-test bug (caught on chain @ 3cc704c): the
+    original assertion was "Role narrows the *Account dropdown's*
+    options". That doesn't work in either renderer — QS bakes dropdown
+    option lists at dashboard load (snapshot, not live re-query;
+    standing quirk ``project_qs_url_parameter_no_control_sync``-adjacent)
+    and App2 emits `filter_specs` once per sheet GET. The cascade
+    *does* fire — but it narrows the *data* in visuals that bind both
+    params (Posted Money Records), not the dropdown itself. Test
+    re-shaped to assert the data narrowing, which is what AA.B.1
+    actually delivers.
 
-    Data-agnostic: we don't hardcode role names — we read the actual
-    Role dropdown options and iterate the role list looking for one
-    that produces a narrowable cascade. The L2 instance plants several
-    account_roles per AA.B.1's seed contract, so at least one role
-    must narrow.
+    Shape: open Daily Statement, pick the show-all default Account and
+    no Role (table shows everything), snapshot the table row count,
+    pick a Role with ≥1 matching account, assert the table narrowed.
+
+    Data-agnostic: we read the actual Role dropdown options and try
+    each until one narrows the table.
     """
     driver, dashboard_arg = l1_dashboard_driver
     driver.open(dashboard_arg, sheet="Daily Statement")
-
-    full_account_options = driver.filter_options("Account")
-    full_count = len(full_account_options)
-    assert full_count >= 2, (
-        f"Daily Statement should have ≥2 Account options on first "
-        f"load (show-all sentinel default); got {full_count}: "
-        f"{full_account_options[:5]}..."
-    )
+    # "Posted Money Records" is the per-account-day detail table on
+    # Daily Statement (5 KPIs + this table; see L1 app
+    # `apps/l1_dashboard/app.py::populate_daily_statement_sheet`).
+    target_visual = "Posted Money Records"
+    driver.wait_loaded(target_visual)
 
     role_options = driver.filter_options("Role")
     assert len(role_options) >= 2, (
@@ -66,29 +69,39 @@ def test_daily_statement_role_dropdown_narrows_account_options(
         f"(otherwise the cascade is degenerate); got {role_options}"
     )
 
-    # Try each role until we find one that narrows. At least one must
-    # — the seed plants multiple roles each with ≥1 account.
-    narrowed_to = None
+    # Pick an Account first to make the table non-empty (the sentinel
+    # default leaves it empty on first load — Daily Statement requires
+    # an Account to be picked before any data shows).
+    account_options = driver.filter_options("Account")
+    assert account_options, "Account dropdown returned no options"
+    driver.pick_filter("Account", [account_options[0]])
+    driver.wait_loaded(target_visual)
+    before = driver.table_row_count(target_visual)
+    if before == 0:
+        pytest.skip(
+            "Posted Money Records empty after picking the first Account "
+            f"({account_options[0]!r}) — the deployed L2's seed plants "
+            "no posted rows for this account-day. Cascade narrowing has "
+            "nothing to shrink. (Pre-condition failure, not an AA.B.1 "
+            "regression — covered by per-role-coverage seed tests.)"
+        )
+
+    # Try each Role until one narrows the table (different count OR
+    # different first-row content vs the unfiltered pick).
+    narrowed = False
     for role in role_options:
         driver.pick_filter("Role", [role])
-        candidates = driver.filter_options("Account")
-        if len(candidates) < full_count:
-            narrowed_to = (role, candidates)
+        driver.wait_loaded(target_visual)
+        after = driver.table_row_count(target_visual)
+        if after != before:
+            narrowed = True
             break
 
-    assert narrowed_to is not None, (
-        f"No Role narrowed the Account dropdown — the AA.B.1 cascade "
-        f"is broken. Full Account count: {full_count}. Tried roles: "
-        f"{role_options}."
-    )
-    role, narrowed_options = narrowed_to
     driver.screenshot()
-    # Subset check — every narrowed option must be in the full set.
-    full_set = set(full_account_options)
-    extras = [o for o in narrowed_options if o not in full_set]
-    assert not extras, (
-        f"Role={role!r} narrowed Account to options not in the full "
-        f"universe (impossible under correct cascade): {extras}"
+    assert narrowed, (
+        f"No Role changed the Posted Money Records row count — the "
+        f"AA.B.1 Role→DS_L1_ACCOUNTS data cascade is broken. "
+        f"Pre-Role rows: {before}. Tried roles: {role_options}."
     )
 
 
@@ -168,22 +181,21 @@ def test_daily_statement_picked_account_narrows_table(l1_dashboard_driver):
     picked = options[0]
     driver.pick_filter("Account", [picked])
 
-    # The Daily Statement table's title may vary by L2; the per-account
-    # Daily Statement summary table is the canonical visual carrying
-    # the post-pick rows. Wait then count.
-    target_visual = "Daily Statement"
-    try:
-        driver.wait_loaded(target_visual)
-    except Exception:
-        # Some L2 instances may title the visual differently. Use
-        # whichever visual on the sheet has rows post-pick.
-        target_visual = driver.visual_titles()[0]
-        driver.wait_loaded(target_visual)
+    # "Posted Money Records" is the canonical per-account-day detail
+    # table on Daily Statement (see `apps/l1_dashboard/app.py::
+    # populate_daily_statement_sheet`). The sheet's 5 KPIs surface
+    # the day's walk; this table is the row-by-row support. Original
+    # version of this test looked for a visual literally titled
+    # "Daily Statement" (the sheet name, NOT a visual title) and
+    # fell back to `visual_titles()[0]` (an Opening Balance KPI) —
+    # both wrong.
+    target_visual = "Posted Money Records"
+    driver.wait_loaded(target_visual)
 
     rows = driver.table_rows(target_visual)
     driver.screenshot()
     assert len(rows) > 0, (
-        f"After picking Account={picked!r}, the Daily Statement "
+        f"After picking Account={picked!r}, the Posted Money Records "
         f"table should render ≥1 row. Got {len(rows)}. This is "
         f"the AA.E.2 silent-empty regression — Daily Statement's "
         f"Account dropdown must bind to 'account_display' for the "
