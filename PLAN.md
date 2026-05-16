@@ -558,6 +558,71 @@ Today's `Transfer.Parent` is single-valued. Chains where N parent firings want t
 
 ---
 
+## Phase AC — Rename to `recon-gen` (trademark + scope clarity)
+
+**Why:** "QuickSight" is an AWS trademark. Using it in our package name (`quicksight-gen`), CLI command, import path, and repo name is a trademark-infringement risk that grows as the project gets more visibility. Beyond the legal exposure, the name is also *factually misleading* — the tool generates AWS QuickSight artifacts AND a HTMX-rendered alternative (App2) AND a regulator-ready PDF report, and its purpose is reconciliation, not "QuickSight". `recon-gen` captures the actual scope.
+
+The tool still talks to AWS QuickSight as a target system, so technical references in the codebase (e.g. comments, error messages, AWS API call shapes, "QS" abbreviations inside helper docstrings, "QuickSight" in `Type=POSTGRESQL` choice documentation) **stay**. What changes is *our* branding — the package name, CLI command, import path, repo name, resource tags, ID prefixes, README/docs/handbook prose, and Audit PDF cover.
+
+**Timing** (user-locked 2026-05-16): AC lands as a **clean release** — no transitional shim, no dual-scan back-compat. User confirms zero live AWS resources currently carry `ManagedBy: quicksight-gen` tags, so no cleanup back-compat is needed either. The clean-release framing tilts the timing toward landing AC **right after AA, before AB starts** — AA is days of UX work and closes quickly; AB is a multi-month SPEC build-out that would multiply the rename's diff surface across hundreds of new files. AC.spike.1 below is the residual conversation on exact ordering.
+
+### AC.spike — Open decisions to lock before any AC.1+ work
+
+- [ ] **AC.spike.1 — Timing within "after AA".** Three sub-options: (a) **AC immediately after AA closes** (clean-release between phases — cleanest cut, no other in-flight phases need re-flowing through the rename), (b) **AC before AA closes** (rename first, then finish AA on the renamed codebase — costs the in-progress AA work a churn cycle but means AA ships with the new name out the gate), (c) **AC after AA + first slice of AB**, only if AB.1 (inbound caps) is tiny enough to ship as a clean spike-doc-only effort. User to ratify (a) vs (b); (c) is the unusual case.
+- [ ] **AC.spike.2 — Repo rename redirects.** GitHub auto-creates a HTTP redirect from old → new repo URL after rename (per their docs, "as long as no new repo with the old name is created"). Are we OK relying on that, or do we want to keep a stub repo at `Quicksight-Generator` with a README pointing to the new location? **Recommendation**: rely on the auto-redirect; don't create a stub (creates an exception to their redirect rule, then the redirect dies).
+
+### AC.locked — Decisions confirmed before sub-phase work
+
+- **PyPI shim**: **None.** `quicksight-gen` v10.x is the last release under that name; `recon-gen` v11.0.0 is the first release under the new name. README install instructions flip cleanly; users update their reqs once. No meta-package, no deprecation warning shim — clean cut. (Bias toward simplicity since the user base is small enough that a one-time install-line update isn't a meaningful break.)
+- **Resource tag back-compat**: **None.** Zero live `ManagedBy: quicksight-gen` resources to scan for. New deploys stamp `ManagedBy: recon-gen`; cleanup looks for that only. (Saves a meaningful chunk of AC.B + AC.C complexity.)
+- **Version cut**: **v11.0.0.** Continuous with the engineering history; the package rename is signaled by the new PyPI name, not a version reset. (Avoids the "fresh v1.0.0" oversell — the tool isn't new, just renamed.)
+
+### AC.A — Package + import path rename
+
+- [ ] **AC.A.1 — `pyproject.toml`: package name + entry-point script.** `name = "recon-gen"` (was `quicksight-gen`); `[project.scripts]` `recon-gen = "recon_gen.__main__:main"` (was `quicksight-gen = "quicksight_gen.__main__:main"`); build-backend includes `[tool.setuptools.packages.find]` filter for the new package dir.
+- [ ] **AC.A.2 — `src/quicksight_gen/` → `src/recon_gen/`.** `git mv` to preserve history. Recursive, so all subpackages move together. Verify `pyproject.toml`'s include-package-data still resolves the test fixtures + docs + vendor bundles.
+- [ ] **AC.A.3 — Mass-rename `quicksight_gen` → `recon_gen` across imports.** ~hundreds of files in `src/` + `tests/`. Sed-style sweep (`grep -r quicksight_gen src/ tests/` for the inventory; `rg --files-with-matches 'quicksight_gen' src/ tests/ | xargs sed -i ''`). Verify pyright strict-scope still resolves; rerun unit suite.
+- [ ] **AC.A.4 — `runs/`, `tests/`, scripts: `.venv/bin/quicksight-gen` → `.venv/bin/recon-gen`.** Sweep `tests/`, `scripts/`, `run_tests.sh`, `.githooks/`, `Makefile` (if any) for the literal binary name.
+- [ ] **AC.A.5 — Verify (unit + pyright + commit).**
+
+### AC.B — CLI + ID prefix rename
+
+- [ ] **AC.B.1 — ID prefix flip.** Current: `Config.prefixed("foo")` → `qsgen-prod-foo` (per `deployment_name = "qsgen-prod"`). Post-rename: `recon-prod-foo` (default `deployment_name` in cfg templates flips from `qsgen-prod` to `recon-prod`). Sweep `b.15.lint.qs-gen-prefix` AST lint rule (and rename it to `b.15.lint.recon-prefix`) to enforce the new prefix.
+- [ ] **AC.B.2 — Smoke test against a synthetic deploy (no AWS).** Emit JSON via `recon-gen json apply -c <test-cfg>` (no `--execute`), assert generated IDs all start with `recon-prod-`. Inspect tag block: `ManagedBy: recon-gen`, `Deployment: recon-prod`.
+
+### AC.C — Resource tag rename (clean cut)
+
+- [ ] **AC.C.1 — Stamp `ManagedBy: recon-gen` on new deploys.** Update `Config.tags()`. Single change site. (No dual-scan back-compat needed per AC.locked — zero live legacy resources.)
+- [ ] **AC.C.2 — Cleanup probe filters on new tag only.** `apps/*/cleanup.py` + `common/cleanup.py` scan for `ManagedBy: recon-gen` exclusively. Tests verify the post-rename single-tag form.
+
+### AC.D — Branding + docs sweep
+
+- [ ] **AC.D.1 — README.md** — title, intro, install instructions, badge URLs.
+- [ ] **AC.D.2 — CLAUDE.md** — first line ("# QuickSight Analysis Generator" → "# Recon Generator" or similar), Quick Reference, Commands section (every `quicksight-gen <verb>` flips to `recon-gen <verb>`).
+- [ ] **AC.D.3 — `src/quicksight_gen/docs/`** (mkdocs source): `mkdocs.yml::site_name`; first-level pages where the tool's name appears in body prose; the audit PDF generator's cover title if it currently includes the tool name.
+- [ ] **AC.D.4 — Handbook prose sweep.** `docs/handbook/*.md`, `docs/concepts/*.md`, `docs/walkthroughs/*.md`. Distinguish: keep "AWS QuickSight" (factual reference to AWS's product, technically correct) versus drop "QuickSight Generator" / "QuickSight Analysis Generator" (our tool name, branding).
+- [ ] **AC.D.5 — Operational footguns + quirks log** — references to "QS" stay (technical abbreviation for the target system); "the tool" / "this generator" stays neutral; "QuickSight Generator" → "Recon Generator".
+- [ ] **AC.D.6 — Audit PDF cover.** Inspect `common/pdf/audit_chrome.py` and verify the cover title is already neutral ("Audit Reconciliation Report" — likely yes) versus needing a flip.
+- [ ] **AC.D.7 — Memory + reference docs.** User's personal `MEMORY.md` references — leave alone (user-owned). CLAUDE.md repo header references — flip.
+
+### AC.E — Repo rename + GitHub redirects
+
+- [ ] **AC.E.1 — Rename GitHub repo** `chotchki/Quicksight-Generator` → `chotchki/recon-gen`. GitHub auto-creates a HTTP redirect (per `AC.spike.5`).
+- [ ] **AC.E.2 — Update remote URLs in CI workflows + README badges.** `gh api repos/chotchki/Quicksight-Generator/...` etc. become `chotchki/recon-gen/...`. Sweep `.github/workflows/*.yml`, README badge SVG URLs.
+- [ ] **AC.E.3 — Operator runbook: `git remote set-url origin <new-url>`** — surface the one-line command in the v11 release notes. Old remote URLs keep working via GitHub's redirect but switching is a 30-second cleanup.
+
+### AC.F — PyPI release + cutover (clean cut)
+
+- [ ] **AC.F.1 — TestPyPI dry-run.** Publish `recon-gen` v11.0.0a1 to TestPyPI. Fresh-venv install + `recon-gen --help` smoke. Verify the `e2e-against-testpypi` job in `release.yml` flows cleanly with the new package name.
+- [ ] **AC.F.2 — Publish to prod PyPI.** Cut `v11.0.0` tag on main; release.yml runs `publish-pypi` for `recon-gen`. The `quicksight-gen` v10.x train ends here — no v11 meta-package, no shim. README install line flips to `pip install recon-gen` / `uv add recon-gen`.
+
+### AC.G — End-of-phase
+
+- [ ] **AC.G.1 — Verify chain (full 13-cell db matrix + browser canary).** Same shape as Z.D.1 / AB.5.1, with the new CLI command + import path.
+- [ ] **AC.G.2 — Commit, archive Phase AC to PLAN_ARCHIVE.md, push.** Tag `v11.0.0`. Update README install instructions to point at `recon-gen`. Phase history one-liner notes the rename + reasoning.
+
+---
+
 ## Phase Q (continued) — CLI / YAML ergonomics
 
 The standing "Phase Q" thread (Q.1–Q.5 + Q.3.a shipped; see Phase history). What's still open: the CLI-shape revisit below, plus the older "schema ergonomics around the L2 yaml" item (task #488 — fold into Q.6's spike or its own sub-item when scoped). Queues behind Phase X.
