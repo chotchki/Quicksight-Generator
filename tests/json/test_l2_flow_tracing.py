@@ -1025,6 +1025,60 @@ def test_exceptions_sheet_visuals_read_unified_dataset() -> None:
             assert v.columns[0].column.dataset.identifier == expected_ds
 
 
+# -- AA.C.6 hygiene-exceptions panel pin (mirrors AA.C.3.f's L1 check) ------
+
+
+def _l2ft_text_box_by_id(sheet, text_box_id: str):
+    """Lookup helper — find one TextBox on ``sheet`` by its id. Mirrors
+    ``tests/json/test_l1_dashboard.py::_text_box_by_id`` for the L2FT
+    sheets (AA.C.4 added the bottom hygiene panel TextBox, so the
+    sheet no longer has a single-TextBox shape)."""
+    for tb in sheet.text_boxes:
+        if tb.text_box_id == text_box_id:
+            return tb
+    raise AssertionError(
+        f"no TextBox with id {text_box_id!r}; sheet has "
+        f"{[tb.text_box_id for tb in sheet.text_boxes]!r}"
+    )
+
+
+def test_aa_c_4_l2ft_exceptions_sheet_carries_hygiene_panel() -> None:
+    """AA.C.4: the L2 Hygiene Exceptions sheet has a bottom panel
+    sourced from ``src/quicksight_gen/docs/L2FT_Exceptions.md``. Unlike
+    L1 (which lands one panel per invariant kind on its dedicated
+    sheet), the L2FT side rolls every check kind onto the one unified
+    sheet — so the panel is the bullet-roll-up shape, not a stack of
+    per-kind panels. This test pins both the presence + the
+    every-kind-appears contract at JSON-emit level."""
+    inst = load_instance(SASQUATCH_PR_YAML)
+    app = build_l2_flow_tracing_app(_CFG, l2_instance=inst)
+    sheet = _sheet_by_name(app, "L2 Exceptions")
+    panel = _l2ft_text_box_by_id(sheet, "l2ft-hygiene-panel")
+    # Roll-up framing — the operator should know at a glance why this
+    # sheet exists.
+    assert "L2-to-runtime correspondence" in panel.content, (
+        "L2FT panel must explain the L2-to-runtime framing — the "
+        "panel_markdown intro paragraph that calls it out is missing."
+    )
+    # Every authored check kind must appear in the panel — drops a
+    # bullet per kind so the roll-up reads as a catalog. The titles
+    # match the unified dataset's ``check_type`` literals exactly
+    # (verified separately in test_unified_exceptions_dataset_unions_...).
+    for kind_title in (
+        "Chain Orphans",
+        "Unmatched Rail Name",
+        "Dead Rails",
+        "Dead Bundles Activity",
+        "Dead Metadata Declarations",
+        "Dead Limit Schedules",
+    ):
+        assert kind_title in panel.content, (
+            f"L2FT panel missing roll-up bullet for "
+            f"{kind_title!r} — every check kind in the unified "
+            f"dataset must surface in the panel for parity."
+        )
+
+
 def test_unified_exceptions_dataset_unions_all_six_check_types() -> None:
     """The unified dataset's SQL UNIONs all 6 check_type literals so
     every L2 hygiene check feeds the same KPI / bar / table. Catches
