@@ -362,7 +362,10 @@ _DAILY_STATEMENT_DESCRIPTION = (
     "Drift = stored closing − (opening + signed-net flow); on a healthy "
     "feed it's exactly zero, so non-zero drift here is the single "
     "visual cue the underlying ledger doesn't reconcile for that "
-    "account-day. Mirrors AR's Daily Statement pattern."
+    "account-day. Mirrors AR's Daily Statement pattern. "
+    "Account picker lists accounts with stored daily balances only "
+    "(L2 control-account stubs that lack their own balance row are "
+    "filtered out); pick a Role first to narrow the Account list."
 )
 
 
