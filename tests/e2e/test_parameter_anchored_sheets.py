@@ -101,3 +101,44 @@ def test_l2ft_transfer_templates_anchor_control_present_and_populated(
         driver, dashboard_arg, sheet_name="Transfer Templates",
         anchor_label="Template", visual_title="Template Instances",
     )
+
+
+def test_money_trail_anchor_pick_narrows_hop_by_hop_table(
+    inv_dashboard_driver,
+) -> None:
+    """Picking a real Chain root transfer narrows the Hop-by-Hop table.
+
+    Renderer-agnostic exercise of ``pick_filter`` against the Money
+    Trail anchor dropdown — the QS-side flavour is the MUI Autocomplete
+    (search-variant) that lazy-renders options and demands a typed
+    query to surface them, behaviour first observed in AA.H.7 / driven
+    by the driver in AA.H.8. The protocol verb encapsulates the
+    typing + listbox-narrow dance so this test stays the same shape
+    on both renderers: discover a real option via ``filter_options``,
+    pick it with ``pick_filter``, assert the table re-fetches to
+    non-empty hop rows for that root.
+
+    Doubles as a regression guard for the AA.H.8 driver change — if a
+    future refactor breaks the search-variant path on the QS leg
+    (or the equivalent Tom Select widget on App2), this fails before
+    it ships.
+    """
+    driver, dashboard_arg = inv_dashboard_driver
+    driver.open(dashboard_arg, sheet="Money Trail")
+    driver.wait_loaded("Money Trail — Hop-by-Hop")
+
+    # Discover a real option to target (data-agnostic).
+    options = driver.filter_options("Chain root transfer")
+    assert options, (
+        "Chain root transfer dropdown returned no options — "
+        "search-variant lazy-render fix may have regressed"
+    )
+    target_value = options[0]
+
+    driver.pick_filter("Chain root transfer", [target_value])
+
+    rows = driver.table_rows("Money Trail — Hop-by-Hop")
+    assert len(rows) > 0, (
+        f"Hop-by-Hop table empty after picking chain root "
+        f"{target_value!r}; expected at least one hop row"
+    )

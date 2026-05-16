@@ -1836,18 +1836,24 @@ def _open_control_dropdown(page: Page, control_title: str, timeout_ms: int) -> N
       with options as ``[role="option"]`` children.
     - **Search-enabled variant** (large option universe, e.g. Money
       Trail's 8080-root-transfer picker): QS swaps to a Material-UI
-      Select with a built-in search input. Trigger is
+      Autocomplete with a built-in search input. Trigger is
       ``[data-automation-id="sheet_control_search_results_dropdown"]``;
       ``sheet_control_value`` is **not in the DOM at all**. Popover
-      lands at ``[data-automation-id="sheet_control_menu_dropdown"]``
-      (different attribute, same ``[role="option"]`` children).
+      lands at
+      ``[data-automation-id="sheet_control_search_results_dropdown-menu"]``
+      (suffix ``-menu``, NOT ``sheet_control_menu_dropdown`` — that
+      was an earlier wrong guess from AA.H.7), and the popover holds
+      a ``MuiAutocomplete`` widget whose ``[role="option"]`` items are
+      **not rendered on open**. The widget lazy-mounts the listbox
+      only after the search input receives focus + an ArrowDown press
+      (or typed input). Per AA.H.8 (DOM dump verified 2026-05-16), we
+      detect the search-variant popover after the trigger click and
+      focus its input + press ArrowDown to force the listbox to
+      render before the option-wait fires.
 
-    AA.B.2-era triage discovered this divergence via the AA.H+H.6 DOM
-    dump (the Money Trail anchor failure persisted across 4 chains
-    because the driver only knew about the simple variant). Cardinality
-    threshold isn't documented; QS picks the variant client-side based
-    on declared values count. We dispatch on selector presence: try the
-    simple-variant trigger first, fall back to search-variant if absent.
+    Cardinality threshold isn't documented; QS picks the variant
+    client-side based on declared values count. Dispatch on selector
+    presence: simple trigger first, fall back to search trigger.
     """
     card_selector = (
         f'[data-automation-id="sheet_control"]'
@@ -1877,18 +1883,29 @@ def _open_control_dropdown(page: Page, control_title: str, timeout_ms: int) -> N
     # combobox's onClick handler hasn't attached — retry until the listbox
     # appears or timeout.
     page.locator(trigger).first.click(timeout=timeout_ms)
-    # Wait for ANY ``[role="option"]`` to appear under either popover
-    # container shape OR loose in a ``[role="listbox"]``. Some control
-    # instances skip the listbox role and put options directly under the
-    # popover — match all three.
     popover_simple = (
         f'[data-automation-id="sheet_control_value-menu"]'
         f'[data-automation-context="{control_title}"]'
     )
     popover_search = (
-        f'[data-automation-id="sheet_control_menu_dropdown"]'
+        f'[data-automation-id="sheet_control_search_results_dropdown-menu"]'
         f'[data-automation-context="{control_title}"]'
     )
+    # Step 1: wait for whichever popover container the variant rendered.
+    page.locator(f'{popover_simple}, {popover_search}').first.wait_for(
+        state="visible", timeout=timeout_ms,
+    )
+    # Step 2: search-variant only — MUI Autocomplete inside the popover
+    # lazy-mounts its listbox. Focus the input + ArrowDown to render
+    # options. ``count()`` is a fast DOM-only check; simple-variant
+    # popovers don't contain this input so the block no-ops there.
+    search_input = page.locator(f'{popover_search} input').first
+    if search_input.count() > 0:
+        search_input.click(timeout=timeout_ms)
+        page.keyboard.press("ArrowDown")
+    # Step 3: wait for at least one ``[role="option"]`` under either
+    # popover shape OR loose in a ``[role="listbox"]`` (some controls
+    # put options directly under the popover without listbox role).
     page.wait_for_selector(
         f'{popover_simple} [role="option"], '
         f'{popover_search} [role="option"], '
@@ -1902,12 +1919,42 @@ def set_dropdown_value(
 ) -> None:
     """Pick a single value from a SINGLE_SELECT FilterControl by title.
 
-    Opens the dropdown for ``control_title`` and clicks the option whose
-    text equals ``value``. Use ``clear_dropdown`` to reset to "All".
-    Dismisses the popover with Escape so subsequent visual interactions
-    aren't blocked by the listbox overlay.
+    Opens the dropdown for ``control_title`` and clicks the option
+    whose text equals ``value``. Use ``clear_dropdown`` to reset to
+    "All". Dismisses the popover with Escape so subsequent visual
+    interactions aren't blocked by the listbox overlay.
+
+    Handles both ``_open_control_dropdown`` variants transparently:
+
+    - **Simple variant** — listbox is fully rendered on open;
+      ``has_text`` finds the option directly.
+    - **Search-enabled variant** (MUI Autocomplete) — options are
+      virtualized and ``value`` may live outside the rendered window.
+      Type ``value`` into the autocomplete search input first so the
+      Autocomplete narrows to the matching subset, then click. This
+      is the operator's actual flow for an 8000-option dropdown
+      (you can't scroll to your target — you type to find it). Per
+      AA.H.8 the driver carries this dance so every ``pick_filter``
+      / ``set_dropdown_value`` caller works against both variants
+      without renderer-specific code in the test.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
+    popover_search = (
+        f'[data-automation-id="sheet_control_search_results_dropdown-menu"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    search_input = page.locator(f'{popover_search} input').first
+    if search_input.count() > 0:
+        # MUI Autocomplete: narrow the listbox via the search input.
+        # ``fill`` debounces + repaints the option list; wait for the
+        # filtered ``[role="option"]`` to appear before clicking so
+        # we don't race a stale option from the pre-filter listbox.
+        search_input.fill(value, timeout=timeout_ms)
+        page.wait_for_selector(
+            f'{popover_search} [role="option"], '
+            f'[role="listbox"] [role="option"]',
+            timeout=timeout_ms, state="visible",
+        )
     page.locator(
         _OPTION_SELECTOR, has_text=value,
     ).first.click(timeout=timeout_ms)

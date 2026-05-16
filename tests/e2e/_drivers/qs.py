@@ -435,6 +435,10 @@ class QsEmbedDriver:
         # AA.A but the verb stays general for future compare-N keepers).
         # Then block until the dataset re-query lands (per the protocol's
         # "block until the affected visuals re-fetch").
+        # ``set_dropdown_value`` transparently handles both the simple
+        # and search-enabled (MUI Autocomplete) variants — the driver
+        # encapsulates the typing dance so tests stay renderer-agnostic
+        # (AA.H.8).
         vals = list(values)
         if len(vals) == 1:
             set_dropdown_value(

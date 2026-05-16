@@ -463,13 +463,18 @@ with two different DOM trees depending on how many distinct values
 the linked column produces. Small option-universe (Account Network's
 ~25 accounts) → the **simple variant**: trigger at
 `[data-automation-id="sheet_control_value"]`, popover at
-`[data-automation-id="sheet_control_value-menu"]`. Large option-
-universe (Money Trail's ~8080 chain roots) → the **search-enabled
-variant**: trigger at
+`[data-automation-id="sheet_control_value-menu"]`, listbox renders
+all options on open. Large option-universe (Money Trail's ~8080
+chain roots) → the **search-enabled variant**: trigger at
 `[data-automation-id="sheet_control_search_results_dropdown"]` —
 **`sheet_control_value` is not in the DOM at all** — popover at
-`[data-automation-id="sheet_control_menu_dropdown"]`. Both popovers
-contain `[role="option"]` children.
+`[data-automation-id="sheet_control_search_results_dropdown-menu"]`
+(suffix `-menu`, NOT `sheet_control_menu_dropdown` — that was an
+earlier wrong guess corrected via DOM dump in AA.H.8). The popover
+holds a **MUI Autocomplete** widget whose `[role="option"]` items
+are virtualized and **don't render on open** — the autocomplete
+input must take typed input (or ArrowDown) before the listbox
+mounts.
 
 The cardinality threshold isn't documented; QS appears to pick the
 variant client-side based on the dataset's value count. The same
@@ -478,16 +483,20 @@ how many rows the `LinkedValues.from_column(...)` companion returns
 at render time.
 
 **Workaround.** `_open_control_dropdown` in
-`src/quicksight_gen/common/browser/helpers.py` now dispatches on
-selector presence: it counts `sheet_control_value` matches inside
-the card; if zero, falls back to `sheet_control_search_results_dropdown`.
-The wait-for-popover step accepts either popover-container
-automation-id, so `[role="option"]` children are discovered the same
-way for both variants. (Verified AA.H.6+B.1 era against
+`src/quicksight_gen/common/browser/helpers.py` dispatches in two
+steps: (1) counts `sheet_control_value` matches inside the card to
+pick simple-vs-search trigger; (2) after click, if the popover
+contains a search input (MUI Autocomplete), focuses it + presses
+ArrowDown to force the listbox to render before the option-wait
+fires. `set_dropdown_value` likewise types the requested value
+into the search input before clicking, so `pick_filter` works
+transparently against both variants from a test author's
+perspective. (Verified AA.H.6+B.1 / AA.H.8 against
 `qsgen-sp_pg_aw-investigation-dashboard` — the Money Trail
-"Chain root transfer" dropdown failed for 4 consecutive chains
-because the driver only knew about the simple variant; the AA.H+H.6
-DOM-dump capture surfaced the divergence in one look.)
+"Chain root transfer" dropdown failed across multiple chains
+before the AA.H.8 fix landed; the DOM-dump capture surfaced both
+the wrong popover-id assumption *and* the lazy-render quirk in one
+artifact.)
 
 **Suggested fix.** Document the cardinality threshold (or expose a
 stable variant-agnostic automation-id like
