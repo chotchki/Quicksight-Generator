@@ -232,10 +232,25 @@ def webkit_page(
         # ``browser/<test_id>/`` dir regardless of when the exception
         # actually surfaces.
         test_id = _test_id_from_pytest_env()
+        # Attach sinks to the page so ``trigger_failure_capture`` can read
+        # them from outside the ``with`` block. This bridges the pytest
+        # fixture-vs-direct-raise gap: pytest's yield-fixture semantics
+        # don't re-throw test-body exceptions back into the fixture's
+        # generator, so the ``except BaseException:`` below never fires
+        # for a typical e2e test failure. The fixture's teardown (or
+        # ``pytest_runtest_makereport`` hook) reaches in via these attrs
+        # and calls ``trigger_failure_capture(page)`` directly.
+        page._qs_gen_console_sink = console_messages  # type: ignore[attr-defined]: monkey-attach sink for trigger_failure_capture
+        page._qs_gen_network_sink = network_responses  # type: ignore[attr-defined]: see _qs_gen_console_sink above
+        page._qs_gen_test_id = test_id  # type: ignore[attr-defined]: see _qs_gen_console_sink above
         failed = False
         try:
             yield page
         except BaseException:
+            # Direct-raise path (eg unit tests that `raise` inside the
+            # ``with`` block — see ``tests/unit/test_browser_trace_smoke``).
+            # Pytest e2e fixtures take the explicit-trigger path instead;
+            # see ``trigger_failure_capture``.
             failed = True
             _capture_failure_screenshot(page, test_id)
             _capture_failure_dom(page, test_id)
@@ -244,9 +259,74 @@ def webkit_page(
             _capture_failure_network(network_responses, test_id)
             raise
         finally:
-            _stop_and_maybe_save_trace(context, failed=failed, test_id=test_id)
+            # Track "did the fixture caller already trigger capture
+            # explicitly" so we don't double-emit trace.zip (and so the
+            # trace-saving decision matches the actual outcome). The
+            # explicit trigger sets ``page._qs_gen_capture_triggered``.
+            triggered_externally = bool(
+                getattr(page, "_qs_gen_capture_triggered", False),
+            )
+            # Trigger may have rewritten the test_id (so all 6 artifacts
+            # cluster under one dir even when the trigger passes an
+            # override). Read the latest value back from the page.
+            final_test_id: str = getattr(page, "_qs_gen_test_id", None) or test_id
+            _stop_and_maybe_save_trace(
+                context,
+                failed=failed or triggered_externally,
+                test_id=final_test_id,
+            )
             context.close()
             browser.close()
+
+
+def trigger_failure_capture(page: Page, *, test_id: str | None = None) -> None:
+    """Public-API capture trigger for the pytest-fixture path.
+
+    Pytest's yield-fixture semantics don't re-throw test-body exceptions
+    back into the fixture's generator — so ``webkit_page``'s
+    ``except BaseException:`` handler never fires for a typical e2e
+    test failure. The fixture's teardown (post-yield code, after
+    consulting ``request.node.rep_call.failed`` via the standard
+    ``pytest_runtest_makereport`` hook) calls this function instead to
+    drop the same six artifacts.
+
+    Reads the sinks ``webkit_page`` attached to the page
+    (``_qs_gen_console_sink``, ``_qs_gen_network_sink``,
+    ``_qs_gen_test_id``). Falls back to ``_test_id_from_pytest_env()``
+    when no test_id is passed and no page-attached default exists.
+
+    Sets ``page._qs_gen_capture_triggered = True`` so ``webkit_page``'s
+    ``finally`` block knows to save the trace.zip (otherwise the trace
+    would only land when the exception bubbled through the
+    ``except``).
+
+    Idempotent — calling twice with the same test_id just overwrites
+    the artifacts (last call wins).
+    """
+    resolved_test_id: str
+    if test_id is not None:
+        resolved_test_id = test_id
+    else:
+        resolved_test_id = (
+            getattr(page, "_qs_gen_test_id", None) or _test_id_from_pytest_env()
+        )
+    # Sinks are list[str] attached by ``webkit_page``; cast through the
+    # ``getattr`` Any to satisfy strict pyright without an explicit Any.
+    console_messages: list[str] = getattr(page, "_qs_gen_console_sink", None) or []
+    network_responses: list[str] = getattr(page, "_qs_gen_network_sink", None) or []
+    # Signal to webkit_page's finally block: trace.zip should land
+    # alongside the other artifacts. We also overwrite the page-attached
+    # test_id so the finally block's trace-save uses the same dir as the
+    # 5 artifacts we just wrote (otherwise trace would orphan to the
+    # webkit_page-entry test_id while screenshot/dom/etc go to the
+    # override-passed test_id — a confusing split).
+    page._qs_gen_capture_triggered = True  # type: ignore[attr-defined]: signal trace-save to webkit_page finally
+    page._qs_gen_test_id = resolved_test_id  # type: ignore[attr-defined]: align trace dir with artifact dir
+    _capture_failure_screenshot(page, resolved_test_id)
+    _capture_failure_dom(page, resolved_test_id)
+    _capture_failure_console(console_messages, resolved_test_id)
+    _capture_failure_qs_errors(page, resolved_test_id)
+    _capture_failure_network(network_responses, resolved_test_id)
 
 
 def _stop_and_maybe_save_trace(

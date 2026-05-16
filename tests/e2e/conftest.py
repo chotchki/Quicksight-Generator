@@ -409,6 +409,53 @@ def l2ft_app(cfg):
 # in ~1–2 s, acceptable. See docs/audits/x_2_u_parametrized_driver_spike.md.
 
 
+def _maybe_capture_on_failure(request, driver) -> None:  # type: ignore[no-untyped-def]: pytest types + driver duck-typing
+    """AA.H.6 — bridge the pytest yield-fixture gap.
+
+    Pytest's yield-fixture semantics don't re-throw the test-body
+    exception back into the fixture's generator (the fixture's
+    teardown code runs as if the test passed). That means
+    ``webkit_page``'s ``except BaseException:`` never fires for the
+    normal pytest e2e path, and the 6 capture artifacts never land.
+
+    This helper closes the gap: invoked from fixture teardown (after
+    ``yield``), it consults ``request.node.rep_call`` (set by the
+    ``pytest_runtest_makereport`` hook above) and triggers
+    ``trigger_failure_capture`` when the test body actually failed.
+    No-op on pass / skip / fixture-setup-failure.
+
+    Driver duck-typing: ``QsEmbedDriver`` exposes ``._page``,
+    ``App2Driver`` exposes ``.page``. Try both; if neither resolves to
+    a Playwright Page, the capture is silently skipped (a non-browser
+    driver has nothing to dump).
+    """
+    rep = getattr(request.node, "rep_call", None)
+    if rep is None or not rep.failed:
+        return
+    page = getattr(driver, "_page", None) or getattr(driver, "page", None)
+    if page is None:
+        return
+    # typing-smell: ignore[no-playwright-leak]: this is the dedicated
+    # bridge from pytest's makereport hook to the capture pipeline; it
+    # ISN'T an e2e test reaching into Playwright, it's the conftest
+    # gluing the fixture-yield-semantics gap. trigger_failure_capture
+    # IS the DashboardDriver-friendly verb — it takes the Page from
+    # ``driver._page`` / ``driver.page`` and writes 6 artifacts. There's
+    # nowhere else to invoke it from.
+    from quicksight_gen.common.browser.helpers import (  # typing-smell: ignore[no-playwright-leak]: conftest glue bridges pytest-makereport hook to capture pipeline
+        _sanitize_test_id,
+        trigger_failure_capture,
+    )
+
+    # Pin to the failing test's nodeid (parametrized form), not the
+    # ambient PYTEST_CURRENT_TEST that might have rolled to the next
+    # test's setup phase by the time fixture teardown runs.
+    test_id = _sanitize_test_id(
+        request.node.nodeid.replace("/", "_").replace("::", "__").replace(".py", "")
+    )
+    trigger_failure_capture(page, test_id=test_id)
+
+
 def _parametrized_dashboard_driver(  # type: ignore[no-untyped-def]: return-type annotation would force a driver import at module scope
     request, *, cfg, region, account_id, dashboard_id, app, short,
 ):
@@ -436,6 +483,9 @@ def _parametrized_dashboard_driver(  # type: ignore[no-untyped-def]: return-type
             aws_account_id=account_id, aws_region=region,
         ) as driver:
             yield driver, dashboard_id
+            # AA.H.6 — fixture-teardown capture trigger (pytest yield
+            # semantics don't propagate test failures into the fixture).
+            _maybe_capture_on_failure(request, driver)
     else:  # app2
         if not getattr(cfg, "demo_database_url", None):
             pytest.skip(
@@ -455,6 +505,8 @@ def _parametrized_dashboard_driver(  # type: ignore[no-untyped-def]: return-type
             dashboard_id=short, dashboard_title=f"{short} (live)",
         ) as driver:
             yield driver, short
+            # AA.H.6 — see QS branch above.
+            _maybe_capture_on_failure(request, driver)
 
 
 @pytest.fixture(params=["qs", "app2"])

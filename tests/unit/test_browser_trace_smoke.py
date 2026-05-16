@@ -28,7 +28,10 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.browser.helpers import webkit_page
+from quicksight_gen.common.browser.helpers import (
+    trigger_failure_capture,
+    webkit_page,
+)
 from quicksight_gen.common.env_keys import QS_GEN_RUN_DIR, QS_GEN_TRACE_ALL
 
 
@@ -207,6 +210,70 @@ def test_failure_path_writes_trace_and_all_five_dumps(
     # Extracted trace dir alongside the zip — for grepability.
     assert (capture_dir / "trace").is_dir(), (
         f"trace/ extracted dir should land alongside trace.zip on failure"
+    )
+
+
+def test_explicit_trigger_writes_all_artifacts_for_pytest_fixture_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """AA.H.6 regression guard for the pytest-fixture path.
+
+    pytest's ``yield``-fixture semantics don't re-throw test-body
+    exceptions back into the fixture's generator — so
+    ``webkit_page``'s ``except BaseException:`` never fires for a
+    real e2e test failure (the original AA.H regression-guard test
+    raises inside the ``with`` block, which is a different code
+    path). Production fixtures call ``trigger_failure_capture(page)``
+    explicitly from teardown after consulting
+    ``request.node.rep_call.failed`` via the standard
+    ``pytest_runtest_makereport`` hook.
+
+    This test exercises the explicit-trigger contract directly: open
+    ``webkit_page``, exit cleanly (no exception), but call
+    ``trigger_failure_capture`` mid-block — the same shape as fixture
+    teardown. All 6 artifacts must land regardless of whether the
+    ``with`` block ultimately raised.
+    """
+    _try_webkit_launch_or_skip()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setenv(QS_GEN_RUN_DIR.name, str(run_dir))
+    monkeypatch.delenv(QS_GEN_TRACE_ALL.name, raising=False)
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "tests/unit/test_browser_trace_smoke.py::explicit_trigger (call)",
+    )
+
+    with webkit_page(headless=True) as page:
+        page.goto(_HELLO_PAGE)
+        page.wait_for_selector("h1")
+        # Simulate what `_maybe_capture_on_failure` does in production:
+        # explicit trigger with a pinned test_id (in production this is
+        # ``request.node.nodeid``, sanitized). The fixture exits the
+        # ``with`` block cleanly afterward — no exception bubbles into
+        # webkit_page's except handler.
+        trigger_failure_capture(page, test_id="explicit_trigger_smoke")
+
+    capture_dir = run_dir / "browser" / "explicit_trigger_smoke"
+    expected = ["trace.zip", "screenshot.png", "dom.html", "console.txt",
+                "network.txt", "qs_errors.txt"]
+    for name in expected:
+        path = capture_dir / name
+        assert path.exists(), (
+            f"{name} missing for explicit-trigger path "
+            f"(this is the regression mode where pytest fixture teardown "
+            f"calls trigger_failure_capture explicitly). "
+            f"contents: {sorted(p.name for p in capture_dir.iterdir())}"
+        )
+    dom_text = (capture_dir / "dom.html").read_text(encoding="utf-8")
+    assert "<h1>hello</h1>" in dom_text
+    # trace.zip should also land because trigger_failure_capture sets
+    # ``page._qs_gen_capture_triggered = True``, which webkit_page's
+    # finally block honors as "the trace should be saved even though
+    # no exception bubbled".
+    assert (capture_dir / "trace").is_dir(), (
+        f"trace/ should land — trigger_failure_capture must flip "
+        f"_qs_gen_capture_triggered so the trace-save decision matches"
     )
 
 
