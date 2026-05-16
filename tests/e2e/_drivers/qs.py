@@ -357,9 +357,23 @@ class QsEmbedDriver:
         #    frames, NOT a fixed wait — user direction: time-based
         #    waits are a major smell), then scroll-accumulate the now-
         #    fully-paginated table.
-        scroll_visual_into_view(
-            self._page, visual_title, self._visual_timeout,
-        )
+        #
+        # AA.H.11.followon — `scroll_visual_into_view` waits for
+        # ``.grid-container`` to mount. Empty tables (matview returned
+        # zero rows) never mount one, so the helper raises TimeoutError
+        # at the full visual_timeout (15s by default) and the test dies
+        # instead of cleanly reporting 0. Pre-AA.H.11 the bundled helper
+        # wrapped this in try/except with a plain JS scrollIntoView
+        # fallback; the AA.H.11 split dropped the fallback. Restore the
+        # same shape with a tight 5s window — on timeout, fall through
+        # to ``count_table_rows`` (returns 0 for empty tables, which is
+        # the correct answer — `test_parameter_anchored_sheets`'s
+        # `_assert_anchor_present_and_populated` calls this exactly to
+        # decide whether to ``pytest.skip`` on an empty source).
+        try:
+            scroll_visual_into_view(self._page, visual_title, timeout_ms=5_000)
+        except Exception:
+            return max(0, count_table_rows(self._page, visual_title))
         if not table_is_paginated(self._page, visual_title):
             return max(0, count_table_rows(self._page, visual_title))
         if bump_table_page_size_to_10000(
