@@ -187,17 +187,13 @@ class TestBaselineLegLoop:
             instance, prefix=_SASQUATCH_PR_PREFIX, anchor=_ANCHOR,
         )
         n = sql.count("INSERT INTO sasquatch_pr_transactions")
-        # R.1.f §1: total expected ~3k-100k legs over 90 days for
-        # sasquatch_pr. Post-Z.B (2026-05-15) rail-name collapse, the
-        # classifier in seed.py::_classify_rail no longer matches the
-        # majority of Customer*/Merchant* rail names (the names changed
-        # from short transfer_type tokens like "ach_inbound" to long
-        # rail-name identifiers like "CustomerInboundACH"); those fall
-        # through to OTHER kind with low daily-target volume. Threshold
-        # is widened to track the post-Z.B reality (~3k legs) until the
-        # classifier is rewired to match on rail-name substrings.
-        assert 3_000 <= n <= 100_000, (
-            f"R.2.b should emit 3k-100k baseline legs for sasquatch_pr; "
+        # R.1.f §1: total expected ~30k-100k legs over 90 days for
+        # sasquatch_pr. Restored to 30k lower bound after Z.C.7 follow-on
+        # rewired ``seed.py::_classify_rail`` to substring-match the
+        # post-Z.B CamelCase rail names (`CustomerInboundACH` etc.)
+        # instead of the legacy snake_case tokens (`ach_inbound`).
+        assert 30_000 <= n <= 100_000, (
+            f"R.2.b should emit 30k-100k baseline legs for sasquatch_pr; "
             f"got {n}"
         )
 

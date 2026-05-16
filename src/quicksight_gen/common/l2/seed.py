@@ -1334,25 +1334,31 @@ def _classify_rail(rail: Rail) -> _RailKind:
         return _RailKind.AGGREGATING_DAILY
 
     # Z.B (2026-05-15): rail.name IS the type identifier under the
-    # symmetric collapse. Heuristic falls back to OTHER on mismatch.
+    # symmetric collapse. Z.C.7 follow-on (2026-05-15): rewired from
+    # snake_case exact match (legacy `transfer_type`) to substring
+    # match on the CamelCase rail.name (e.g. CustomerInboundACH,
+    # MerchantPayoutWire, CustomerInboundACHReturnNSF). Order matters:
+    # `return` must come before `inbound` so an ACH return doesn't get
+    # misclassified as a customer inbound. Heuristic falls back to OTHER
+    # on mismatch.
     tt = str(rail.name).lower()
-    if tt == "wire_concentration":
-        return _RailKind.CONCENTRATION
-    if tt == "sale":
-        return _RailKind.CARD_SALE
-    if tt == "card_settlement":
-        return _RailKind.EXTERNAL_CARD_SETTLEMENT
-    if tt.startswith("payout_"):
-        return _RailKind.MERCHANT_PAYOUT
-    if tt.startswith("return_"):
+    if "return" in tt:
         return _RailKind.ACH_RETURN
-    if tt == "fee":
+    if "concentration" in tt:
+        return _RailKind.CONCENTRATION
+    if "cardsale" in tt or ("merchant" in tt and "card" in tt and "sale" in tt):
+        return _RailKind.CARD_SALE
+    if "cardsettlement" in tt or ("externalcard" in tt) or tt == "card_settlement":
+        return _RailKind.EXTERNAL_CARD_SETTLEMENT
+    if "payout" in tt:
+        return _RailKind.MERCHANT_PAYOUT
+    if "fee" in tt:
         return _RailKind.CUSTOMER_FEE
-    if tt in {"ach_inbound", "wire_inbound", "cash_deposit"}:
+    if "inbound" in tt or "deposit" in tt:
         return _RailKind.CUSTOMER_INBOUND
-    if tt in {"ach_outbound", "wire_outbound", "cash_withdrawal"}:
+    if "outbound" in tt or "withdrawal" in tt:
         return _RailKind.CUSTOMER_OUTBOUND
-    if tt.startswith("internal") or "_internal" in tt or tt == "charge":
+    if "internal" in tt or "charge" in tt or "subledger" in tt:
         return _RailKind.INTERNAL_TRANSFER
     return _RailKind.OTHER
 

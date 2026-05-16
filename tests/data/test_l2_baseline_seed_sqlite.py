@@ -256,14 +256,12 @@ class TestSeedEndToEndSqlite:
         n_db = cur.execute(
             "SELECT COUNT(*) FROM sasquatch_pr_daily_balances",
         ).fetchone()[0]
-        # Post-Z.B rail-name collapse: many sasquatch_pr rails now
-        # classify to OTHER kind in seed.py::_classify_rail (the names
-        # changed from "ach_inbound" to "CustomerInboundACH" — see
-        # test_l2_baseline_seed.py::test_sasquatch_pr_lands_in_target_band).
-        # Lower bound is widened to track the post-Z.B reality until the
-        # classifier is rewired to match on rail-name substrings.
-        assert 3_000 <= n_tx <= 200_000, (
-            f"sasquatch_pr transactions: expected 3k-200k, got {n_tx}"
+        # Restored to 30k lower bound after Z.C.7 follow-on rewired
+        # ``seed.py::_classify_rail`` to substring-match the post-Z.B
+        # CamelCase rail names (`CustomerInboundACH` etc.) instead of
+        # the legacy snake_case tokens (`ach_inbound`).
+        assert 30_000 <= n_tx <= 200_000, (
+            f"sasquatch_pr transactions: expected 30k-200k, got {n_tx}"
         )
         assert 1_000 <= n_db <= 10_000, (
             f"sasquatch_pr daily_balances: expected 1k-10k, got {n_db}"
