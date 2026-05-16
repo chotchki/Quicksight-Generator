@@ -682,23 +682,6 @@ def wait_for_dashboard_loaded(page: Page, timeout_ms: int) -> None:
     page.wait_for_selector('[role="tab"]', timeout=timeout_ms, state="attached")
 
 
-def wait_for_visuals_rendered(page: Page, timeout_ms: int, min_visuals: int = 1) -> None:
-    """Wait for visual containers to finish their loading state.
-
-    QuickSight visuals show a loading skeleton while data fetches. We
-    poll for the absence of skeleton/loading classes within visual cells.
-    """
-    page.wait_for_function(
-        f"""() => {{
-            const cells = document.querySelectorAll('[data-automation-id*="visual"], [class*="visual-container"]');
-            if (cells.length < {min_visuals}) return false;
-            // No element should still be in a loading state
-            const loading = document.querySelectorAll('[class*="loading"], [class*="Loading"], [aria-busy="true"]');
-            return loading.length === 0;
-        }}""",
-        timeout=timeout_ms,
-    )
-
 
 def get_sheet_tab_names(page: Page) -> list[str]:
     """Return the visible sheet tab labels in order."""
@@ -747,48 +730,8 @@ def click_sheet_tab(page: Page, name: str, timeout_ms: int) -> None:
         )
 
 
-def selected_sheet_name(page: Page) -> str:
-    """Return the label of the currently active sheet tab, or empty string."""
-    el = page.query_selector('[data-automation-id="selectedTab_sheet_name"]')
-    return el.inner_text().strip() if el else ""
 
 
-def wait_for_sheet_tab(page: Page, name: str, timeout_ms: int) -> None:
-    """Block until the active sheet tab's label equals ``name``.
-
-    Used after a drill-down click to confirm navigation landed on the
-    expected sheet. For deliberate tab switches use ``click_sheet_tab``
-    which also waits for prior-sheet visuals to tear down.
-    """
-    page.wait_for_function(
-        f"""() => {{
-            const el = document.querySelector('[data-automation-id="selectedTab_sheet_name"]');
-            return el && el.innerText.trim() === {name!r};
-        }}""",
-        timeout=timeout_ms,
-    )
-
-
-def wait_for_table_cells_present(page: Page, timeout_ms: int) -> None:
-    """Wait until at least one table cell (row 0, col 0) renders on the
-    active sheet. Useful after tab switches before asserting on row content.
-    """
-    page.wait_for_selector(
-        '[data-automation-id^="sn-table-cell-0-0"]',
-        timeout=timeout_ms,
-        state="attached",
-    )
-
-
-def first_table_cell_text(page: Page, row: int, col: int) -> str:
-    """Return the text of cell ``(row, col)`` in the first detail table on
-    the active sheet. Targets the global ``sn-table-cell-{row}-{col}``
-    automation id — use ``click_first_row_of_visual`` when multiple tables
-    are on the same sheet.
-    """
-    cell = page.query_selector(f'[data-automation-id="sn-table-cell-{row}-{col}"]')
-    assert cell is not None, f"No cell at row={row} col={col}"
-    return cell.inner_text().strip()
 
 
 def click_first_row_of_visual(
@@ -894,14 +837,6 @@ def sheet_control_titles(page: Page) -> list[str]:
     els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
     return [e.inner_text().strip() for e in els if e.inner_text().strip()]
 
-
-def wait_for_sheet_controls_present(page: Page, timeout_ms: int) -> None:
-    """Wait until at least one filter control is attached on the active sheet."""
-    page.wait_for_selector(
-        '[data-automation-id="sheet_control_name"]',
-        timeout=timeout_ms,
-        state="attached",
-    )
 
 
 def _retry_on_playwright_timeout(
@@ -1261,28 +1196,6 @@ def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> in
     )
 
 
-def wait_for_table_total_rows_to_change(
-    page: Page, visual_title: str, before: int, timeout_ms: int,
-) -> int:
-    """Poll a table's total row count (via ``count_table_total_rows``) until
-    it differs from ``before``. Returns the new total.
-
-    Unlike ``wait_for_table_rows_to_change``, this compares *post-filter*
-    totals, not DOM-visible rows — use it when the table may exceed the
-    virtualization window.
-    """
-    import time
-    deadline = time.monotonic() + timeout_ms / 1000.0
-    while time.monotonic() < deadline:
-        current = count_table_total_rows(page, visual_title, timeout_ms=timeout_ms)
-        if current != before:
-            return current
-        page.wait_for_timeout(500)
-    raise TimeoutError(
-        f"{visual_title!r} total row count never changed from {before} "
-        f"within {timeout_ms}ms"
-    )
-
 
 def count_chart_categories(page: Page, visual_title: str) -> int:
     """Count distinct categorical entries (bars / slices) in a chart.
@@ -1324,24 +1237,6 @@ def count_chart_categories(page: Page, visual_title: str) -> int:
     )
 
 
-def wait_for_chart_categories_to_change(
-    page: Page, visual_title: str, before: int, timeout_ms: int,
-) -> int:
-    """Poll ``count_chart_categories`` until the value differs from ``before``.
-    Returns the new count. Mirrors ``wait_for_table_rows_to_change``.
-    """
-    import time
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        current = count_chart_categories(page, visual_title)
-        if current != before and current >= 0:
-            return current
-        page.wait_for_timeout(250)
-    raise TimeoutError(
-        f"{visual_title!r} chart category count never changed from {before} "
-        f"within {timeout_ms}ms"
-    )
-
 
 def read_chart_categories(page: Page, visual_title: str) -> list[str]:
     """Return the ordered category labels (bar names / slice names) of a
@@ -1378,43 +1273,6 @@ def read_chart_categories(page: Page, visual_title: str) -> list[str]:
     )
 
 
-
-def read_visual_column_values(
-    page: Page, visual_title: str, col_index: int,
-) -> list[str]:
-    """Return the text of every visible cell in column ``col_index`` within
-    the table visual whose title matches ``visual_title``.
-
-    Scoped to the specific visual (unlike the global ``sn-table-cell-{r}-{c}``
-    lookup) so sibling tables can't contaminate the result. Caller is
-    responsible for ensuring the visual is hydrated (use
-    ``scroll_visual_into_view`` or ``count_table_total_rows`` first if the
-    table is below-the-fold or paginated beyond the ~10-row viewport).
-    """
-    return page.evaluate(
-        """({title, col}) => {
-            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
-            for (const v of visuals) {
-                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
-                if (!t || t.innerText.trim() !== title) continue;
-                const out = [];
-                v.querySelectorAll(
-                    `[data-automation-id^="sn-table-cell-"]`
-                ).forEach(c => {
-                    const m = c.getAttribute('data-automation-id').match(
-                        /sn-table-cell-(\\d+)-(\\d+)/
-                    );
-                    if (m && parseInt(m[2]) === col) {
-                        out.push({row: parseInt(m[1]), text: c.innerText.trim()});
-                    }
-                });
-                out.sort((a, b) => a.row - b.row);
-                return out.map(o => o.text);
-            }
-            return null;
-        }""",
-        {"title": visual_title, "col": col_index},
-    ) or []
 
 
 def read_table_rows_dom(
@@ -1509,79 +1367,7 @@ def read_kpi_value(page: Page, visual_title: str) -> str:
 
 
 
-def wait_for_kpi_text_nonempty(
-    page: Page, visual_title: str, timeout_ms: int,
-) -> str:
-    """Poll ``read_kpi_value`` until the KPI is readable, returning its
-    text. Useful pre-filter when the KPI hydrates after the visual
-    mounts but before the test wants to baseline its value.
-    """
-    import time
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        try:
-            value = read_kpi_value(page, visual_title)
-            if value:
-                return value
-        except AssertionError:
-            pass
-        page.wait_for_timeout(250)
-    raise TimeoutError(
-        f"{visual_title!r} KPI never became readable within {timeout_ms}ms"
-    )
 
-
-def wait_for_kpi_value_to_change(
-    page: Page, visual_title: str, before: str, timeout_ms: int,
-) -> str:
-    """Poll ``read_kpi_value`` until the displayed text differs from ``before``.
-    Returns the new value. Raw string comparison — caller parses if needed.
-    """
-    import time
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        current = read_kpi_value(page, visual_title)
-        if current != before:
-            return current
-        page.wait_for_timeout(250)
-    raise TimeoutError(
-        f"{visual_title!r} KPI value never changed from {before!r} "
-        f"within {timeout_ms}ms"
-    )
-
-
-def wait_for_table_nonzero(
-    page: Page, visual_title: str, timeout_ms: int,
-) -> int:
-    """Poll a table visual's row count until it's > 0 (or timeout).
-
-    Returns the new row count. Use this after triggering a filter /
-    dropdown pick when the assertion is "table not empty" rather than
-    "count changed" — the change-based wait would false-timeout when
-    the picked value happens to leave the count unchanged (e.g., an
-    L2FT cascade pick where the value covers every row in the
-    window). The "must remain non-empty" semantic is the actual
-    regression guard for those tests.
-    """
-    page.wait_for_function(
-        """({title}) => {
-            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
-            for (const v of visuals) {
-                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
-                if (!t || t.innerText.trim() !== title) continue;
-                const rows = new Set();
-                v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
-                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
-                    if (m) rows.add(m[1]);
-                });
-                return rows.size > 0;
-            }
-            return false;
-        }""",
-        arg={"title": visual_title},
-        timeout=timeout_ms,
-    )
-    return count_table_rows(page, visual_title)
 
 
 def wait_for_dropdown_options_present(
