@@ -72,16 +72,9 @@ This phase flips the default to **single-select**, which collapses the sentinel-
 
 **Inv totals:** 0 flip, 0 discuss, 2 already single. Source: `src/quicksight_gen/apps/investigation/app.py` lines 723–1002. The walk-the-flow / anchor-dropdown sheets were already single-select by design.
 
-## Open questions for user
+## DISCUSS rows — user ratified (2026-05-15)
 
-Six dropdowns flagged **DISCUSS** all share the same shape: a workflow-state column (`status`, `bundle_status`, `completion_status`, `check_type`) where "show me X AND Y together to compare" is at least conceivable. My default classification is FLIP (per the originating thread's drill-to-one observation), but these are the ones where a real operator might push back.
-
-The two by column:
-
-- **Status workflows** (`pL1TxStatus`, `pL2ftStatus`): "show pending AND failed for stuck-flow triage" — does the operator actually do this, or do they pivot from one to the other?
-- **Completion workflows** (`pL2ftChainsCompletion`, `pL2ftTtCompletion`, `pL1TodaysExcCheckType`, `pL2ftBundle`): completion-status views — same question.
-
-If user picks FLIP for all six, AA.A.3 flips 25 dropdowns total. If user keeps some as KEEPER, AA.A.3 flips fewer; the kept ones stay on the sentinel-guard pattern.
+All six DISCUSS rows resolved to **FLIP**. Both status workflows (`pL1TxStatus`, `pL2ftStatus`) and all four completion/bundle workflows (`pL2ftChainsCompletion`, `pL2ftTtCompletion`, `pL1TodaysExcCheckType`, `pL2ftBundle`) flip to single-select per the drill-to-one default. Total scope of AA.A.3: **31 dropdowns flipped** (25 default-FLIP + 6 ratified-DISCUSS), 5 unchanged (already single).
 
 ## Sequencing implication for AA.A.3
 
