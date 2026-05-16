@@ -428,16 +428,13 @@ Operators don't crack open the manual. The exception-type vocabulary + remediati
 - [ ] **AA.E.2 — Wire across affected sheets.** Likely Daily Statement, Today's Exceptions, Transactions, plus L2FT exception tables. Per-sheet judgment on which form fits the visual layout.
 - [ ] **AA.E.3 — Browser e2e + commit.** Sortability + searchability of the new column form, per renderer.
 
-### AA.G — Dependabot fixes
+### AA.G — Dependabot fixes *(ALREADY SHIPPED — bump landed pre-phase-AA)*
 
-Two open high-severity Dependabot alerts on default branch (2026-05-15), both urllib3 in `uv.lock`, both fixed by bumping to ≥ 2.7.0:
+Two high-severity Dependabot alerts on default branch (GHSA-mf9v-mfxr-j63j decompression-bomb; GHSA-qccp-gfcp-xxvc cross-origin header forwarding), both urllib3, both fixed by bumping to ≥ 2.7.0. Bump landed in commit `c0c2d2f` ("deps: urllib3 2.6.3 → 2.7.0 (2 high CVEs)") before Phase AA branched; both alerts now `state:fixed` per `gh api dependabot/alerts`.
 
-- GHSA-mf9v-mfxr-j63j — decompression-bomb safeguards bypassed in streaming API (vulnerable: `>= 2.6.0, < 2.7.0`)
-- GHSA-qccp-gfcp-xxvc — sensitive headers forwarded across origins on proxied low-level redirects (vulnerable: `>= 1.23, < 2.7.0`)
-
-- [ ] **AA.G.1 — Bump urllib3 to ≥ 2.7.0.** `uv lock --upgrade-package urllib3` (or pin in `pyproject.toml` if a transitive dep is holding the old range). Verify the new version actually lands in `uv.lock`.
-- [ ] **AA.G.2 — Verify suite stays green.** Full unit pass + a smoke through the runner's `up_to=db` chain (urllib3 sits under boto3 + httpx + requests — anything that hits AWS or App2 walks it). Tag any new urllib3-2.7-flagged behavior in tests; nothing in the changelog suggests breaking changes for our usage shape.
-- [ ] **AA.G.3 — Confirm Dependabot closes the alerts.** After push, the alerts should auto-resolve on the next default-branch advance. If they don't, file Dependabot dismissals with a "fixed" reason pointing at the AA.G.1 commit.
+- [x] **AA.G.1 — Bump urllib3 to ≥ 2.7.0.** Shipped in `c0c2d2f`; uv.lock at 2.7.0.
+- [x] **AA.G.2 — Verify suite stays green.** Implicit — `c0c2d2f` is on main and subsequent merges have flown through CI.
+- [x] **AA.G.3 — Confirm Dependabot closes the alerts.** Both alerts now `state:fixed`.
 
 ### AA.F — End-of-phase
 
