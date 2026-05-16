@@ -84,7 +84,9 @@ def apply_schema_to(cfg: Config) -> None:
     DB. Idempotent enough for test setup — schema CREATE IF NOT EXISTS
     handles re-runs."""
     instance = load_instance(SASQUATCH_YAML)
-    schema_sql = emit_schema(instance, dialect=cfg.dialect)
+    schema_sql = emit_schema(
+        instance, prefix=cfg.db_table_prefix, dialect=cfg.dialect,
+    )
     conn = connect_demo_db(cfg)
     try:
         cur = conn.cursor()

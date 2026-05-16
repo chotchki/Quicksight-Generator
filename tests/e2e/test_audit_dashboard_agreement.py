@@ -313,6 +313,7 @@ def seeded_audit(dialect_cfg, tmp_path_factory):
     try:
         scenario = apply_db_seed(
             conn, instance,
+            prefix=cfg.db_table_prefix,
             mode="l1_invariants",
             today=_TODAY,
             dialect=dialect,

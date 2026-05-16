@@ -1020,6 +1020,8 @@ def _build_app(app_name: str):
     cfg = Config(
         aws_account_id="000000000000",
         aws_region="us-east-2",
+        deployment_name="qs-gen",
+        db_table_prefix="spec_example",
         datasource_arn=(
             "arn:aws:quicksight:us-east-2:000000000000:"
             "datasource/qs-gen-demo-datasource"
