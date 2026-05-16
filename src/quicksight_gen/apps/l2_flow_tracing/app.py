@@ -170,7 +170,7 @@ _L2_EXCEPTIONS_DESCRIPTION = (
     "All six L2 hygiene checks unified into one row-per-violation "
     "view. KPI = total open violations; bar chart breaks down by "
     "check_type so you see which check kind dominates today; the "
-    "detail table sorts by magnitude (descending) so the worst "
+    "detail table sorts by count (descending) so the worst "
     "offenders surface first. Each check_type captures a "
     "'declaration vs runtime' mismatch the L1 dashboard doesn't "
     "catch — Chain Orphans, Unmatched Transfer Type, Dead Rails, "
@@ -1216,7 +1216,7 @@ def _populate_l2_exceptions_sheet(
 
     Mirrors L1's Today's Exceptions pattern: one KPI (total count),
     one bar chart (by check_type), one detail table (sorted by
-    magnitude DESC). All six L2 hygiene checks (Chain Orphans,
+    count DESC). All six L2 hygiene checks (Chain Orphans,
     Unmatched Transfer Type, Dead Rails, Dead Bundles Activity,
     Dead Metadata, Dead Limit Schedules) UNION into one
     `unified-exceptions` dataset; the `check_type` discriminator
@@ -1269,14 +1269,16 @@ def _populate_l2_exceptions_sheet(
     # or chain parent (Unmatched Transfer Type, Dead Limit Schedules)
     # land an empty destination — clear "this drill doesn't apply"
     # signal.
-    magnitude_col = ds["magnitude"].numerical(currency=True)
+    # AA.D.1: dropped currency=True — this is an INTEGER count
+    # (orphan rows / dead-declaration rows), not a money amount.
+    count_col = ds["count"].numerical()
     entity_a_col = ds["entity_a"].dim()
     sheet.layout.row(height=14).add_table(
         width=36,
         title="L2 Violation Detail",
         subtitle=(
             "Every row is one detected L2 violation. Sorted by "
-            "magnitude (largest first). Right-click any row to drill "
+            "count (largest first). Right-click any row to drill "
             "into Rails (entity_a → Rail filter) or Chains (entity_a → "
             "Chain filter). Read entity_a / entity_b / detail in the "
             "context of the row's check_type — see the sheet "
@@ -1287,9 +1289,9 @@ def _populate_l2_exceptions_sheet(
             entity_a_col,
             ds["entity_b"].dim(),
             ds["detail"].dim(),
-            magnitude_col,
+            count_col,
         ],
-        sort_by=(magnitude_col, "DESC"),
+        sort_by=(count_col, "DESC"),
         actions=[
             _l2ft_drill(
                 target_sheet=rails_sheet,

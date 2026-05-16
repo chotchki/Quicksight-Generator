@@ -389,12 +389,15 @@ EXC_DEAD_LIMIT_SCHEDULES_CONTRACT = DatasetContract(columns=[
 #   for Unmatched Transfer Type with entity_b NULL).
 # - detail: optional extra context (leg_shape, cap, etc.) — STRING
 #   regardless of source type so the unified projection works.
-# - magnitude: "how bad is it", used for the bar chart's count
-#   weighting + the table's sort order. Per check:
+# - count: "how many violation rows of this kind", used for the bar
+#   chart's stacking + the detail table's sort order. Per check:
 #     * Chain Orphans → orphan_count (parent firings without a child)
 #     * Unmatched Transfer Type → posting_count (count of leaking legs)
 #     * Dead Rails / Dead Bundles / Dead Metadata / Dead Limit
 #       Schedules → 1 (each row IS one dead declaration)
+#   (AA.D.1: renamed from `magnitude`, which falsely implied a
+#   continuous-magnitude measure and was being rendered with
+#   currency=True. These are integer counts, not money amounts.)
 UNIFIED_L2_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("check_type", "STRING"),
     # entity_a holds the L2-declared name relevant to each row's
@@ -407,7 +410,7 @@ UNIFIED_L2_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("entity_a", "STRING", shape=ColumnShape.L2_DECLARED_NAME),
     ColumnSpec("entity_b", "STRING"),
     ColumnSpec("detail", "STRING"),
-    ColumnSpec("magnitude", "INTEGER"),
+    ColumnSpec("count", "INTEGER"),
 ])
 
 
@@ -1343,10 +1346,10 @@ def build_unified_l2_exceptions_dataset(
     violation dataset (M.3.10l).
 
     Mirrors L1's `todays_exceptions` pattern: one row = one violation;
-    `check_type` is the discriminator; `magnitude` is the
-    "how-bad-is-it" metric used for sort + bar weighting. Each branch
-    inlines its own CTEs as a subquery so the outer SELECT can do
-    consistent typing across branches without colliding CTE names.
+    `check_type` is the discriminator; `count` is the per-violation row
+    count used for sort + bar stacking. Each branch inlines its own
+    CTEs as a subquery so the outer SELECT can do consistent typing
+    across branches without colliding CTE names.
 
     Each branch is functionally equivalent to one of the 6 retired
     `build_exc_*` queries, just projected to the unified shape via
@@ -1377,7 +1380,7 @@ def build_unified_l2_exceptions_dataset(
         f"  parent_name AS entity_a,\n"
         f"  child_name AS entity_b,\n"
         f"  CAST(NULL AS VARCHAR(255)) AS detail,\n"
-        f"  CAST(orphan_count AS INTEGER) AS magnitude\n"
+        f"  CAST(orphan_count AS INTEGER) AS count\n"
         f"FROM (\n"
         f"  WITH declared AS (\n{declared_chains}\n),\n"
         f"  edge_runtime AS (\n"
@@ -1494,7 +1497,7 @@ def build_unified_l2_exceptions_dataset(
         f") sub_dead_limits\n"
         # Position-based — Oracle's ORDER BY after UNION ALL doesn't
         # recognize aliases when each branch carries WITH+CTE subqueries.
-        # Columns: 1=check_type, 2=entity_a, 3=entity_b, 4=detail, 5=magnitude.
+        # Columns: 1=check_type, 2=entity_a, 3=entity_b, 4=detail, 5=count.
         f"ORDER BY 5 DESC, 1, 2, 3"
     )
     return build_dataset(

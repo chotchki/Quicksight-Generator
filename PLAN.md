@@ -420,7 +420,7 @@ Operators don't crack open the manual. The exception-type vocabulary + remediati
 
 ### AA.D — Label hygiene
 
-- [ ] **AA.D.1 — Rename "magnitude" → "count" on L2FT Exceptions.** Surface the audit doc / pyright errors first to know if this is a column rename (matview), measure rename (analysis-only), or visual label (one-line). Cascade through any test assertions that reference the old name. Re-deploy + browser-verify.
+- [x] **AA.D.1 — Rename "magnitude" → "count" on L2FT Exceptions.** Done. Dataset SQL alias `AS magnitude` → `AS count` (single site in the UNION ALL's first branch; subsequent branches inherit by position). `UNIFIED_L2_EXCEPTIONS_CONTRACT`'s `ColumnSpec("magnitude", "INTEGER")` → `ColumnSpec("count", "INTEGER")`. Visual layer: `ds["magnitude"].numerical(currency=True)` → `ds["count"].numerical()` (also dropped the spurious `currency=True` — these are integer counts, not money amounts). Sheet subtitle + section docstrings: "magnitude" → "count" prose. No matview involved (computed in the dataset's CustomSQL per-query), so no schema-hash impact. 1830 unit + json tests green. Browser verify rolls in with AA.A.5's chain re-run.
 
 ### AA.E — Search by name AND id
 
@@ -428,10 +428,9 @@ Operators don't crack open the manual. The exception-type vocabulary + remediati
 - [ ] **AA.E.2 — Wire across affected sheets.** Likely Daily Statement, Today's Exceptions, Transactions, plus L2FT exception tables. Per-sheet judgment on which form fits the visual layout.
 - [ ] **AA.E.3 — Browser e2e + commit.** Sortability + searchability of the new column form, per renderer.
 
-### AA.G — Dependabot fixes *(ALREADY SHIPPED — bump landed pre-phase-AA)*
+### AA.G — Dependabot fixes *(COMPLETE — pre-phase-AA)*
 
-Two high-severity Dependabot alerts on default branch (GHSA-mf9v-mfxr-j63j decompression-bomb; GHSA-qccp-gfcp-xxvc cross-origin header forwarding), both urllib3, both fixed by bumping to ≥ 2.7.0. Bump landed in commit `c0c2d2f` ("deps: urllib3 2.6.3 → 2.7.0 (2 high CVEs)") before Phase AA branched; both alerts now `state:fixed` per `gh api dependabot/alerts`.
-
+- [x] **AA.G — Dependabot urllib3 alerts closed.** Two high-severity alerts on default branch (GHSA-mf9v-mfxr-j63j decompression-bomb; GHSA-qccp-gfcp-xxvc cross-origin header forwarding), both urllib3, both fixed by the bump to ≥ 2.7.0 in commit `c0c2d2f` ("deps: urllib3 2.6.3 → 2.7.0 (2 high CVEs)") before Phase AA branched. uv.lock at 2.7.0; suite stayed green on subsequent main merges; both alerts now `state:fixed` per `gh api dependabot/alerts`.
 - [x] **AA.G.1 — Bump urllib3 to ≥ 2.7.0.** Shipped in `c0c2d2f`; uv.lock at 2.7.0.
 - [x] **AA.G.2 — Verify suite stays green.** Implicit — `c0c2d2f` is on main and subsequent merges have flown through CI.
 - [x] **AA.G.3 — Confirm Dependabot closes the alerts.** Both alerts now `state:fixed`.
