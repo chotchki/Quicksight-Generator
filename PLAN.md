@@ -573,7 +573,7 @@ The tool still talks to AWS QuickSight as a target system, so technical referenc
 
 ### AC.locked — Decisions confirmed before sub-phase work
 
-- **PyPI shim**: **None.** `quicksight-gen` v10.x is the last release under that name; `recon-gen` v11.0.0 is the first release under the new name. README install instructions flip cleanly; users update their reqs once. No meta-package, no deprecation warning shim — clean cut. (Bias toward simplicity since the user base is small enough that a one-time install-line update isn't a meaningful break.)
+- **PyPI shim**: **Yes — `quicksight-gen` as a thin meta-package.** `quicksight-gen` continues to publish, but every release from v11.0.0 onward contains nothing but a single dependency on `recon-gen` of the same version. Anyone with `quicksight-gen` pinned in their reqs gets the new package transparently on next `pip install -U` / `uv sync` — no manual install-line edit required. The shim's `__init__.py` emits a one-time `DeprecationWarning` on import pointing at the new name. Drop-timeline is a sub-decision (see AC.F.3); recommendation is 2 minor releases (v11.0, v11.1 still ship the shim → v11.2 drops it, ~3 months grace).
 - **Resource tag back-compat**: **None.** Zero live `ManagedBy: quicksight-gen` resources to scan for. New deploys stamp `ManagedBy: recon-gen`; cleanup looks for that only. (Saves a meaningful chunk of AC.B + AC.C complexity.)
 - **Version cut**: **v11.0.0.** Continuous with the engineering history; the package rename is signaled by the new PyPI name, not a version reset. (Avoids the "fresh v1.0.0" oversell — the tool isn't new, just renamed.)
 
@@ -611,10 +611,12 @@ The tool still talks to AWS QuickSight as a target system, so technical referenc
 - [ ] **AC.E.2 — Update remote URLs in CI workflows + README badges.** `gh api repos/chotchki/Quicksight-Generator/...` etc. become `chotchki/recon-gen/...`. Sweep `.github/workflows/*.yml`, README badge SVG URLs.
 - [ ] **AC.E.3 — Operator runbook: `git remote set-url origin <new-url>`** — surface the one-line command in the v11 release notes. Old remote URLs keep working via GitHub's redirect but switching is a 30-second cleanup.
 
-### AC.F — PyPI release + cutover (clean cut)
+### AC.F — PyPI release + cutover (clean cut + meta-package shim)
 
-- [ ] **AC.F.1 — TestPyPI dry-run.** Publish `recon-gen` v11.0.0a1 to TestPyPI. Fresh-venv install + `recon-gen --help` smoke. Verify the `e2e-against-testpypi` job in `release.yml` flows cleanly with the new package name.
-- [ ] **AC.F.2 — Publish to prod PyPI.** Cut `v11.0.0` tag on main; release.yml runs `publish-pypi` for `recon-gen`. The `quicksight-gen` v10.x train ends here — no v11 meta-package, no shim. README install line flips to `pip install recon-gen` / `uv add recon-gen`.
+- [ ] **AC.F.1 — `quicksight-gen-shim/` meta-package skeleton.** New top-level dir with its own `pyproject.toml` declaring `name = "quicksight-gen"`, `version` matching `recon-gen`, single dependency on `recon-gen==<same-version>`, no other deps. `quicksight-gen-shim/src/quicksight_gen/__init__.py` contains only: `import warnings; warnings.warn("The 'quicksight-gen' package is renamed to 'recon-gen'. This shim will be removed in v11.2.0. Run 'pip install recon-gen' (or 'uv add recon-gen') and update your imports from 'quicksight_gen' to 'recon_gen'.", DeprecationWarning, stacklevel=2)`. No re-exports — installed code that imports `quicksight_gen` still fails (the shim only handles the install path; import path migrations are still operator's job).
+- [ ] **AC.F.2 — TestPyPI dry-run for BOTH packages.** Publish `recon-gen` v11.0.0a1 + `quicksight-gen` v11.0.0a1 (shim) to TestPyPI. Fresh-venv install via both names; `recon-gen --help` smoke; verify `pip install quicksight-gen` pulls down `recon-gen` as the transitive dep. Verify `e2e-against-testpypi` job in `release.yml` flows cleanly with the new package name.
+- [ ] **AC.F.3 — Drop-timeline sub-decision.** Lock the shim's lifetime. **Recommendation**: v11.0 + v11.1 ship the shim; v11.2 drops it (~2 minor releases / ~3 months). User to ratify if a different cadence fits (e.g. one-release-only if visibility is small; v12.0-drop if you want a longer grace).
+- [ ] **AC.F.4 — Publish to prod PyPI.** Cut `v11.0.0` tag on main; release.yml runs `publish-pypi` for BOTH `recon-gen` AND `quicksight-gen` (the shim's `pyproject.toml` builds + uploads as a sibling release). README install line flips to `pip install recon-gen` / `uv add recon-gen` as the recommended path, with a footnote that `pip install quicksight-gen` still works through the shim during the deprecation window.
 
 ### AC.G — End-of-phase
 
