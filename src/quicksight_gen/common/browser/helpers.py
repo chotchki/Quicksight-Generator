@@ -1926,10 +1926,21 @@ def _open_control_dropdown(page: Page, control_title: str, timeout_ms: int) -> N
     # options directly under the popover without listbox role). The
     # global ``[role="listbox"]`` clause is the safety net when the
     # popover container omits ``data-automation-context``.
+    #
+    # AA.H.10.followon — also accept the MUI Autocomplete's
+    # ``.MuiAutocomplete-noOptions`` empty-state element. An empty
+    # dropdown (the dataset returned zero rows for the deployed L2)
+    # surfaces that element instead of any ``[role="option"]``; without
+    # this branch the wait times out with an unhelpful "click target not
+    # found" instead of letting ``read_dropdown_options`` return ``[]``
+    # so the caller can ``pytest.skip`` cleanly. Caught on the L2FT
+    # Bundle dropdown + Money Trail Chain-root-transfer anchor against
+    # the ``spec_example`` deploy.
     page.wait_for_selector(
         f'{popover_simple} [role="option"], '
         f'{popover_search} [role="option"], '
-        f'[role="listbox"] [role="option"]',
+        f'[role="listbox"] [role="option"], '
+        f'.MuiAutocomplete-noOptions',
         timeout=timeout_ms, state="visible",
     )
 

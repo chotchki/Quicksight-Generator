@@ -58,9 +58,34 @@ def _assert_anchor_present_and_populated(
 ) -> None:
     """Open ``sheet_name``, wait for ``visual_title`` to render, then
     assert a filter control labelled like ``anchor_label`` exists and is
-    populated with options."""
+    populated with options.
+
+    Skips when the anchor's source dataset is empty for the deployed L2 —
+    e.g. Money Trail's Chain-root-transfer dropdown sources from
+    ``_inv_money_trail_edges`` which is empty for ``spec_example`` (zero
+    chains, single-leg templates only). Same shape as the
+    ``test_min_hop_amount_slider`` skip: the dropdown wouldn't have any
+    options to test against, and asserting on options times out at the
+    QS-side MUI Autocomplete "No options" sentinel rather than failing
+    with a useful message. Tracked via the visual's row count —
+    ``table_row_count == 0`` ⇒ skip with the L2-specific note.
+    """
     driver.open(dashboard_arg, sheet=sheet_name)
     driver.wait_loaded(visual_title)
+
+    # AA.H-followon — skip when the anchor's source dataset is empty.
+    # ``table_row_count`` walks every page; the AA.H.8 chain showed the
+    # Money Trail anchor dropdown sits behind ``MuiAutocomplete-noOptions``
+    # when the Hop-by-Hop matview is empty, and the test then times out
+    # waiting for `[role="option"]` instead of surfacing the real cause.
+    if driver.table_row_count(visual_title) == 0:
+        pytest.skip(
+            f"{sheet_name!r}: {visual_title!r} starts empty for the "
+            f"deployed L2 — the anchor dropdown sources the same dataset, "
+            f"so it has no options to test against. Same shape as the "
+            f"Money-Trail min-hop slider skip. Plant the upstream "
+            f"scenario in the demo seed to re-light this."
+        )
 
     labels = driver.filter_labels()
     matched = next((lbl for lbl in labels if anchor_label in lbl), None)
@@ -126,6 +151,23 @@ def test_money_trail_anchor_pick_narrows_hop_by_hop_table(
     driver, dashboard_arg = inv_dashboard_driver
     driver.open(dashboard_arg, sheet="Money Trail")
     driver.wait_loaded("Money Trail — Hop-by-Hop")
+
+    # AA.H-followon — skip when the source matview is empty (e.g. the
+    # deployed ``spec_example`` L2 which has zero chains + single-leg
+    # templates only, so ``_inv_money_trail_edges`` ends up empty and
+    # the QS-side MUI Autocomplete dropdown shows "No options"). Same
+    # shape as the min-hop-amount slider skip; without this guard the
+    # ``filter_options`` call times out in ``wait_for_selector`` on the
+    # missing ``[role="option"]`` and surfaces an unhelpful Playwright
+    # timeout instead of the real cause.
+    if driver.table_row_count("Money Trail — Hop-by-Hop") == 0:
+        pytest.skip(
+            "Money Trail — Hop-by-Hop starts empty for the deployed L2 "
+            "(no multi-hop edges seeded — spec_example declares zero "
+            "chains and single-leg templates); the Chain-root-transfer "
+            "dropdown has no options to test against. Plant multi-hop "
+            "chain firings in the demo seed to re-light this."
+        )
 
     # Discover a real option to target (data-agnostic).
     options = driver.filter_options("Chain root transfer")
