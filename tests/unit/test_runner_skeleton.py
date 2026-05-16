@@ -3477,23 +3477,27 @@ def test_derive_qs_user_arn_boto3_errors_propagate(monkeypatch: Any) -> None:
 def test_resolve_l2_yaml_for_spec_named_synthesizes_with_spec_name(
     tmp_path: Path,
 ) -> None:
-    """m.4.f — sp/sq cells synthesize a per-cell yaml that's the bundled
-    fixture with the ``instance`` field overridden to ``spec.name``.
-    DB schema prefix downstream becomes ``<spec.name>_*`` so sister cells
-    deploying to shared external Aurora don't collide."""
+    """m.4.f + Z.C.9 — sp/sq cells synthesize a per-cell yaml that's the
+    bundled fixture with any legacy ``instance:`` key stripped (the L2
+    loader hard-rejects it post-Z.C). The per-cell DB-table prefix moves
+    to ``cfg.db_table_prefix`` via the ``QS_GEN_DB_TABLE_PREFIX`` env
+    override that ``_run_one_variant`` injects per cell — not via the
+    L2 yaml anymore."""
     spec = _spec_pg_aw()  # sp_pg_aw
     resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
     assert resolved == tmp_path / "_synth_l2.yaml"
     text = resolved.read_text()
-    assert "instance: sp_pg_aw" in text
+    # Z.C: instance: must NOT be in the synthesized yaml (loader rejects it).
+    assert "instance:" not in text
 
 
 def test_resolve_l2_yaml_for_spec_us_synthesizes_with_spec_name(
     tmp_path: Path,
 ) -> None:
-    """`us` cells: load the operator's yaml, override instance to
-    spec.name, write to run_dir/_synth_l2.yaml. Operator-supplied
-    content (accounts/rails/etc.) is preserved; only `instance` shifts."""
+    """`us` cells: load the operator's yaml, defensively pop any legacy
+    ``instance:`` key, write to run_dir/_synth_l2.yaml. Operator-supplied
+    content (accounts/rails/etc.) is preserved; the per-cell DB-table
+    prefix is set via env (Z.C.9)."""
     user_yaml = tmp_path / "my_custom.yaml"
     user_yaml.write_text(
         "instance: custom_name\n"
@@ -3509,7 +3513,8 @@ def test_resolve_l2_yaml_for_spec_us_synthesizes_with_spec_name(
     resolved = runner._resolve_l2_yaml_for_spec(spec, tmp_path)
     assert resolved == tmp_path / "_synth_l2.yaml"
     text = resolved.read_text()
-    assert "instance: us_pg_lo" in text
+    # Z.C: instance: stripped from operator yaml (loader rejects it).
+    assert "instance:" not in text
     # Operator content preserved.
     assert "description: my custom L2" in text
     assert "GLControl" in text
@@ -3518,9 +3523,10 @@ def test_resolve_l2_yaml_for_spec_us_synthesizes_with_spec_name(
 def test_resolve_l2_yaml_for_spec_fuzz_synthesizes_with_spec_name(
     tmp_path: Path,
 ) -> None:
-    """m.3.a + m.4.f — fuzz cells synthesize via random_l2_yaml(seed) AND
-    rewrite the instance field to spec.name. Spec name encodes the seed,
-    so two cells with the same seed get the same instance — by design."""
+    """m.3.a + m.4.f + Z.C.9 — fuzz cells synthesize via random_l2_yaml(seed)
+    and defensively strip any legacy ``instance:`` key. Per-cell prefix
+    moves to env override; the L2 yaml itself is byte-identical to the
+    fuzzer output (modulo the defensive strip)."""
     spec = VariantSpec(
         ScenarioCode("f42"), "pg", "lo", fuzz_seed=42,
     )
@@ -3528,9 +3534,8 @@ def test_resolve_l2_yaml_for_spec_fuzz_synthesizes_with_spec_name(
     assert resolved == tmp_path / "_synth_l2.yaml"
     text = resolved.read_text()
     assert text.strip(), "synthesized yaml is empty"
-    # Per-cell instance override; the fuzzer's default `fuzz_seed_<n>` is gone.
-    assert "instance: f42_pg_lo" in text
-    assert "fuzz_seed_" not in text
+    # Z.C: instance: stripped from fuzz output (loader rejects it).
+    assert "instance:" not in text
 
 
 def test_resolve_l2_yaml_for_spec_fuzz_is_byte_deterministic(

@@ -2319,23 +2319,30 @@ def _resolve_l2_yaml_for_spec(spec: VariantSpec, run_dir: Path) -> Path:
     m.4.f — ALL cells get a per-cell synthesized yaml under
     ``run_dir / "_synth_l2.yaml"``. The synthesis loads the source
     yaml (bundled fixture for sp/sq, operator-supplied for us, fuzz
-    output for f<n>), overrides the ``instance`` field to ``spec.name``,
-    and writes the result. This means:
+    output for f<n>) and writes it back as-is.
 
-    - DB schema prefix becomes ``<spec.name>_*`` (e.g.,
-      ``sp_pg_aw_transactions``) instead of ``spec_example_transactions``.
-      Sister cells (sp_pg_aw + sp_or_aw + sq_pg_aw + ...) deploy to
-      non-colliding tables on shared external Aurora.
-    - cfg.db_table_prefix is set per-cell to the synthesized instance
-      name (Z.C — formerly derived via cfg.l2_instance_prefix /
-      cfg.with_l2_instance_prefix(instance.instance)).
+    Z.C.9 (2026-05-15) follow-on: pre-Z.C this step also injected
+    ``parsed["instance"] = spec.name`` so each cell got a unique
+    ``<spec.name>_*`` DB-table prefix. Z.C dropped the L2 yaml's
+    ``instance:`` field entirely (loader now hard-rejects it) — the
+    per-cell DB-table prefix moves to ``cfg.db_table_prefix`` via the
+    ``QS_GEN_DB_TABLE_PREFIX=qsgen_<spec.name>`` env override that
+    ``_run_one_variant`` injects per cell. Defensively pop any stray
+    ``instance:`` key from the source (older fuzz output, hand-edited
+    user yamls); the loader would reject it anyway.
+
+    - DB schema prefix becomes ``qsgen_<spec.name>_*`` (e.g.,
+      ``qsgen_sp_pg_aw_transactions``) — set via the per-cell env var
+      override. Sister cells (sp_pg_aw + sp_or_aw + sq_pg_aw + ...)
+      deploy to non-colliding tables on shared external Aurora.
+    - QS resource ID prefix becomes ``qsgen-<spec.name>`` via the
+      ``QS_GEN_DEPLOYMENT_NAME`` env override.
     - Fuzz determinism preserved: same seed → same fuzzer output →
-      same synthesized yaml (the instance-rename is the only
-      per-cell mutation, derivable from spec.name).
+      same synthesized yaml (it's now byte-identical to the source).
 
     Operators reproduce a failed fuzz cell with
-    ``--variants=f<seed>_<di>_<ta>`` — same spec.name → same instance
-    rename → byte-identical synthesized yaml.
+    ``--variants=f<seed>_<di>_<ta>`` — same spec.name → same env
+    overrides → byte-identical deploy.
     """
     import yaml  # noqa: PLC0415 — lazy: only needed for synthesis path
     synth_path = run_dir / "_synth_l2.yaml"
@@ -2355,10 +2362,11 @@ def _resolve_l2_yaml_for_spec(spec: VariantSpec, run_dir: Path) -> Path:
     else:
         raise ValueError(f"unknown scenario code {spec.scenario!r}")
 
-    # Override the instance field. yaml.safe_dump preserves insertion
-    # order with sort_keys=False (matches the fuzzer output convention).
+    # Defensive: pop any legacy `instance:` key that may slip in via
+    # older fuzz output or operator-edited user yaml. yaml.safe_dump
+    # preserves insertion order with sort_keys=False.
     parsed = cast("dict[str, Any]", yaml.safe_load(source_text))
-    parsed["instance"] = spec.name
+    parsed.pop("instance", None)
     synth_text = yaml.safe_dump(
         parsed, sort_keys=False, default_flow_style=False, width=120,
     )
