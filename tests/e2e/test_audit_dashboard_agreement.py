@@ -375,13 +375,6 @@ def per_dialect_qs_driver(
     legs — direct-SQL + App2 + PDF — as a clean 3-way. (X.2.j.C: per-leg
     skipping, not per-test.)
     """
-    from quicksight_gen.common.browser.helpers import get_user_arn
-
-    try:
-        get_user_arn()
-    except RuntimeError:
-        yield None  # QS leg unavailable — test runs the other legs
-        return
     try:
         per_dialect_qs_client.describe_dashboard(
             AwsAccountId=per_dialect_account_id,
@@ -394,21 +387,23 @@ def per_dialect_qs_driver(
         # --l2 tests/l2/spec_example.yaml`.
         yield None
         return
-    from tests.e2e._capture import maybe_capture_on_failure
+    # AA.H.12 — shared lifecycle. yield-None policy (NOT skip) when QS
+    # is unavailable so the 4-way test still runs the other legs
+    # (direct SQL + App2 + PDF) as a clean 3-way. Tall viewport keeps
+    # the stacked detail tables (Pending Aging / Unbundled Aging /
+    # Supersession Audit) in the initial render area. AA.H.10 capture
+    # hook is wired by the lifecycle primitive — pre-AA.H.10 this
+    # fixture silently dropped artifacts (today's chain's 4 audit-
+    # agreement failures had no DOM / screenshot / trace).
+    from tests.e2e._drivers._lifecycle import qs_driver_or_none
 
-    with QsEmbedDriver.embed(
-        aws_account_id=per_dialect_account_id,
-        aws_region=per_dialect_region,
+    with qs_driver_or_none(
+        request,
+        account_id=per_dialect_account_id,
+        region=per_dialect_region,
         viewport=(1600, 4000),
     ) as driver:
-        yield driver
-        # AA.H.10 — bridge fixture-teardown capture for test-body
-        # failures. Pre-AA.H.10 this fixture silently dropped artifacts
-        # (today's chain's 4 audit-agreement failures had no DOM /
-        # screenshot / trace). All three QS-driver fixtures now share
-        # the ``maybe_capture_on_failure`` hook from
-        # ``tests/e2e/_capture.py``.
-        maybe_capture_on_failure(request, driver)
+        yield driver  # may be None if get_user_arn failed
 
 
 @pytest.fixture(scope="module")
