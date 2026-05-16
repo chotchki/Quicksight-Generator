@@ -1037,7 +1037,9 @@ def test_unified_exceptions_dataset_unions_all_six_check_types() -> None:
     sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
     for check_type in (
         "Chain Orphans",
-        "Unmatched Transfer Type",
+        # Z.B (2026-05-15) — was "Unmatched Transfer Type"; renamed to
+        # match the Z.B rail-as-type subsumption (AA.C.4 follow-up).
+        "Unmatched Rail Name",
         "Dead Rails",
         "Dead Bundles Activity",
         "Dead Metadata Declarations",

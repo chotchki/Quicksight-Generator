@@ -1413,10 +1413,12 @@ def build_unified_l2_exceptions_dataset(
         f"  WHERE required = 'Required'\n"
         f"    AND parent_firing_count > child_firing_count\n"
         f") sub_chain_orphans\n"
-        # Branch 2: Unmatched Transfer Type
+        # Branch 2: Unmatched Rail Name (Z.B renamed from
+        # "Unmatched Transfer Type"; the check itself was always
+        # rail-keyed — only the label was stale).
         f"UNION ALL\n"
         f"SELECT\n"
-        f"  CAST('Unmatched Transfer Type' AS VARCHAR(50)),\n"
+        f"  CAST('Unmatched Rail Name' AS VARCHAR(50)),\n"
         f"  CAST(rail_name AS VARCHAR(255)),\n"
         f"  CAST(NULL AS VARCHAR(255)),\n"
         f"  CAST(NULL AS VARCHAR(255)),\n"

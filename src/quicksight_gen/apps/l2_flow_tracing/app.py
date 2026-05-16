@@ -56,6 +56,10 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.handbook.l2ft_exceptions import (
+    load_bundled_l2ft_exceptions,
+    panel_markdown as l2ft_panel_markdown,
+)
 from quicksight_gen.common.ids import FilterGroupId, ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.models import DateTimeDefaultValues
@@ -1202,6 +1206,13 @@ def _l2ft_drill(
     )
 
 
+# AA.C.4 — height of the sheet-bottom hygiene-exceptions panel.
+# Mirrors L1's _PANEL_LAYOUT_HEIGHT (apps/l1_dashboard/app.py); kept
+# slightly taller because the L2FT panel is a 6-bullet roll-up
+# rather than per-kind, so the prose runs longer per row.
+_L2FT_PANEL_LAYOUT_HEIGHT = 8
+
+
 def _populate_l2_exceptions_sheet(
     cfg: Config,
     sheet: Sheet,
@@ -1217,11 +1228,18 @@ def _populate_l2_exceptions_sheet(
     Mirrors L1's Today's Exceptions pattern: one KPI (total count),
     one bar chart (by check_type), one detail table (sorted by
     count DESC). All six L2 hygiene checks (Chain Orphans,
-    Unmatched Transfer Type, Dead Rails, Dead Bundles Activity,
+    Unmatched Rail Name, Dead Rails, Dead Bundles Activity,
     Dead Metadata, Dead Limit Schedules) UNION into one
     `unified-exceptions` dataset; the `check_type` discriminator
     column drives the bar chart breakout + the table's left-most
     grouping column.
+
+    AA.C.4 appends a sheet-bottom panel sourced from
+    ``src/quicksight_gen/docs/L2FT_Exceptions.md`` — one bullet per
+    check kind, each carrying the parser-extracted ``**What to do:**``
+    paragraph. Mirrors the AA.C.3 L1 panels but in roll-up form
+    (every L2FT kind lives on this one sheet) rather than per-kind
+    stacked.
 
     Pre-M.3.10l this sheet had 6 vertically-stacked sections
     (header text-box + 2 KPIs + table per check) that totaled ~144
@@ -1306,6 +1324,20 @@ def _populate_l2_exceptions_sheet(
                 trigger="DATA_POINT_MENU",
             ),
         ],
+    )
+
+    # AA.C.4 — sheet-bottom panel sourced from L2FT_Exceptions.md.
+    # All six L2FT hygiene checks roll up onto this one sheet (the
+    # M.3.10l unified-exceptions view), so the panel is a roll-up
+    # bullet list, not per-kind stacked. Mirrors L1's Today's
+    # Exceptions intro panel shape (AA.C.3.e).
+    sections = load_bundled_l2ft_exceptions()
+    sheet.layout.row(height=_L2FT_PANEL_LAYOUT_HEIGHT).add_text_box(
+        TextBox(
+            text_box_id="l2ft-hygiene-panel",
+            content=rt.text_box(rt.markdown(l2ft_panel_markdown(sections))),
+        ),
+        width=36,
     )
 
 
