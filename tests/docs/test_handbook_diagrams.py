@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.handbook.diagrams import (
+from recon_gen.common.handbook.diagrams import (
     render_conceptual,
     render_dataflow,
     render_l2_topology,
 )
-from quicksight_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.loader import load_instance
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -161,7 +161,7 @@ class TestL2Topology:
         # Walk the DOT and assert each template's parent_role chain
         # produces a real edge whose tail is the template node, not
         # ``tmpl``.
-        from quicksight_gen.common.handbook.diagrams import (
+        from recon_gen.common.handbook.diagrams import (
             _build_hierarchy_graph,
         )
 

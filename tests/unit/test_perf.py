@@ -1,4 +1,4 @@
-"""Unit tests for ``quicksight_gen._dev.perf`` (Y.2.gate.c.10).
+"""Unit tests for ``recon_gen._dev.perf`` (Y.2.gate.c.10).
 
 Helpers were lifted from ``scripts/dump_top_queries.py`` (W.8a) so
 both the standalone script and the new in-process e2e conftest
@@ -10,13 +10,13 @@ fixture writes the table).
 
 from __future__ import annotations
 
-from quicksight_gen._dev.perf import (
+from recon_gen._dev.perf import (
     dialect_name,
     fetch_top_queries,
     format_skipped,
     format_top_queries_markdown,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 # -- format_top_queries_markdown -------------------------------------------

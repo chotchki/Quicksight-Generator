@@ -67,7 +67,7 @@ def qs_driver_or_none(
     AA.H.10 contract — pre-AA.H.10, callers open-coded the hook in
     teardown and 2 of 3 fixtures forgot it.
     """
-    from quicksight_gen.common.browser.helpers import get_user_arn
+    from recon_gen.common.browser.helpers import get_user_arn
     from tests.e2e._drivers.qs import QsEmbedDriver
 
     try:

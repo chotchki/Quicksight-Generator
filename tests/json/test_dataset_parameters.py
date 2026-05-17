@@ -23,13 +23,13 @@ unit tests just verify byte-shape, not Aurora-side substitution.
 from __future__ import annotations
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.dataset_contract import (
+from recon_gen.common.dataset_contract import (
     ColumnSpec,
     DatasetContract,
     build_dataset,
 )
-from quicksight_gen.common.ids import ParameterName
-from quicksight_gen.common.models import (
+from recon_gen.common.ids import ParameterName
+from recon_gen.common.models import (
     DataSet,
     DatasetParameter,
     DateTimeDatasetParameter,
@@ -42,7 +42,7 @@ from quicksight_gen.common.models import (
     StringDatasetParameter,
     StringDatasetParameterDefaultValues,
 )
-from quicksight_gen.common.tree import Dataset, IntegerParam, StringParam
+from recon_gen.common.tree import Dataset, IntegerParam, StringParam
 
 
 _CFG = make_test_config()
@@ -63,7 +63,7 @@ def test_string_dataset_parameter_single_value_matches_spike_shape() -> None:
         ),
     ))
     from dataclasses import asdict
-    from quicksight_gen.common.models import _strip_nones
+    from recon_gen.common.models import _strip_nones
     assert _strip_nones(asdict(p)) == {
         "StringDatasetParameter": {
             "Id": "6d1ce7f7-2a8a-405a-b81a-b016a66c0a2f",
@@ -86,7 +86,7 @@ def test_string_dataset_parameter_multi_value_matches_spike_shape() -> None:
         ),
     ))
     from dataclasses import asdict
-    from quicksight_gen.common.models import _strip_nones
+    from recon_gen.common.models import _strip_nones
     assert _strip_nones(asdict(p)) == {
         "StringDatasetParameter": {
             "Id": "751f40e3-eec9-4263-afee-40cfca9661a6",
@@ -108,7 +108,7 @@ def test_integer_dataset_parameter_emits() -> None:
         DefaultValues=IntegerDatasetParameterDefaultValues(StaticValues=[42]),
     ))
     from dataclasses import asdict
-    from quicksight_gen.common.models import _strip_nones
+    from recon_gen.common.models import _strip_nones
     out = _strip_nones(asdict(p))
     assert "IntegerDatasetParameter" in out
     assert out["IntegerDatasetParameter"]["DefaultValues"]["StaticValues"] == [42]
@@ -123,7 +123,7 @@ def test_decimal_dataset_parameter_emits() -> None:
         ),
     ))
     from dataclasses import asdict
-    from quicksight_gen.common.models import _strip_nones
+    from recon_gen.common.models import _strip_nones
     out = _strip_nones(asdict(p))
     assert "DecimalDatasetParameter" in out
 
@@ -138,7 +138,7 @@ def test_datetime_dataset_parameter_emits_with_granularity() -> None:
         ),
     ))
     from dataclasses import asdict
-    from quicksight_gen.common.models import _strip_nones
+    from recon_gen.common.models import _strip_nones
     out = _strip_nones(asdict(p))
     assert out["DateTimeDatasetParameter"]["TimeGranularity"] == "DAY"
 
@@ -189,7 +189,7 @@ def test_build_dataset_registers_params_for_app2_default_substitution() -> None:
     can resolve a visual's ``<<$paramName>>`` defaults at fetch time.
     A dataset built without params registers an empty list (not a
     missing key)."""
-    from quicksight_gen.common.dataset_contract import get_dataset_params
+    from recon_gen.common.dataset_contract import get_dataset_params
 
     contract = DatasetContract(columns=[ColumnSpec("col", "STRING")])
     params = [

@@ -18,18 +18,18 @@ from datetime import date
 
 from pathlib import Path
 
-from quicksight_gen.common.config import (
+from recon_gen.common.config import (
     EtlDatasourceConfig,
     PlantKind,
     TestGeneratorConfig,
 )
-from quicksight_gen.common.l2.studio_state import (
+from recon_gen.common.l2.studio_state import (
     SIDEFILE_NAME,
     StudioState,
     load_studio_state,
     save_studio_state,
 )
-from quicksight_gen.common.l2.tg_cache import TestGeneratorCache
+from recon_gen.common.l2.tg_cache import TestGeneratorCache
 from tests._test_helpers import make_test_config
 
 

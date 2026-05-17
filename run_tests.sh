@@ -11,7 +11,7 @@
 #   ./run_tests.sh down [local|aws]   # tear down (default = both); --yes required
 #   ./run_tests.sh status [--cost]    # what's currently running
 #
-# All real logic lives in src/quicksight_gen/_dev/runner.py. This script
+# All real logic lives in src/recon_gen/_dev/runner.py. This script
 # is a thin shim: verify the venv exists, exec the orchestrator. Argparse
 # is owned by Python.
 set -euo pipefail
@@ -32,4 +32,4 @@ fi
 # the STS+ListUsers derivation, and cfg.default_l2_instance respectively.
 unset AWS_PROFILE QS_E2E_USER_ARN QS_GEN_TEST_L2_INSTANCE
 
-exec .venv/bin/python -m quicksight_gen._dev.runner "$@"
+exec .venv/bin/python -m recon_gen._dev.runner "$@"

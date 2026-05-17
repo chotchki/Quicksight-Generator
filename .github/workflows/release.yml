@@ -59,7 +59,7 @@ jobs:
         run: .venv/bin/playwright install --with-deps webkit
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
-        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
+        run: .venv/bin/pytest --cov=recon_gen --cov-report=xml --cov-report=term
 
   # ---------------------------------------------------------------------------
   # Build sdist + wheel
@@ -149,7 +149,7 @@ jobs:
       - name: Verify CLI version flag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          OUT=$(/tmp/qs-smoke/bin/quicksight-gen --version)
+          OUT=$(/tmp/qs-smoke/bin/recon-gen --version)
           echo "${OUT}"
           echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
 
@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/quicksight-gen
+      url: https://test.pypi.org/p/recon-gen
     permissions:
       id-token: write
     steps:
@@ -224,40 +224,40 @@ jobs:
           python -m venv /tmp/qs-verify-testpypi
           /tmp/qs-verify-testpypi/bin/pip install --upgrade pip
           for attempt in 1 2 3 4 5 6; do
-            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from TestPyPI"
+            echo "Attempt ${attempt}: pip install recon-gen==${TAG} from TestPyPI"
             if /tmp/qs-verify-testpypi/bin/pip install \
                 --index-url https://test.pypi.org/simple/ \
                 --extra-index-url https://pypi.org/simple/ \
-                "quicksight-gen==${TAG}"; then
+                "recon-gen==${TAG}"; then
               echo "Install succeeded on attempt ${attempt}"
               exit 0
             fi
             echo "Install failed; sleeping 30s before retry..."
             sleep 30
           done
-          echo "::error::pip install quicksight-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
+          echo "::error::pip install recon-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
           exit 1
 
       - name: Verify CLI version flag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          OUT=$(/tmp/qs-verify-testpypi/bin/quicksight-gen --version)
+          OUT=$(/tmp/qs-verify-testpypi/bin/recon-gen --version)
           echo "${OUT}"
           echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
 
       - name: Smoke import the public surface
         run: |
           /tmp/qs-verify-testpypi/bin/python -c "
-          from quicksight_gen.common.tree import App, Sheet
-          from quicksight_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
-          from quicksight_gen.common.tree.filters import FilterGroup
-          from quicksight_gen.common.tree.actions import Drill
-          from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
-          from quicksight_gen.common.config import Config
-          from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-          from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
-          from quicksight_gen.apps.investigation.app import build_investigation_app
-          from quicksight_gen.apps.executives.app import build_executives_app
+          from recon_gen.common.tree import App, Sheet
+          from recon_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
+          from recon_gen.common.tree.filters import FilterGroup
+          from recon_gen.common.tree.actions import Drill
+          from recon_gen.common.dataset_contract import DatasetContract, ColumnSpec
+          from recon_gen.common.config import Config
+          from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+          from recon_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+          from recon_gen.apps.investigation.app import build_investigation_app
+          from recon_gen.apps.executives.app import build_executives_app
           print('public surface importable')
           "
 
@@ -325,18 +325,18 @@ jobs:
           python -m venv /tmp/qs-release-e2e
           /tmp/qs-release-e2e/bin/pip install --upgrade pip
           for attempt in 1 2 3 4 5 6; do
-            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from TestPyPI"
+            echo "Attempt ${attempt}: pip install recon-gen==${TAG} from TestPyPI"
             if /tmp/qs-release-e2e/bin/pip install \
                 --index-url https://test.pypi.org/simple/ \
                 --extra-index-url https://pypi.org/simple/ \
-                "quicksight-gen[deploy,demo,audit,e2e]==${TAG}"; then
+                "recon-gen[deploy,demo,audit,e2e]==${TAG}"; then
               echo "Install succeeded on attempt ${attempt}"
               exit 0
             fi
             echo "Install failed; sleeping 30s before retry..."
             sleep 30
           done
-          echo "::error::pip install quicksight-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
+          echo "::error::pip install recon-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
           exit 1
 
       - name: Configure AWS credentials via OIDC
@@ -394,16 +394,16 @@ jobs:
           EOF
 
       - name: Apply schema (DDL)
-        run: /tmp/qs-release-e2e/bin/quicksight-gen schema apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
+        run: /tmp/qs-release-e2e/bin/recon-gen schema apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Apply seed data
-        run: /tmp/qs-release-e2e/bin/quicksight-gen data apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
+        run: /tmp/qs-release-e2e/bin/recon-gen data apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Refresh matviews
-        run: /tmp/qs-release-e2e/bin/quicksight-gen data refresh -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
+        run: /tmp/qs-release-e2e/bin/recon-gen data refresh -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute
 
       - name: Deploy QS resources
-        run: /tmp/qs-release-e2e/bin/quicksight-gen json apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/release-e2e-out --execute
+        run: /tmp/qs-release-e2e/bin/recon-gen json apply -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/release-e2e-out --execute
 
       - name: Run API e2e against TestPyPI wheel
         # Same 3 apps as the standalone e2e-pg-api job.
@@ -523,8 +523,8 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/empty-out
-          /tmp/qs-release-e2e/bin/quicksight-gen json clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/empty-out --execute || true
-          /tmp/qs-release-e2e/bin/quicksight-gen schema clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute || true
+          /tmp/qs-release-e2e/bin/recon-gen json clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml -o /tmp/empty-out --execute || true
+          /tmp/qs-release-e2e/bin/recon-gen schema clean -c /tmp/release-e2e.yaml --l2 /tmp/release-l2.yaml --execute || true
 
       # gate.l.8 — stop the cluster after release-e2e cleanup, BUT only
       # if no other E2E / Release run is still using it ("last one stops
@@ -563,7 +563,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/quicksight-gen
+      url: https://pypi.org/p/recon-gen
     permissions:
       id-token: write
     steps:
@@ -601,37 +601,37 @@ jobs:
           python -m venv /tmp/qs-verify-pypi
           /tmp/qs-verify-pypi/bin/pip install --upgrade pip
           for attempt in 1 2 3 4 5 6; do
-            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from PyPI"
-            if /tmp/qs-verify-pypi/bin/pip install "quicksight-gen==${TAG}"; then
+            echo "Attempt ${attempt}: pip install recon-gen==${TAG} from PyPI"
+            if /tmp/qs-verify-pypi/bin/pip install "recon-gen==${TAG}"; then
               echo "Install succeeded on attempt ${attempt}"
               exit 0
             fi
             echo "Install failed; sleeping 30s before retry..."
             sleep 30
           done
-          echo "::error::pip install quicksight-gen==${TAG} from PyPI failed after 6 attempts (3 min total)"
+          echo "::error::pip install recon-gen==${TAG} from PyPI failed after 6 attempts (3 min total)"
           exit 1
 
       - name: Verify CLI version flag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          OUT=$(/tmp/qs-verify-pypi/bin/quicksight-gen --version)
+          OUT=$(/tmp/qs-verify-pypi/bin/recon-gen --version)
           echo "${OUT}"
           echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
 
       - name: Smoke import the public surface
         run: |
           /tmp/qs-verify-pypi/bin/python -c "
-          from quicksight_gen.common.tree import App, Sheet
-          from quicksight_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
-          from quicksight_gen.common.tree.filters import FilterGroup
-          from quicksight_gen.common.tree.actions import Drill
-          from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
-          from quicksight_gen.common.config import Config
-          from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-          from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
-          from quicksight_gen.apps.investigation.app import build_investigation_app
-          from quicksight_gen.apps.executives.app import build_executives_app
+          from recon_gen.common.tree import App, Sheet
+          from recon_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
+          from recon_gen.common.tree.filters import FilterGroup
+          from recon_gen.common.tree.actions import Drill
+          from recon_gen.common.dataset_contract import DatasetContract, ColumnSpec
+          from recon_gen.common.config import Config
+          from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+          from recon_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+          from recon_gen.apps.investigation.app import build_investigation_app
+          from recon_gen.apps.executives.app import build_executives_app
           print('public surface importable')
           "
 

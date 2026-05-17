@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from quicksight_gen.common.config import load_config
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.config import load_config
+from recon_gen.common.env_keys import (
     QS_GEN_AWS_ACCOUNT_ID,
     QS_GEN_AWS_REGION,
     QS_GEN_DATASOURCE_ARN,

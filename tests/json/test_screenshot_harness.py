@@ -13,14 +13,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from quicksight_gen.common.ids import ParameterName, SheetId
-from quicksight_gen.common.tree import (
+from recon_gen.common.ids import ParameterName, SheetId
+from recon_gen.common.tree import (
     Analysis,
     App,
     IntegerParam,
     Sheet,
 )
-from quicksight_gen.common.browser import ScreenshotHarness
+from recon_gen.common.browser import ScreenshotHarness
 from tests._test_helpers import make_test_config
 
 

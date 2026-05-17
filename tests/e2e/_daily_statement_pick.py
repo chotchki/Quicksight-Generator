@@ -34,8 +34,8 @@ from __future__ import annotations
 
 import psycopg
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.sql.dialect import Dialect, date_trunc_day
+from recon_gen.common.config import Config
+from recon_gen.common.sql.dialect import Dialect, date_trunc_day
 
 
 def find_account_day_with_data(cfg: Config) -> tuple[str, str, str]:

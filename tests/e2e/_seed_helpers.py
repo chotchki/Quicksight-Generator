@@ -14,25 +14,25 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from quicksight_gen.common.db import execute_script
-from quicksight_gen.common.l2 import (
+from recon_gen.common.db import execute_script
+from recon_gen.common.l2 import (
     L2Instance,
     emit_schema,
     refresh_matviews_sql,
 )
-from quicksight_gen.common.l2.auto_scenario import (
+from recon_gen.common.l2.auto_scenario import (
     ScenarioMode,
     add_broken_rail_plants,
     boost_inv_fanout_plants,
     default_scenario_for,
     densify_scenario,
 )
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.seed import (
     ScenarioPlant,
     emit_full_seed,
     emit_seed,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 # Pinned reference date for hash-locked seed determinism (M.2a.8).

@@ -18,7 +18,7 @@ import re
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Identifier,
     L2Instance,
     emit_schema,
@@ -423,7 +423,7 @@ def _instance_with_limits(prefix: str) -> L2Instance:
     """L2 instance with one LimitSchedule entry — exercises the
     inline-CASE-branch lookup the limit_breach view uses."""
     from decimal import Decimal
-    from quicksight_gen.common.l2 import LimitSchedule
+    from recon_gen.common.l2 import LimitSchedule
     return L2Instance(
         accounts=(),
         account_templates=(),
@@ -621,7 +621,7 @@ def _instance_with_pending_age(prefix: str) -> L2Instance:
     Uses a SingleLegRail; the case-branch helper walks both kinds.
     """
     from datetime import timedelta
-    from quicksight_gen.common.l2 import SingleLegRail
+    from recon_gen.common.l2 import SingleLegRail
     return L2Instance(
         accounts=(),
         account_templates=(),
@@ -708,7 +708,7 @@ def _instance_with_unbundled_age(prefix: str) -> L2Instance:
     Uses a SingleLegRail; the case-branch helper walks both kinds.
     """
     from datetime import timedelta
-    from quicksight_gen.common.l2 import SingleLegRail
+    from recon_gen.common.l2 import SingleLegRail
     return L2Instance(
         accounts=(),
         account_templates=(),
@@ -1040,8 +1040,8 @@ def test_l1_invariant_drops_postgres_native_form() -> None:
     """Postgres branch keeps the legacy ``DROP MATERIALIZED VIEW IF EXISTS``
     one-liner per matview — that's the byte-shape every existing test +
     every existing ETL depends on."""
-    from quicksight_gen.common.sql import Dialect
-    from quicksight_gen.common.l2.schema import (
+    from recon_gen.common.sql import Dialect
+    from recon_gen.common.l2.schema import (
         _L1_INVARIANT_DROP_NAMES,
         _emit_l1_invariant_drops,
     )
@@ -1055,8 +1055,8 @@ def test_l1_invariant_drops_postgres_native_form() -> None:
 def test_l1_invariant_drops_oracle_plsql_block() -> None:
     """Oracle branch wraps each DROP in a PL/SQL block that swallows
     ORA-12003 (matview not found) so the script stays idempotent."""
-    from quicksight_gen.common.sql import Dialect
-    from quicksight_gen.common.l2.schema import (
+    from recon_gen.common.sql import Dialect
+    from recon_gen.common.l2.schema import (
         _L1_INVARIANT_DROP_NAMES,
         _emit_l1_invariant_drops,
     )
@@ -1086,8 +1086,8 @@ def test_l1_invariant_drops_preserve_drop_order() -> None:
     """Drop order for the L1 invariant block is fixed: dashboard-shape
     matviews first, helpers last. Reordering would re-introduce the
     "dependent objects still exist" failure on re-runs."""
-    from quicksight_gen.common.sql import Dialect
-    from quicksight_gen.common.l2.schema import _emit_l1_invariant_drops
+    from recon_gen.common.sql import Dialect
+    from recon_gen.common.l2.schema import _emit_l1_invariant_drops
 
     out = _emit_l1_invariant_drops("ord", Dialect.POSTGRES)
     todays = out.index("ord_todays_exceptions")
@@ -1098,8 +1098,8 @@ def test_l1_invariant_drops_preserve_drop_order() -> None:
 
 def test_inv_matview_drops_postgres_native_form() -> None:
     """Investigation matview drops use the native PG form on PG."""
-    from quicksight_gen.common.sql import Dialect
-    from quicksight_gen.common.l2.schema import (
+    from recon_gen.common.sql import Dialect
+    from recon_gen.common.l2.schema import (
         _INV_MATVIEW_DROP_NAMES,
         _emit_inv_matview_drops,
     )
@@ -1111,8 +1111,8 @@ def test_inv_matview_drops_postgres_native_form() -> None:
 
 def test_inv_matview_drops_oracle_plsql_block() -> None:
     """Investigation matview drops use the PL/SQL form on Oracle."""
-    from quicksight_gen.common.sql import Dialect
-    from quicksight_gen.common.l2.schema import (
+    from recon_gen.common.sql import Dialect
+    from recon_gen.common.l2.schema import (
         _INV_MATVIEW_DROP_NAMES,
         _emit_inv_matview_drops,
     )

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.cache import (
+from recon_gen.common.l2.cache import (
     L2InstanceCache,
     save_yaml_atomic,
 )

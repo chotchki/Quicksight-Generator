@@ -29,7 +29,7 @@ disables one *leg*, not the whole test:
   - The L1 dashboard not deployed for this dialect (a SQLite cell has
     none) OR ``QS_E2E_USER_ARN`` unset → the QS leg yields ``None``; the
     test runs as a 3-way ``scenario ⊆ direct == App2`` + PDF. CI deploys
-    ``spec_example`` first via ``quicksight-gen json apply --execute -c
+    ``spec_example`` first via ``recon-gen json apply --execute -c
     run/config.<dialect>.yaml --l2 tests/l2/spec_example.yaml``; the QS
     leg parametrizes to PG only there.
   - ``supersession`` has no clean matview (the dashboard's "Transactions
@@ -58,10 +58,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
-from quicksight_gen.common.db import connect_demo_db
-from quicksight_gen.common.l2 import load_instance
-from quicksight_gen.common.sql import Dialect
+from recon_gen.cli import main
+from recon_gen.common.db import connect_demo_db
+from recon_gen.common.l2 import load_instance
+from recon_gen.common.sql import Dialect
 
 from tests.audit._dashboard_extract import (
     count_l1_invariant_rows,
@@ -108,7 +108,7 @@ pytestmark = [
 # env URL override) run both parametrizations against the operator's
 # external Aurora + Oracle.
 def _env_demo_url_dialect() -> str | None:
-    from quicksight_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
+    from recon_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
     env_url = QS_GEN_DEMO_DATABASE_URL.get_or_none()
     if env_url is None:
         return None
@@ -137,7 +137,7 @@ def _l2_yaml_for_test() -> Path:
     Outside the runner (operator running pytest directly), the env
     var is unset; fall back to the bundled spec_example fixture.
     """
-    from quicksight_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
+    from recon_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
     env_val = QS_GEN_TEST_L2_INSTANCE.get_or_none()
     if env_val:
         return Path(env_val)
@@ -184,7 +184,7 @@ def dialect_cfg(request):
     paths. Operators wanting to point at a non-canonical config should
     edit ``_DIALECT_CONFIG_PATHS`` for that test run.
     """
-    from quicksight_gen.common.config import load_config
+    from recon_gen.common.config import load_config
 
     dialect_name: str = request.param
     # m.4.c — per-cell dialect-mismatch skip. See docstring on
@@ -207,7 +207,7 @@ def dialect_cfg(request):
     # dialect's agreement check against its own seeded DB. When QS_GEN_CONFIG
     # is unset (operator running pytest directly with both DBs seeded), the
     # both-dialects flow is unchanged.
-    from quicksight_gen.common.env_keys import QS_GEN_CONFIG
+    from recon_gen.common.env_keys import QS_GEN_CONFIG
     qs_gen_cfg = QS_GEN_CONFIG.get_or_none()  # Path | None — coercer=Path
     if qs_gen_cfg is not None:
         low = str(qs_gen_cfg).lower()
@@ -383,7 +383,7 @@ def per_dialect_qs_driver(
     except per_dialect_qs_client.exceptions.ResourceNotFoundException:
         # Not deployed for this dialect (e.g. SQLite — no QS datasource).
         # The other legs still run; CI deploys spec_example before this
-        # test via `quicksight-gen json apply -c <dialect-config> --execute
+        # test via `recon-gen json apply -c <dialect-config> --execute
         # --l2 tests/l2/spec_example.yaml`.
         yield None
         return
@@ -464,8 +464,8 @@ def per_dialect_app2_results(per_dialect_cfg, seeded_audit):  # type: ignore[no-
     L1 dashboard has dataset-sourced dropdowns).
     """
     _ = seeded_audit  # ordering dep only — see docstring
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_all_l1_dashboard_datasets,
     )
     from tests.e2e._harness_html2 import make_live_db_fetchers_for_app

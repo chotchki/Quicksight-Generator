@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from quicksight_gen.common.l2.seed import ScenarioPlant
+from recon_gen.common.l2.seed import ScenarioPlant
 
 
 @dataclass(frozen=True)

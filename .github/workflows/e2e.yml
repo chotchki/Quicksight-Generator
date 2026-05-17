@@ -168,16 +168,16 @@ jobs:
           EOF
 
       - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
+        run: .venv/bin/recon-gen schema apply -c /tmp/ci-pg.yaml --execute
 
       - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
+        run: .venv/bin/recon-gen data apply -c /tmp/ci-pg.yaml --execute
 
       - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
+        run: .venv/bin/recon-gen data refresh -c /tmp/ci-pg.yaml --execute
 
       - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
+        run: .venv/bin/recon-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
 
       - name: Run API e2e (L1 + Investigation + Executives)
         # ``-n auto`` lets xdist spread the 3 apps' test files across
@@ -229,7 +229,7 @@ jobs:
       # cleanup failure (e.g. a partially-deployed resource that
       # doesn't exist yet) from masking the real test failure.
       # ``-o /tmp/empty-out`` (a directory we never write to) makes
-      # ``json clean`` sweep every ``ManagedBy:quicksight-gen``
+      # ``json clean`` sweep every ``ManagedBy:recon-gen``
       # resource (scoped by ResourcePrefix=qs-ci-${run_id}-pg post
       # v8.4.0) since none are "in" the empty out dir.
       #
@@ -242,8 +242,8 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/empty-out
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen schema clean -c /tmp/ci-pg.yaml --execute || true
 
       # gate.l.7 — cluster teardown moved to `cleanup-pg` (runs after
       # BOTH e2e-pg-api and e2e-pg-browser). Stopping it here would put
@@ -349,16 +349,16 @@ jobs:
           EOF
 
       - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg-browser.yaml --execute
+        run: .venv/bin/recon-gen schema apply -c /tmp/ci-pg-browser.yaml --execute
 
       - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg-browser.yaml --execute
+        run: .venv/bin/recon-gen data apply -c /tmp/ci-pg-browser.yaml --execute
 
       - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg-browser.yaml --execute
+        run: .venv/bin/recon-gen data refresh -c /tmp/ci-pg-browser.yaml --execute
 
       - name: Deploy QS resources
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg-browser.yaml -o /tmp/ci-pg-browser-out --execute
+        run: .venv/bin/recon-gen json apply -c /tmp/ci-pg-browser.yaml -o /tmp/ci-pg-browser-out --execute
 
       - name: Run browser e2e (renders + sheet visuals + filters + drilldown)
         # ``-n 2`` because the standard 2-vCPU GHA runner can't sustain
@@ -455,8 +455,8 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/empty-out
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg-browser.yaml --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen schema clean -c /tmp/ci-pg-browser.yaml --execute || true
 
       # gate.l.7 — cluster teardown moved to `cleanup-pg`.
 
@@ -532,16 +532,16 @@ jobs:
           EOF
 
       - name: Apply schema (DDL)
-        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
+        run: .venv/bin/recon-gen schema apply -c /tmp/ci-oracle.yaml --execute
 
       - name: Apply seed data
-        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
+        run: .venv/bin/recon-gen data apply -c /tmp/ci-oracle.yaml --execute
 
       - name: Refresh matviews
-        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
+        run: .venv/bin/recon-gen data refresh -c /tmp/ci-oracle.yaml --execute
 
       - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
-        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out --execute
+        run: .venv/bin/recon-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out --execute
 
       - name: Run API e2e (L1 + Investigation + Executives)
         env:
@@ -582,8 +582,8 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/empty-out
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
 
       # gate.l.7 — instance teardown moved to `cleanup-oracle`.
 
@@ -689,9 +689,9 @@ jobs:
         # shared across runs); only the QS-side tagging differs.
         run: |
           mkdir -p /tmp/empty-out
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen schema clean -c /tmp/ci-pg.yaml --execute || true
 
       # gate.l.8 — cluster teardown, BUT only if no other E2E / Release
       # run is still using it ("last one stops the cluster"). gate.l.8
@@ -778,8 +778,8 @@ jobs:
       - name: Sweep QS resources + drop schema objects
         run: |
           mkdir -p /tmp/empty-out
-          .venv/bin/quicksight-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
-          .venv/bin/quicksight-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
+          .venv/bin/recon-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/recon-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
 
       # gate.l.7 — sole Oracle-instance teardown (mirror of cleanup-pg's
       # cluster stop). `cleanup-oracle` `needs: e2e-oracle-api` and is

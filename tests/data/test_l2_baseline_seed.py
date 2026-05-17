@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.seed import (
     _BASELINE_BASE_SEED,
     _business_days_in_window,
     _seed_for_rail,
@@ -408,7 +408,7 @@ class TestEmitFullSeed:
     def test_densified_scenario_multiplies_plants(self) -> None:
         # R.3.b — densify_scenario multiplies per-kind plant counts by
         # the configured factor.
-        from quicksight_gen.common.l2.auto_scenario import (
+        from recon_gen.common.l2.auto_scenario import (
             densify_scenario,
         )
         instance = load_instance(_SASQUATCH_PR)
@@ -425,7 +425,7 @@ class TestEmitFullSeed:
         assert dense.transfer_template_plants == base.transfer_template_plants
 
     def test_densify_factor_one_is_identity(self) -> None:
-        from quicksight_gen.common.l2.auto_scenario import densify_scenario
+        from recon_gen.common.l2.auto_scenario import densify_scenario
         instance = load_instance(_SASQUATCH_PR)
         base = default_scenario_for(instance, today=_ANCHOR).scenario
         result = densify_scenario(base, factor=1)
@@ -434,7 +434,7 @@ class TestEmitFullSeed:
     def test_broken_rail_adds_stuck_pending_plants(self) -> None:
         # R.3.c — add_broken_rail_plants stacks N plants on one
         # specifically-picked rail.
-        from quicksight_gen.common.l2.auto_scenario import (
+        from recon_gen.common.l2.auto_scenario import (
             add_broken_rail_plants,
         )
         instance = load_instance(_SASQUATCH_PR)
@@ -451,7 +451,7 @@ class TestEmitFullSeed:
         # so the fanout cluster stands out against the baseline customer
         # ACH median (~$665).
         from decimal import Decimal
-        from quicksight_gen.common.l2.auto_scenario import (
+        from recon_gen.common.l2.auto_scenario import (
             boost_inv_fanout_plants,
         )
         instance = load_instance(_SASQUATCH_PR)
@@ -468,7 +468,7 @@ class TestEmitFullSeed:
         assert boosted.stuck_pending_plants == base.stuck_pending_plants
 
     def test_boost_inv_fanout_multiplier_one_is_noop(self) -> None:
-        from quicksight_gen.common.l2.auto_scenario import (
+        from recon_gen.common.l2.auto_scenario import (
             boost_inv_fanout_plants,
         )
         instance = load_instance(_SASQUATCH_PR)
@@ -477,7 +477,7 @@ class TestEmitFullSeed:
         assert result is base
 
     def test_broken_rail_count_zero_is_noop(self) -> None:
-        from quicksight_gen.common.l2.auto_scenario import (
+        from recon_gen.common.l2.auto_scenario import (
             add_broken_rail_plants,
         )
         instance = load_instance(_SASQUATCH_PR)

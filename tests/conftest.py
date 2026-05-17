@@ -21,7 +21,7 @@ from typing import Any, Generator
 
 import pytest
 
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
     QS_GEN_FUZZ_SEED,
     QS_GEN_LAYER,
@@ -90,7 +90,7 @@ def pytest_configure(config: Any) -> None:
     # test reachable from the wheel can call runner.main, so there's
     # no runs/ pollution to guard against. Swallow the ImportError.
     try:
-        from quicksight_gen._dev import runner  # noqa: PLC0415 — lazy: only patch when tests are actually running
+        from recon_gen._dev import runner  # noqa: PLC0415 — lazy: only patch when tests are actually running
     except ImportError:
         return
     session_runs_tmp = Path(tempfile.mkdtemp(prefix="qs-gen-test-runs-"))  # typing-smell: ignore[qs-gen-prefix]: tempdir disambiguator, not an AWS resource ID

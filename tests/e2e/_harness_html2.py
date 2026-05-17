@@ -39,13 +39,13 @@ from typing import Any
 
 import uvicorn
 
-from quicksight_gen.common.env_keys import EnvVarInvalid, QS_GEN_RUN_DIR
-from quicksight_gen.common.html._tree_fetcher import OptionsFetcher
-from quicksight_gen.common.html.render import FilterSpec
-from quicksight_gen.common.html.server import (
+from recon_gen.common.env_keys import EnvVarInvalid, QS_GEN_RUN_DIR
+from recon_gen.common.html._tree_fetcher import OptionsFetcher
+from recon_gen.common.html.render import FilterSpec
+from recon_gen.common.html.server import (
     DataFetcher, ServedDashboard, make_app,
 )
-from quicksight_gen.common.tree.structure import App, Sheet
+from recon_gen.common.tree.structure import App, Sheet
 
 
 # Y.2.gate.c.11.app2-server-logs — loggers we route to the per-run
@@ -54,14 +54,14 @@ from quicksight_gen.common.tree.structure import App, Sheet
 # (no propagate=False), so its messages bubble up to root `uvicorn`.
 # Attaching our FileHandler to both would log every error twice.
 # `uvicorn.access` has propagate=False so we attach to it directly.
-# `quicksight_gen.app2.devlog` is the server's dev-log logger
+# `recon_gen.app2.devlog` is the server's dev-log logger
 # (`POST /log` handler in `common/html/server.py`); attaching here
 # lands browser-forwarded events alongside uvicorn's access log
 # when `dev_log=True` is enabled on `html2_server`.
 _UVICORN_LOGGER_NAMES = (
     "uvicorn.error",
     "uvicorn.access",
-    "quicksight_gen.app2.devlog",
+    "recon_gen.app2.devlog",
 )
 
 
@@ -317,10 +317,10 @@ def make_live_db_fetchers_for_app(
     fetcher call (which runs inside uvicorn's loop) and shared by both;
     leaked at process exit (fine for a test process about to die).
     """
-    from quicksight_gen.common.db import (  # noqa: PLC0415
+    from recon_gen.common.db import (  # noqa: PLC0415
         make_connection_pool,
     )
-    from quicksight_gen.common.html._tree_fetcher import (  # noqa: PLC0415
+    from recon_gen.common.html._tree_fetcher import (  # noqa: PLC0415
         make_options_fetcher,
         make_tree_db_fetcher,
     )

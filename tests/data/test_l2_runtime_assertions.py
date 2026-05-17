@@ -29,7 +29,7 @@ These run as ordinary pytest tests — no e2e harness needed. The data
 comes from a previous ``demo apply`` run; nothing is mutated. Run after
 applying the seed:
 
-    quicksight-gen demo apply --all -c run/config.postgres.yaml \\
+    recon-gen demo apply --all -c run/config.postgres.yaml \\
         --l2-instance tests/l2/sasquatch_pr.yaml -o run/out
     pytest tests/test_l2_runtime_assertions.py -v
 """
@@ -41,10 +41,10 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
-from quicksight_gen.common.l2 import L2Instance
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import TwoLegRail
+from recon_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
+from recon_gen.common.l2 import L2Instance
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import TwoLegRail
 
 
 _SASQUATCH_PR_YAML = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"

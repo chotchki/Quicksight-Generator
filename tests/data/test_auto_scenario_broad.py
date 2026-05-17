@@ -40,9 +40,9 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.seed import emit_seed
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.seed import emit_seed
 
 
 CANONICAL_TODAY = date(2030, 1, 1)

@@ -24,13 +24,13 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
-from quicksight_gen.common.html._db_fetcher import (
+from recon_gen.cli import main
+from recon_gen.common.html._db_fetcher import (
     _money_trail_to_sankey,
     _topology_to_force_graph,
     make_db_fetcher,
 )
-from quicksight_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.loader import load_instance
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -166,7 +166,7 @@ class _FakeConnection:
 
 @pytest.fixture
 def cfg_with_prefix(tmp_path: Path):  # type: ignore[no-untyped-def]: returns Config with the Z.C deployment_name + db_table_prefix stamped on it
-    from quicksight_gen.common.config import load_config
+    from recon_gen.common.config import load_config
 
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(

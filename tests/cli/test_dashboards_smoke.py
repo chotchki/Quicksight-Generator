@@ -1,4 +1,4 @@
-"""CLI smoke for ``quicksight-gen dashboards`` — registration + help only.
+"""CLI smoke for ``recon-gen dashboards`` — registration + help only.
 
 X.4.a.2 acceptance net (renamed from the X.2.a.3-era ``test_serve_smoke``):
 asserts ``dashboards`` is registered on ``main``, ``dashboards --help``
@@ -19,12 +19,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
-from quicksight_gen.common.html._smoke_app import (
+from recon_gen.cli import main
+from recon_gen.common.html._smoke_app import (
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html.render import emit_html
+from recon_gen.common.html.render import emit_html
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -77,7 +77,7 @@ def test_smoke_app_builder_emits_html(min_config: Path) -> None:
     Catches a regression where the Sheet isn't a member of the App's
     analysis (the auto-ID-resolution path in emit_html raises ValueError).
     """
-    from quicksight_gen.common.config import load_config
+    from recon_gen.common.config import load_config
 
     cfg = load_config(str(min_config))
     tree_app, sheet = build_smoke_app(cfg)

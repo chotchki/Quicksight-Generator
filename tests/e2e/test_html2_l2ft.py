@@ -37,9 +37,9 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+from recon_gen.apps.l2_flow_tracing.datasets import (
     build_all_l2_flow_tracing_datasets,
 )
 from tests._test_helpers import make_test_config

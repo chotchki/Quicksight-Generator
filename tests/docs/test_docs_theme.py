@@ -29,7 +29,7 @@ import pytest
 
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main as cli_root
+from recon_gen.cli import main as cli_root
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SPEC_EXAMPLE = _REPO_ROOT / "tests" / "l2" / "spec_example.yaml"

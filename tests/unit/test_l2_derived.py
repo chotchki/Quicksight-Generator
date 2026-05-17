@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Account,
     Chain,
     Identifier,

@@ -49,17 +49,17 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from quicksight_gen.common.browser.helpers import webkit_page
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.html._smoke_app import (
+from recon_gen.common.browser.helpers import webkit_page
+from recon_gen.common.config import Config
+from recon_gen.common.html._smoke_app import (
     SMOKE_FILTER_SPECS,
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html._tree_fetcher import OptionsFetcher
-from quicksight_gen.common.html.render import FilterSpec
-from quicksight_gen.common.html.server import DataFetcher
-from quicksight_gen.common.tree.structure import App, Sheet
+from recon_gen.common.html._tree_fetcher import OptionsFetcher
+from recon_gen.common.html.render import FilterSpec
+from recon_gen.common.html.server import DataFetcher
+from recon_gen.common.tree.structure import App, Sheet
 from tests._test_helpers import make_test_config
 from tests.e2e._harness_html2 import html2_server
 

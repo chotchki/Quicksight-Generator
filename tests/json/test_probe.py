@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.probe import (
+from recon_gen.common.probe import (
     ProbedError,
     _parse_stream_error,
     assert_no_datasource_errors,

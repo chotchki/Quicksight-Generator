@@ -49,18 +49,18 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.env_keys import QS_GEN_FUZZ_SEED
+from recon_gen.common.env_keys import QS_GEN_FUZZ_SEED
 
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.seed import emit_seed
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.seed import emit_seed
 
 from tests.l2.fuzz import random_l2_yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 L2_DIR = REPO_ROOT / "tests" / "l2"
-SCHEMA_DOC = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v6.md"
+SCHEMA_DOC = REPO_ROOT / "src" / "recon_gen" / "docs" / "Schema_v6.md"
 CANONICAL_TODAY = date(2030, 1, 1)
 
 
@@ -398,7 +398,7 @@ def test_seed_account_ids_resolve_to_instance_or_synthetic_template(
     ``cust-{n:03d}`` default. Hardcoding the legacy pattern would
     falsely reject any persona that opts in.
     """
-    from quicksight_gen.common.l2.auto_scenario import _materialize_instances
+    from recon_gen.common.l2.auto_scenario import _materialize_instances
     declared_ids = {str(a.id) for a in instance.accounts}
     synthetic_ids: set[str] = set()
     for tmpl in instance.account_templates:

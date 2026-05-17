@@ -12,8 +12,8 @@ import re
 
 import pytest
 
-from quicksight_gen._dev import runner
-from quicksight_gen.common.env_keys import (
+from recon_gen._dev import runner
+from recon_gen.common.env_keys import (
     QS_E2E_PAGE_TIMEOUT,
     QS_E2E_USER_ARN,
     QS_GEN_CONFIG,
@@ -23,7 +23,7 @@ from quicksight_gen.common.env_keys import (
     QS_GEN_RUNNER_YES,
     QS_GEN_TEST_L2_INSTANCE,
 )
-from quicksight_gen.common.variant import ScenarioCode, VariantSpec
+from recon_gen.common.variant import ScenarioCode, VariantSpec
 
 
 @pytest.fixture(autouse=True)
@@ -264,11 +264,11 @@ def test_probe_qs_arn_passes_with_cfg_auth_profile(monkeypatch: Any) -> None:
     """
     monkeypatch.delenv(QS_E2E_USER_ARN.name, raising=False)
     fake_cfg = SimpleNamespace(
-        auth=SimpleNamespace(aws_profile="quicksight-gen-local", quicksight_user_arn=None),
+        auth=SimpleNamespace(aws_profile="recon-gen-local", quicksight_user_arn=None),
     )
     monkeypatch.setattr(runner, "_resolve_seed_config", lambda _candidates: Path("/tmp/fake-cfg.yaml"))
     monkeypatch.setattr(
-        "quicksight_gen.common.config.load_config", lambda _path: fake_cfg,
+        "recon_gen.common.config.load_config", lambda _path: fake_cfg,
     )
     assert runner._probe_qs_e2e_user_arn() is None
 
@@ -284,7 +284,7 @@ def test_probe_qs_arn_passes_with_cfg_auth_override(monkeypatch: Any) -> None:
     )
     monkeypatch.setattr(runner, "_resolve_seed_config", lambda _candidates: Path("/tmp/fake-cfg.yaml"))
     monkeypatch.setattr(
-        "quicksight_gen.common.config.load_config", lambda _path: fake_cfg,
+        "recon_gen.common.config.load_config", lambda _path: fake_cfg,
     )
     assert runner._probe_qs_e2e_user_arn() is None
 
@@ -524,7 +524,7 @@ def test_layer_command_deploy_returns_none_without_variant_env() -> None:
 def test_layer_command_deploy_returns_cmd_with_variant_env(tmp_path: Path) -> None:
     """Y.2.gate.c.5.deploy — when variant_env supplies QS_GEN_CONFIG +
     QS_GEN_TEST_L2_INSTANCE (per h+i.0 + h.6 injection), the deploy layer
-    constructs a `quicksight-gen json apply --execute -c <cfg> --l2 <l2>
+    constructs a `recon-gen json apply --execute -c <cfg> --l2 <l2>
     -o <run_dir>/deploy/out` command."""
     variant_env = {
         QS_GEN_CONFIG.name: "/tmp/cfg.yaml",
@@ -535,7 +535,7 @@ def test_layer_command_deploy_returns_cmd_with_variant_env(tmp_path: Path) -> No
     )
     assert cmd_env is not None
     cmd, _env = cmd_env
-    assert "quicksight-gen" in cmd[0]
+    assert "recon-gen" in cmd[0]
     assert "json" in cmd
     assert "apply" in cmd
     assert "--execute" in cmd
@@ -687,7 +687,7 @@ def test_cmd_up_to_stops_on_first_failure() -> None:
         patch.object(runner, "probe_dependencies", return_value=[]),
         patch.object(runner, "dispatch_layer", side_effect=fake_dispatch),
         # m.5 fix-up — `seed_variant` for aw cells now spawns real
-        # `quicksight-gen schema apply` against Aurora (m.4.f dropped
+        # `recon-gen schema apply` against Aurora (m.4.f dropped
         # the no-op early-return). Without this patch the test would
         # silently run real Aurora schema-applies + fail under
         # parallel matrix load with SSL connection errors.
@@ -1130,7 +1130,7 @@ def test_layer_command_coverage_off_by_default() -> None:
 
 
 def test_layer_command_coverage_adds_cov_args_and_per_variant_data_file() -> None:
-    """--coverage on a pytest layer appends `--cov=quicksight_gen
+    """--coverage on a pytest layer appends `--cov=recon_gen
     --cov-report=` and points COVERAGE_FILE at
     `<run_dir>/.coverage.<run_dir.name>.<layer>` so each (variant, layer)
     writes a uniquely-suffixed data file the W.8b aggregator combines."""
@@ -1138,7 +1138,7 @@ def test_layer_command_coverage_adds_cov_args_and_per_variant_data_file() -> Non
     cmd_env = runner._layer_command("unit", Path("runs/abc/_prelude"), opts)
     assert cmd_env is not None
     cmd, env_addl = cmd_env
-    assert "--cov=quicksight_gen" in cmd
+    assert "--cov=recon_gen" in cmd
     assert "--cov-report=" in cmd
     assert env_addl["COVERAGE_FILE"] == "runs/abc/_prelude/.coverage._prelude.unit"
 
@@ -1146,7 +1146,7 @@ def test_layer_command_coverage_adds_cov_args_and_per_variant_data_file() -> Non
     cmd_env = runner._layer_command("db", Path("runs/abc/sp_pg_lo"), opts)
     assert cmd_env is not None
     cmd, env_addl = cmd_env
-    assert "--cov=quicksight_gen" in cmd
+    assert "--cov=recon_gen" in cmd
     assert env_addl["COVERAGE_FILE"] == "runs/abc/sp_pg_lo/.coverage.sp_pg_lo.db"
     # The db layer's QS_GEN_E2E gate still rides along.
     assert env_addl.get("QS_GEN_E2E") == "1"
@@ -1154,7 +1154,7 @@ def test_layer_command_coverage_adds_cov_args_and_per_variant_data_file() -> Non
 
 def test_layer_command_coverage_skips_non_pytest_deploy_layer(tmp_path: Path) -> None:
     """--coverage doesn't touch the `deploy` layer — it's a
-    `quicksight-gen json apply` CLI invocation, not pytest."""
+    `recon-gen json apply` CLI invocation, not pytest."""
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text("dialect: postgres\n")
     l2 = tmp_path / "l2.yaml"
@@ -1637,11 +1637,11 @@ def _install_fake_harness_cleanup(
 ) -> tuple[list[Any], list[Any]]:
     """Patch the lifted cleanup helpers so cmd_sweep's runtime import
     doesn't need real AWS access. Y.2.gate.f.9 — the helpers moved from
-    ``tests/e2e/_harness_cleanup`` to ``quicksight_gen._dev.cleanup``;
+    ``tests/e2e/_harness_cleanup`` to ``recon_gen._dev.cleanup``;
     we monkeypatch the new location. Returns ``(collect_calls,
     sweep_calls)`` lists that capture invocations.
     """
-    from quicksight_gen._dev import cleanup as cleanup_mod
+    from recon_gen._dev import cleanup as cleanup_mod
 
     collect_calls: list[Any] = []
     sweep_calls: list[Any] = []
@@ -1667,7 +1667,7 @@ def _install_fake_aws(monkeypatch: Any) -> None:
     """Stub load_config + boto3.client so cmd_sweep doesn't need
     real config files or AWS creds for the unit-test path."""
     import boto3
-    from quicksight_gen.common import config as config_mod
+    from recon_gen.common import config as config_mod
 
     fake_cfg = type(
         "CfgStub", (),
@@ -2164,7 +2164,7 @@ def test_setup_variant_ci_mode_pg_lo_skips_docker(
     """gate.k.1+k.6 — pg/lo + CI mode: no Docker spin, just pass-through
     the pre-set URL. Verifies handle is None (nothing to teardown) and
     the env carries the URL the workflow set."""
-    from quicksight_gen.common.env_keys import (
+    from recon_gen.common.env_keys import (
         QS_GEN_DEMO_DATABASE_URL,
         QS_GEN_RUNNER_CI,
     )
@@ -2190,7 +2190,7 @@ def test_setup_variant_ci_mode_or_lo_skips_docker(
     """gate.k.1+k.6 — or/lo + CI mode: same contract as pg/lo, just
     different URL shape. Verifies the dialect dispatch doesn't
     short-circuit before the CI-mode check."""
-    from quicksight_gen.common.env_keys import (
+    from recon_gen.common.env_keys import (
         QS_GEN_DEMO_DATABASE_URL,
         QS_GEN_RUNNER_CI,
     )
@@ -2215,7 +2215,7 @@ def test_setup_variant_ci_mode_without_url_fails_loud(
     forget to wire QS_GEN_DEMO_DATABASE_URL get a loud failure naming
     the missing env var, not a silent fallback to cfg.demo_database_url
     that confusingly breaks downstream."""
-    from quicksight_gen.common.env_keys import (
+    from recon_gen.common.env_keys import (
         EnvVarRequired,
         QS_GEN_DEMO_DATABASE_URL,
         QS_GEN_RUNNER_CI,
@@ -2233,7 +2233,7 @@ def test_setup_variant_ci_mode_aw_unchanged(
     """gate.k.1+k.6 — CI mode is irrelevant for aw targets — those
     always cfg-discover. The early `target=aw` return path runs first;
     CI mode never gets consulted."""
-    from quicksight_gen.common.env_keys import QS_GEN_RUNNER_CI
+    from recon_gen.common.env_keys import QS_GEN_RUNNER_CI
     monkeypatch.setenv(QS_GEN_RUNNER_CI.name, "1")
     # Deliberately don't set QS_GEN_DEMO_DATABASE_URL — aw doesn't need it.
     env, handle = runner.setup_variant(_spec_pg_aw())
@@ -2621,7 +2621,7 @@ def test_cache_marker_variant_aware(monkeypatch: Any, tmp_path: Any) -> None:
 #     contract no longer holds.
 # (2) Wrong mock — the test patched ``subprocess.run`` but ``seed_variant``
 #     uses ``_spawn_with_tee`` (subprocess.Popen-based). It accidentally
-#     ran *real* ``quicksight-gen schema apply`` against Aurora every test
+#     ran *real* ``recon-gen schema apply`` against Aurora every test
 #     invocation, which the matrix runner's parallel cells exposed as
 #     "SSL SYSCALL error: Connection reset by peer" under concurrent load.
 # AW seed coverage now lives in the matrix runner's live db layer.
@@ -2652,7 +2652,7 @@ def test_seed_variant_pg_lo_runs_three_subprocesses(
     # Three subprocesses, in order.
     assert len(captured) == 3
     captured_cmds = [c["cmd"] for c in captured]
-    # Each is `quicksight-gen <verb> apply/refresh --execute -c <cfg>`.
+    # Each is `recon-gen <verb> apply/refresh --execute -c <cfg>`.
     verbs = [(c[1], c[2]) for c in captured_cmds]
     assert verbs == [("schema", "apply"), ("data", "apply"), ("data", "refresh")]
     for cmd in captured_cmds:
@@ -3350,7 +3350,7 @@ def test_derive_qs_user_arn_match_by_principal_id(monkeypatch: Any) -> None:
     """Join key: QS user's `PrincipalId == "federated/iam/<UserId>"`
     where `<UserId>` is what STS GetCallerIdentity returns. Locked by
     the h+i.0 spike against three identity types live."""
-    cfg = _fake_cfg_for_derive(aws_profile="quicksight-gen-local")
+    cfg = _fake_cfg_for_derive(aws_profile="recon-gen-local")
 
     target_user_id = "AIDAEXAMPLEUSERID01"
     expected_arn = "arn:aws:quicksight:us-east-1:111122223333:user/default/local-dev"
@@ -3392,7 +3392,7 @@ def test_derive_qs_user_arn_match_by_principal_id(monkeypatch: Any) -> None:
     assert runner._derive_qs_user_arn(cfg) == expected_arn  # pyright: ignore[reportArgumentType]: SimpleNamespace stand-in for Config
     # Profile must thread through to boto3.Session — derivation runs
     # against the same creds the layer subprocesses will use.
-    assert captured["profile_name"] == "quicksight-gen-local"
+    assert captured["profile_name"] == "recon-gen-local"
 
 
 def test_derive_qs_user_arn_no_match_raises_actionable_error(monkeypatch: Any) -> None:
@@ -3442,7 +3442,7 @@ def test_derive_qs_user_arn_boto3_errors_propagate(monkeypatch: Any) -> None:
     EXIT_NEEDS_OPERATOR. This test locks the "no swallowing" contract:
     if `_derive_qs_user_arn` ever grew its own try/except, the chain
     would silently retry / return None / mask the auth failure."""
-    cfg = _fake_cfg_for_derive(aws_profile="quicksight-gen-local")
+    cfg = _fake_cfg_for_derive(aws_profile="recon-gen-local")
 
     class _FakeClientError(Exception):
         """Stand-in for botocore.exceptions.ClientError."""
@@ -3590,7 +3590,7 @@ def test_full_matrix_includes_three_fuzz_cells_with_shared_seed() -> None:
     """m.3.b — `expand_full()` produces 3 fuzz cells (one per local
     dialect) that share a single seed for cross-dialect coverage on
     identical synthesized L2 topology."""
-    from quicksight_gen.common.variant import expand_full
+    from recon_gen.common.variant import expand_full
     cells = expand_full()
     fuzz_cells = [c for c in cells if c.scenario.startswith("f")]
     assert len(fuzz_cells) == 3
@@ -3608,7 +3608,7 @@ def test_full_matrix_fuzz_seed_is_random_across_calls() -> None:
     different fuzz seeds with overwhelming probability (collision
     probability is ~1/2^32). Locks the contract that ``full`` doesn't
     repeat the same cell-set across runs."""
-    from quicksight_gen.common.variant import expand_full
+    from recon_gen.common.variant import expand_full
     cells_a = expand_full()
     cells_b = expand_full()
     seed_a = next(c.fuzz_seed for c in cells_a if c.scenario.startswith("f"))
@@ -3663,8 +3663,8 @@ def test_cmd_up_aws_idempotent_when_already_available() -> None:
     """`start()` returns 'available' immediately → no poll, no failure."""
     cfg = _fake_cfg(pg="my-pg", oracle=None)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.start", return_value="available"), \
-         patch("quicksight_gen.common.aws_rds.get_status", return_value="available"):
+         patch("recon_gen.common.aws_rds.start", return_value="available"), \
+         patch("recon_gen.common.aws_rds.get_status", return_value="available"):
         code = runner.main(["up", "aws"])
     assert code == runner.EXIT_SUCCESS
 
@@ -3674,8 +3674,8 @@ def test_cmd_up_aws_polls_until_available() -> None:
     cfg = _fake_cfg(pg="my-pg", oracle=None)
     statuses = iter(["starting", "available"])
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.start", return_value="starting"), \
-         patch("quicksight_gen.common.aws_rds.get_status",
+         patch("recon_gen.common.aws_rds.start", return_value="starting"), \
+         patch("recon_gen.common.aws_rds.get_status",
                side_effect=lambda _r: next(statuses)), \
          patch.object(runner.time, "sleep"):  # don't actually sleep in tests
         code = runner.main(["up", "aws"])
@@ -3692,7 +3692,7 @@ def test_cmd_down_aws_calls_stop() -> None:
         return "stopping"
 
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.stop", side_effect=fake_stop):
+         patch("recon_gen.common.aws_rds.stop", side_effect=fake_stop):
         code = runner.main(["down", "aws", "--yes"])
     assert code == runner.EXIT_SUCCESS
     # One call for pg, one for oracle.
@@ -3752,7 +3752,7 @@ def test_cmd_status_runs_local_and_aws_sections(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status", return_value="available"):
+         patch("recon_gen.common.aws_rds.get_status", return_value="available"):
         code = runner.main(["status"])
     assert code == runner.EXIT_SUCCESS
 
@@ -3769,7 +3769,7 @@ def test_cmd_status_with_cost_includes_estimates(
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status", return_value="available"):
+         patch("recon_gen.common.aws_rds.get_status", return_value="available"):
         runner.main(["status", "--cost"])
     captured = capsys.readouterr()
     assert "rough total" in captured.out
@@ -3799,7 +3799,7 @@ def test_probe_aws_rds_running_passes_when_cluster_available() -> None:
     """Cfg field set + cluster status='available' → probe passes."""
     cfg = _fake_cfg(pg="my-pg", oracle=None)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status", return_value="available"):
+         patch("recon_gen.common.aws_rds.get_status", return_value="available"):
         assert runner._probe_aws_rds_running() is None
 
 
@@ -3808,7 +3808,7 @@ def test_probe_aws_rds_running_fails_when_cluster_stopped() -> None:
     actionable 'run up aws first' message."""
     cfg = _fake_cfg(pg="my-pg", oracle=None)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status", return_value="stopped"):
+         patch("recon_gen.common.aws_rds.get_status", return_value="stopped"):
         result = runner._probe_aws_rds_running()
     assert result is not None
     assert result.kind == "aws_rds_not_running"
@@ -3821,7 +3821,7 @@ def test_probe_aws_rds_running_fails_when_boto3_raises() -> None:
     error in the failure message instead of crashing."""
     cfg = _fake_cfg(pg="my-pg", oracle=None)
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status",
+         patch("recon_gen.common.aws_rds.get_status",
                side_effect=RuntimeError("AccessDenied: rds:DescribeDBClusters")):
         result = runner._probe_aws_rds_running()
     assert result is not None
@@ -3835,7 +3835,7 @@ def test_probe_aws_rds_running_aggregates_pg_and_oracle_failures() -> None:
     cfg = _fake_cfg(pg="my-pg", oracle="my-oracle")
     statuses = iter(["stopped", "stopping"])
     with patch.object(runner, "_load_runner_cfg_for_lifecycle", return_value=cfg), \
-         patch("quicksight_gen.common.aws_rds.get_status",
+         patch("recon_gen.common.aws_rds.get_status",
                side_effect=lambda _r: next(statuses)):
         result = runner._probe_aws_rds_running()
     assert result is not None

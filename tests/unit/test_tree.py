@@ -11,14 +11,14 @@ from __future__ import annotations
 import pytest
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.ids import (
+from recon_gen.common.ids import (
     FilterGroupId,
     ParameterName,
     SheetId,
     VisualId,
 )
-from quicksight_gen.common.models import DateTimeDefaultValues
-from quicksight_gen.common.tree import (
+from recon_gen.common.models import DateTimeDefaultValues
+from recon_gen.common.tree import (
     AUTO,
     KPI,
     Analysis,
@@ -1139,7 +1139,7 @@ class TestDataset:
         raises KeyError at the wiring site. The L.1.17 typed-Column path
         depends on this; without it, the typo would survive to the emit
         validator."""
-        from quicksight_gen.common.dataset_contract import (
+        from recon_gen.common.dataset_contract import (
             ColumnSpec,
             DatasetContract,
             register_contract,
@@ -1284,7 +1284,7 @@ class TestValidateFilterParamSettability:
     a parameter the analyst can't set (no control + no default)."""
 
     def _scaffold(self, *, with_default: bool, with_control: bool):
-        from quicksight_gen.common.tree import (
+        from recon_gen.common.tree import (
             FilterGroup, LinkedValues, StaticValues,
         )
         app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
@@ -1361,7 +1361,7 @@ _CALC_IS_ANCHOR = None  # populated lazily inside tests so it can carry _DS_FOO
 
 def _make_is_anchor() -> "CalcField":
     """A test-only calc field on _DS_FOO."""
-    from quicksight_gen.common.tree import CalcField as _CF
+    from recon_gen.common.tree import CalcField as _CF
     return _CF(
         name="is_anchor_edge",
         dataset=_DS_FOO,
@@ -1371,7 +1371,7 @@ def _make_is_anchor() -> "CalcField":
 
 class TestCalcField:
     def test_emit_returns_dict(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         cf = _CF(
             name="my_calc", dataset=_DS_FOO, expression="1 + 1",
         )
@@ -1383,7 +1383,7 @@ class TestCalcField:
         }
 
     def test_calc_field_is_hashable(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         a = _CF(name="a", dataset=_DS_FOO, expression="1")
         b = _CF(name="b", dataset=_DS_FOO, expression="2")
         assert len({a, b, a}) == 2
@@ -1429,7 +1429,7 @@ class TestColumnRefAcceptsCalcField:
 
 class TestAnalysisAddCalcField:
     def test_add_calc_field_returns_ref(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         analysis = Analysis(analysis_id_suffix="t", name="T")
         cf = analysis.add_calc_field(_CF(
             name="my_calc", dataset=_DS_FOO, expression="1 + 1",
@@ -1437,7 +1437,7 @@ class TestAnalysisAddCalcField:
         assert cf in analysis.calc_fields
 
     def test_duplicate_name_rejected(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         analysis = Analysis(analysis_id_suffix="t", name="T")
         analysis.add_calc_field(_CF(
             name="dup", dataset=_DS_FOO, expression="1",
@@ -1448,7 +1448,7 @@ class TestAnalysisAddCalcField:
             ))
 
     def test_emit_definition_carries_calc_fields(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         analysis = Analysis(analysis_id_suffix="t", name="T")
         analysis.add_calc_field(_CF(
             name="cf-1", dataset=_DS_FOO, expression="x",
@@ -1539,7 +1539,7 @@ class TestAppCalcFieldDependencies:
         """A registered CalcField's Dataset participates in the App's
         dataset_dependencies — declaring a calc field on dataset D
         establishes D as a dep even when no visual touches D's columns."""
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         cf = _CF(
             name="standalone_calc", dataset=_DS_ANOMALIES, expression="1",
         )
@@ -1781,7 +1781,7 @@ class TestTreeQueryHelpers:
         assert found is fg
 
     def test_analysis_find_calc_field_by_name(self):
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         cf = _CF(name="my_calc", dataset=_DS_FOO, expression="1")
         analysis = Analysis(analysis_id_suffix="t", name="T")
         analysis.add_calc_field(cf)
@@ -1821,7 +1821,7 @@ class TestTreeQueryHelpers:
 # L.1.9 — Typed FilterControl + ParameterControl variants
 # ---------------------------------------------------------------------------
 
-from quicksight_gen.common.tree import (
+from recon_gen.common.tree import (
     FilterCrossSheet,
     FilterDateTimePicker,
     FilterDropdown,
@@ -1842,7 +1842,7 @@ class TestLinkedValues:
     factory methods that produce the canonical pair."""
 
     def test_from_column_derives_dataset_from_column(self):
-        from quicksight_gen.common.dataset_contract import (
+        from recon_gen.common.dataset_contract import (
             ColumnSpec,
             DatasetContract,
             register_contract,
@@ -2123,12 +2123,12 @@ class TestSheetEmitsFilterControls:
 # L.1.10 — Typed Drill action
 # ---------------------------------------------------------------------------
 
-from quicksight_gen.common.dataset_contract import ColumnShape
-from quicksight_gen.common.tree import Drill as TreeDrill
-from quicksight_gen.common.tree import (
+from recon_gen.common.dataset_contract import ColumnShape
+from recon_gen.common.tree import Drill as TreeDrill
+from recon_gen.common.tree import (
     DrillParam as TreeDrillParam,
 )
-from quicksight_gen.common.tree import (
+from recon_gen.common.tree import (
     DrillSourceField as TreeDrillSourceField,
 )
 
@@ -2227,7 +2227,7 @@ class TestDrillEmit:
         """L.1.18 — _resolve_drill_source raises TypeError when a Drill
         write reads a CalcField that has no ``shape`` tag. Catches the
         K.2-style "what shape is this column?" bug class for calc fields."""
-        from quicksight_gen.common.tree import CalcField as _CF
+        from recon_gen.common.tree import CalcField as _CF
         app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))

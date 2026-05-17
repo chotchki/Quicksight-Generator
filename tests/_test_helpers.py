@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from quicksight_gen.common.config import Config
+from recon_gen.common.config import Config
 
 _TEST_ACCOUNT = "111122223333"
 _TEST_REGION = "us-west-2"

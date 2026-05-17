@@ -20,14 +20,14 @@ from textwrap import dedent
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     L2LoaderError,
     L2ValidationError,
     SingleLegRail,
     TwoLegRail,
     load_instance,
 )
-from quicksight_gen.common.env_keys import QS_GEN_RUN_DIR
+from recon_gen.common.env_keys import QS_GEN_RUN_DIR
 
 
 # -- Happy paths --------------------------------------------------------------
@@ -319,7 +319,7 @@ def test_two_leg_rail_loads_per_leg_origin_overrides(tmp_path: Path) -> None:
 """)
     inst = load_instance(p)
     rail = inst.rails[0]
-    from quicksight_gen.common.l2 import TwoLegRail
+    from recon_gen.common.l2 import TwoLegRail
     assert isinstance(rail, TwoLegRail)
     assert rail.origin is None
     assert rail.source_origin == "ExternalForcePosted"

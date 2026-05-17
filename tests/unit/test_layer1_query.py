@@ -103,7 +103,7 @@ def test_oracle_limit_branch_renders_fetch_first() -> None:
     the helper assembles the right syntax by snooping on the cursor's
     received SQL string.
     """
-    from quicksight_gen.common.sql.dialect import Dialect
+    from recon_gen.common.sql.dialect import Dialect
 
     received: dict[str, Any] = {}
 
@@ -208,7 +208,7 @@ def test_multiple_where_clauses_and_joined(db) -> None:
 def test_oracle_placeholder_branch_translates(db) -> None:
     """Smoke that the Oracle branch yields :1/:2/... that the fake
     cursor translates to ? and produces the same row set."""
-    from quicksight_gen.common.sql.dialect import Dialect
+    from recon_gen.common.sql.dialect import Dialect
     matched = _LAYER1.matview_row_count(
         db, "drift",
         {"account_id": "cust-0001-snb", "business_day": "2030-01-02"},

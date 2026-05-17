@@ -26,16 +26,16 @@ Used by:
 
 from __future__ import annotations
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.dataset_contract import ColumnShape
-from quicksight_gen.common.models import DateTimeDefaultValues
-from quicksight_gen.common.ids import (
+from recon_gen.common.config import Config
+from recon_gen.common.dataset_contract import ColumnShape
+from recon_gen.common.models import DateTimeDefaultValues
+from recon_gen.common.ids import (
     FilterGroupId,
     ParameterName,
     SheetId,
     VisualId,
 )
-from quicksight_gen.common.tree import (
+from recon_gen.common.tree import (
     Analysis,
     App,
     BarChart,

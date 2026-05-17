@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 from tests.audit._pdf_extract import (
     _count_data_rows,

@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"

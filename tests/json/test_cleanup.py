@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from quicksight_gen.common.cleanup import _collect_stale, _read_managed_tags
+from recon_gen.common.cleanup import _collect_stale, _read_managed_tags
 
 
 # -- A minimal stub that mimics the QuickSight client surface ----------------
@@ -91,14 +91,14 @@ def test_read_managed_tags_returns_map_for_managed_resource():
     client = _StubClient(
         tags_by_arn={
             "arn:dash:1": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qsgen-test"),
             ],
         },
         summaries_by_kind={},
     )
     tags = _read_managed_tags(client, "arn:dash:1")
-    assert tags == {"ManagedBy": "quicksight-gen", "Deployment": "qsgen-test"}
+    assert tags == {"ManagedBy": "recon-gen", "Deployment": "qsgen-test"}
 
 
 def test_read_managed_tags_returns_none_for_unmanaged():
@@ -144,19 +144,19 @@ def test_collect_stale_deployment_only_sweeps_matching():
         },
         tags_by_arn={
             "arn:ci-12345": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qs-ci-12345-pg"),
             ],
             "arn:ci-67890": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qs-ci-67890-pg"),
             ],
             "arn:local": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qsgen-postgres"),
             ],
             # Pre-Z.C deploy: no Deployment tag at all.
-            "arn:legacy": [_mk_tag("ManagedBy", "quicksight-gen")],
+            "arn:legacy": [_mk_tag("ManagedBy", "recon-gen")],
         },
     )
     stale = _collect_stale(
@@ -179,7 +179,7 @@ def test_collect_stale_deployment_fails_closed_on_missing_tag():
         },
         tags_by_arn={
             # Only ManagedBy — no Deployment tag.
-            "arn:untagged": [_mk_tag("ManagedBy", "quicksight-gen")],
+            "arn:untagged": [_mk_tag("ManagedBy", "recon-gen")],
         },
     )
     stale = _collect_stale(
@@ -206,11 +206,11 @@ def test_collect_stale_skips_resources_in_expected_set():
         },
         tags_by_arn={
             "arn:live": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qsgen-test"),
             ],
             "arn:stale": [
-                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ManagedBy", "recon-gen"),
                 _mk_tag("Deployment", "qsgen-test"),
             ],
         },
@@ -329,7 +329,7 @@ class _DeleteStubClient:
 
 
 def test_delete_stale_dispatches_per_kind():
-    from quicksight_gen.common.cleanup import _delete_stale
+    from recon_gen.common.cleanup import _delete_stale
     client = _DeleteStubClient()
     failures = _delete_stale(client, "111", {
         "dashboard": [("d-1", "arn:d:1")],
@@ -350,7 +350,7 @@ def test_delete_stale_dispatches_per_kind():
 
 
 def test_delete_stale_counts_failures_and_continues():
-    from quicksight_gen.common.cleanup import _delete_stale
+    from recon_gen.common.cleanup import _delete_stale
     client = _DeleteStubClient(fail_on_id="ds-failing")
     failures = _delete_stale(client, "111", {
         "dashboard": [("d-1", "arn:d:1")],
@@ -380,7 +380,7 @@ def _patched_boto3_client(monkeypatch, stub) -> None:
 
 
 def _make_cfg(tagging_enabled: bool = True):
-    from quicksight_gen.common.config import Config
+    from recon_gen.common.config import Config
     # Z.C — deployment_name + db_table_prefix are now required cfg fields.
     return Config(
         aws_account_id="111",
@@ -395,13 +395,13 @@ def _make_cfg(tagging_enabled: bool = True):
 def test_run_cleanup_short_circuits_when_no_stale(tmp_path, monkeypatch):
     """Empty inventory + empty expected → nothing to do, exit 0
     without dispatching any delete calls."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
     # Patch the listing surface too — give it the tagged stub shape.
     listing = _StubClient(summaries_by_kind={}, tags_by_arn={})
     # Compose: when run_cleanup grabs boto3.client it gets a thing with
     # both surfaces. Easier: monkey-patch the cleanup module's helpers.
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {kind: [] for kind in (
@@ -417,9 +417,9 @@ def test_run_cleanup_short_circuits_when_no_stale(tmp_path, monkeypatch):
 
 def test_run_cleanup_dry_run_skips_delete(tmp_path, monkeypatch):
     """``dry_run=True`` prints the plan but never invokes boto3 delete."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {
@@ -438,9 +438,9 @@ def test_run_cleanup_skip_confirm_executes_delete(tmp_path, monkeypatch):
     """``skip_confirm=True`` bypasses the click prompt and runs the
     delete loop directly. Mirrors the path the standalone CI cleanup
     job hits when there's no terminal."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {
@@ -457,9 +457,9 @@ def test_run_cleanup_skip_confirm_executes_delete(tmp_path, monkeypatch):
 
 def test_run_cleanup_confirm_no_aborts(tmp_path, monkeypatch):
     """Operator typed ``n`` at the prompt — no delete fires."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {
@@ -484,9 +484,9 @@ def test_run_cleanup_no_tagging_announces_id_prefix_mode(
     """The startup banner must call out the weakened isolation when
     tagging is disabled — operators relying on the warning to spot
     misconfiguration depend on the message landing in stdout."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {kind: [] for kind in (
@@ -505,11 +505,11 @@ def test_run_cleanup_purge_all_ignores_out_dir(tmp_path, monkeypatch):
     """v8.6.13 — purge mode must NOT consult ``out_dir``. Even when
     the directory holds JSON files for the live deploy, every
     matching resource gets queued for sweep."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
     expected_seen: list[dict] = []
 
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
 
     def _capture(_client, _account, expected, **_kwargs):
         expected_seen.append(expected)
@@ -540,9 +540,9 @@ def test_run_cleanup_purge_all_announces_purge_mode(
     """The startup banner must call out PURGE-ALL mode so the operator
     can spot it in shell history and CI logs — distinguishes from
     everyday ``clean`` output."""
-    from quicksight_gen.common.cleanup import run_cleanup
+    from recon_gen.common.cleanup import run_cleanup
     stub = _DeleteStubClient()
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "_collect_stale",
         lambda *_a, **_k: {kind: [] for kind in (

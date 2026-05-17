@@ -25,11 +25,11 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from quicksight_gen.apps.investigation.app import (
+from recon_gen.apps.investigation.app import (
     build_analysis,
     build_investigation_dashboard,
 )
-from quicksight_gen.apps.investigation.constants import (
+from recon_gen.apps.investigation.constants import (
     CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
     CF_INV_ANETWORK_IS_INBOUND_EDGE,
     CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
@@ -59,15 +59,15 @@ from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
 )
-from quicksight_gen.apps.investigation.datasets import (
+from recon_gen.apps.investigation.datasets import (
     MONEY_TRAIL_CONTRACT,
     MONEY_TRAIL_ROOTS_CONTRACT,
     RECIPIENT_FANOUT_CONTRACT,
     VOLUME_ANOMALIES_CONTRACT,
     build_all_datasets,
 )
-from quicksight_gen.cli import main
-from quicksight_gen.common.models import (
+from recon_gen.cli import main
+from recon_gen.common.models import (
     IntegerDatasetParameterDefaultValues,
     SheetVisualScopingConfiguration,
 )
@@ -84,7 +84,7 @@ _TEST_CFG = make_test_config(db_table_prefix="spec_example")
 # Investigation's ``build_all_datasets`` requires an L2Instance for
 # the App Info matview names (P.9f.f — dropped silent fallback). Tests
 # pass the spec_example default so prefix derivation matches _TEST_CFG.
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance  # noqa: E402
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance  # noqa: E402
 
 _TEST_L2 = default_l2_instance()
 
@@ -178,7 +178,7 @@ def _visual_kinds(sheet) -> list[str]:
 
 def test_analysis_has_six_sheets_in_expected_order():
     """5 content sheets + the M.4.4.5 App Info ("i") sheet last."""
-    from quicksight_gen.apps.investigation.constants import SHEET_INV_APP_INFO
+    from recon_gen.apps.investigation.constants import SHEET_INV_APP_INFO
 
     analysis = build_analysis(_TEST_CFG)
     sheet_ids = [s.SheetId for s in analysis.Definition.Sheets]
@@ -255,7 +255,7 @@ def test_investigation_datasets_declared_in_analysis():
     """7 content datasets + the 2 M.4.4.5 App Info datasets.
     Y.1.b.companion added DS_INV_VOLUME_ANOMALIES_DISTRIBUTION;
     Y.2.a.companion added DS_INV_MONEY_TRAIL_ROOTS."""
-    from quicksight_gen.common.sheets.app_info import (
+    from recon_gen.common.sheets.app_info import (
         DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     )
 
@@ -338,10 +338,10 @@ def test_fanout_threshold_pushed_into_dataset_sql():
     with a `MappedDataSetParameters` bridge; replaces the pre-Y.3
     analysis-level `NumericRangeFilter` on the calc field that QS
     applied but App2 didn't."""
-    from quicksight_gen.apps.investigation.datasets import (
+    from recon_gen.apps.investigation.datasets import (
         build_recipient_fanout_dataset,
     )
-    from quicksight_gen.common.dataset_contract import get_sql
+    from recon_gen.common.dataset_contract import get_sql
 
     ds = build_recipient_fanout_dataset(_TEST_CFG)
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
@@ -596,7 +596,7 @@ def test_sigma_pushdown_dataset_carries_integer_dataset_parameter():
     """The Volume Anomalies dataset declares ``pInvAnomaliesSigma`` as
     an IntegerDatasetParameter so QS knows where to substitute the
     ``<<$pInvAnomaliesSigma>>`` placeholder in the dataset SQL."""
-    from quicksight_gen.apps.investigation.datasets import (
+    from recon_gen.apps.investigation.datasets import (
         build_volume_anomalies_dataset,
     )
     ds = build_volume_anomalies_dataset(_TEST_CFG)
@@ -615,7 +615,7 @@ def test_sigma_pushdown_sql_contains_qs_placeholder():
     placeholder. App2's executor preprocesses this to
     ``:param_pInvAnomaliesSigma`` at query time; QS substitutes the
     literal value at query time. Both sides one SQL truth."""
-    from quicksight_gen.apps.investigation.datasets import (
+    from recon_gen.apps.investigation.datasets import (
         build_volume_anomalies_dataset,
     )
     ds = build_volume_anomalies_dataset(_TEST_CFG)
@@ -1524,7 +1524,7 @@ def test_anetwork_calc_fields_pushed_into_dataset_sql():
     ``<<$pInvANetworkAnchor>>`` and projected as real columns. Pre-Y.3
     they were analysis-level CalcFields; pushdown means QS + App2 see
     one shape and the Sankey direction filters can target real columns."""
-    from quicksight_gen.apps.investigation.datasets import (
+    from recon_gen.apps.investigation.datasets import (
         ACCOUNT_NETWORK_CONTRACT,
         build_account_network_dataset,
     )

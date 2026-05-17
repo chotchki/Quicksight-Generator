@@ -31,8 +31,8 @@ import pytest
 
 graphviz = pytest.importorskip("graphviz")
 
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.topology import build_topology_graph_per_rail
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.topology import build_topology_graph_per_rail
 
 
 _FIXTURES_DIR = "tests/l2"

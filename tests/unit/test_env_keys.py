@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.env_keys import (
     EnvVar,
     EnvVarInvalid,
     EnvVarRequired,

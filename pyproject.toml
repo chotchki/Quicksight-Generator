@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quicksight-gen"
+name = "recon-gen"
 dynamic = ["version"]
 description = "Programmatic AWS QuickSight analysis generator for financial reporting"
 readme = "README.md"
@@ -42,8 +42,8 @@ Changelog = "https://github.com/chotchki/Quicksight-Generator/blob/main/RELEASE_
 
 [project.optional-dependencies]
 deploy = [
-    # `quicksight-gen json apply --execute` (push JSON to AWS) +
-    # `json clean --execute` (sweep ManagedBy:quicksight-gen resources)
+    # `recon-gen json apply --execute` (push JSON to AWS) +
+    # `json clean --execute` (sweep ManagedBy:recon-gen resources)
     # both go through boto3. botocore[crt] pulls awscrt — required for
     # the SSO / login credential provider, which trips
     # MissingDependencyException at boto3 client init when operators
@@ -69,7 +69,7 @@ demo-oracle = [
     "oracledb>=2.0",
 ]
 audit = [
-    # Phase U — `quicksight-gen audit apply --execute` writes a PDF
+    # Phase U — `recon-gen audit apply --execute` writes a PDF
     # reconciliation report. reportlab is pure Python (PyPI wheels,
     # no system deps — preserves the Phase T win). pypdf is used by
     # the U.8 end-to-end smoke test to extract text from the
@@ -210,7 +210,7 @@ e2e = [
 ]
 
 [project.scripts]
-quicksight-gen = "quicksight_gen.cli:main"
+recon-gen = "recon_gen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -218,10 +218,10 @@ where = ["src"]
 # conftest + tests during dev / CI but excluded from the customer wheel.
 # Wheel-build verification: see Y.2.gate.c (CI assertion that ``unzip -l``
 # of the built wheel returns no _dev matches).
-exclude = ["quicksight_gen._dev", "quicksight_gen._dev.*"]
+exclude = ["recon_gen._dev", "recon_gen._dev.*"]
 
 [tool.setuptools.package-data]
-quicksight_gen = [
+recon_gen = [
     "apps/l1_dashboard/_default_l2.yaml",
     # Bundled mkdocs config so ``docs apply`` works from an installed
     # wheel. Lives one level up from ``docs/`` (mkdocs rejects
@@ -255,7 +255,7 @@ quicksight_gen = [
     # ``/static/vendor/...`` instead of a CDN. Pre-built minified dist
     # files committed under ``assets/vendor/{js,css}/``; ``vendor.lock``
     # carries the provenance + sha256s. Shipped so a `pip install
-    # quicksight-gen[serve]` App 2 works offline. Refresh recipe:
+    # recon-gen[serve]` App 2 works offline. Refresh recipe:
     # ``scripts/vendor_js_deps.py``.
     "common/html/assets/vendor/js/*.js",
     "common/html/assets/vendor/css/*.css",
@@ -270,7 +270,7 @@ quicksight_gen = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "quicksight_gen.__version__"}
+version = {attr = "recon_gen.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -285,14 +285,14 @@ markers = [
     "browser: browser-based e2e tests (requires Playwright)",
 ]
 
-# W.8b — coverage config. ``source = ["quicksight_gen"]`` scopes
+# W.8b — coverage config. ``source = ["recon_gen"]`` scopes
 # coverage to the package; without it, ``coverage report`` lumps in
 # the stdlib / third-party files that happened to execute. The CI
 # matrix sets ``COVERAGE_FILE=.coverage.py<version>`` per entry so
 # each matrix entry writes a uniquely-named data file the
 # ``coverage`` aggregator job can ``coverage combine``.
 [tool.coverage.run]
-source = ["quicksight_gen"]
+source = ["recon_gen"]
 omit = [
     "*/tests/*",
     "*/__main__.py",
@@ -317,26 +317,26 @@ precision = 1
 # resolves them via extraPaths for inference.
 [tool.pyright]
 include = [
-    "src/quicksight_gen/common/tree",
-    "src/quicksight_gen/common/l2",
-    "src/quicksight_gen/common/sql",
-    "src/quicksight_gen/common/browser",
-    "src/quicksight_gen/common/dataset_contract.py",
-    "src/quicksight_gen/common/env_keys.py",
-    "src/quicksight_gen/common/models.py",
-    "src/quicksight_gen/common/variant.py",
+    "src/recon_gen/common/tree",
+    "src/recon_gen/common/l2",
+    "src/recon_gen/common/sql",
+    "src/recon_gen/common/browser",
+    "src/recon_gen/common/dataset_contract.py",
+    "src/recon_gen/common/env_keys.py",
+    "src/recon_gen/common/models.py",
+    "src/recon_gen/common/variant.py",
     # X.2.o.1 — async DB / App2 server surfaces. Added at strict
     # together because they form one cohesive subsystem (pool →
     # executor → fetcher → server route). Config gets pulled in
     # alongside since X.2.n.6's ``app2_db_pool_size`` validation
     # logic lives there.
-    "src/quicksight_gen/common/db.py",
-    "src/quicksight_gen/common/config.py",
-    "src/quicksight_gen/common/html/_sql_executor.py",
-    "src/quicksight_gen/common/html/_tree_fetcher.py",
-    "src/quicksight_gen/common/html/server.py",
+    "src/recon_gen/common/db.py",
+    "src/recon_gen/common/config.py",
+    "src/recon_gen/common/html/_sql_executor.py",
+    "src/recon_gen/common/html/_tree_fetcher.py",
+    "src/recon_gen/common/html/server.py",
     # Y.2.gate runner — dev tooling, kept strict from the start.
-    "src/quicksight_gen/_dev",
+    "src/recon_gen/_dev",
 ]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"

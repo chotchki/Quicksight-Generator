@@ -1,4 +1,4 @@
-"""Unit tests for ``quicksight_gen/main.py``'s mkdocs-macros helpers.
+"""Unit tests for ``recon_gen/main.py``'s mkdocs-macros helpers.
 
 The macros entry point (``define_env``) is exercised end-to-end by the
 docs build smoke test. These tests cover the small, pure helpers
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2 import load_instance
-from quicksight_gen.main import _apply_l2_theme_css
+from recon_gen.common.l2 import load_instance
+from recon_gen.main import _apply_l2_theme_css
 
 
 _SPEC_EXAMPLE = (

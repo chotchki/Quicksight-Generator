@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.variant import (
+from recon_gen.common.variant import (
     DEFAULT_DIALECTS,
     DEFAULT_SCENARIOS_NAMED,
     DEFAULT_TARGETS,

@@ -33,17 +33,17 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
-from quicksight_gen.common.config import load_config
-from quicksight_gen.common.db import connect_demo_db
-from quicksight_gen.common.env_keys import (
+from recon_gen.cli import main
+from recon_gen.common.config import load_config
+from recon_gen.common.db import connect_demo_db
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
     QS_GEN_CONFIG,
     QS_GEN_DB_TESTS,
 )
-from quicksight_gen.common.l2 import load_instance
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.l2 import load_instance
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.sql import Dialect
 
 from tests.audit._pdf_extract import (
     Invariant,

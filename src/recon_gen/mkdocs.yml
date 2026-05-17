@@ -1,0 +1,216 @@
+site_name: QuickSight Analysis Generator
+site_description: Training materials and documentation for the QuickSight financial reporting dashboards
+site_url: https://chotchki.github.io/Quicksight-Generator/
+# repo_url / repo_name intentionally omitted — the docs site is the
+# self-contained reference and should carry no clickable github links.
+# (site_url stays for sitemap canonical URLs; not rendered as a link.)
+# Bundled inside the package — same path in dev
+# (``<repo>/src/recon_gen/mkdocs.yml``) and installed mode
+# (``<site-packages>/recon_gen/mkdocs.yml``). docs_dir points
+# at the sibling ``docs/`` directory which holds the actual markdown
+# content. mkdocs rejects ``docs_dir: .`` because it doesn't allow
+# the docs dir to be the config file's own directory, so the config
+# lives one level up from ``docs/`` and the relative paths inside
+# (extra_css, extra_javascript, plugins.macros.include_dir) all stay
+# relative to docs_dir.
+docs_dir: docs
+
+theme:
+  name: material
+  # No default logo / favicon — when an L2 instance YAML carries a
+  # `theme.logo` / `theme.favicon` value, main.py's mkdocs-macros
+  # entry overrides these keys at build time. Without an L2 override
+  # the site renders text-only navigation (mkdocs-material default)
+  # rather than falling back to a persona-specific mark.
+  palette:
+    scheme: default
+    primary: custom
+    accent: custom
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+
+extra_css:
+  - stylesheets/site.css
+
+extra_javascript:
+  # Click-to-zoom lightbox for inline-SVG diagrams emitted by
+  # main.py::_wrap_svg. Pure vanilla JS, no third-party dep.
+  - stylesheets/qs-lightbox.js
+  # Phase S spike — graphviz WASM bootstrap. Finds every
+  # <script type="text/x-graphviz"> block (emitted when QS_USE_WASM=1
+  # at build time), loads @hpcc-js/wasm-graphviz from jsDelivr +esm,
+  # renders. Inert when no such blocks are on the page.
+  - stylesheets/qs-graphviz-wasm.js
+
+nav:
+  # Shape C — audience-first IA (Q.2.b.decision). "For Your Role" is
+  # the first nav tab so the role picker is the most prominent surface.
+  # Home (index.md) is also a role picker — it stays as the implicit
+  # root landing for users who arrive at the site URL directly.
+  # Q.2.b.exec.3 will reconcile docs/index.md vs for-your-role/index.md
+  # (currently both render the role picker shape).
+  #
+  # Library shelves (Concepts / Background / Walkthroughs / Reference /
+  # API Reference) follow as named sections; role pages curate paths
+  # into them. Long-term destination is Shape B (collapse 7 → 4 with
+  # Concepts + Background absorbed into Reference) once Shape C reveals
+  # which shelves get curation traffic.
+  - For Your Role:
+    - Overview: for-your-role/index.md
+    - For the operator: for-your-role/operator.md
+    - For the integrator: for-your-role/integrator.md
+    - For the ETL engineer: for-your-role/etl-engineer.md
+    - For the executive: for-your-role/executive.md
+    - For the compliance analyst: for-your-role/compliance-analyst.md
+  - Home: index.md
+  - Concepts:
+    - Overview: concepts/index.md
+    - Accounting:
+      - Overview: concepts/accounting/index.md
+      - Double-entry posting: concepts/accounting/double-entry.md
+      - Escrow with reversal: concepts/accounting/escrow-with-reversal.md
+      - Sweep / net / settle: concepts/accounting/sweep-net-settle.md
+      - Vouchering: concepts/accounting/vouchering.md
+      - Eventual consistency: concepts/accounting/eventual-consistency.md
+      - Open vs. closed loop: concepts/accounting/open-vs-closed-loop.md
+    - L2 model:
+      - Overview: concepts/l2/index.md
+      - Account: concepts/l2/account.md
+      - Account template: concepts/l2/account-template.md
+      - Rail: concepts/l2/rail.md
+      - Transfer template: concepts/l2/transfer-template.md
+      - Chain: concepts/l2/chain.md
+      - Limit schedule: concepts/l2/limit-schedule.md
+  - Demo Institution Tour:
+    - Overview: scenario/index.md
+    - Accounts: scenario/accounts.md
+    - Rails: scenario/rails.md
+    - Transfer templates: scenario/transfer-templates.md
+    - Chains: scenario/chains.md
+    - Limit schedules: scenario/limit-schedules.md
+  - Walkthroughs:
+    - Overview: walkthroughs/index.md
+    - L1 Sheets:
+      - Getting Started: walkthroughs/l1/getting-started.md
+      - Drift: walkthroughs/l1/drift.md
+      - Drift Timelines: walkthroughs/l1/drift-timelines.md
+      - Overdraft: walkthroughs/l1/overdraft.md
+      - Limit Breach: walkthroughs/l1/limit-breach.md
+      - Pending Aging: walkthroughs/l1/pending-aging.md
+      - Unbundled Aging: walkthroughs/l1/unbundled-aging.md
+      - Supersession Audit: walkthroughs/l1/supersession-audit.md
+      - Today's Exceptions: walkthroughs/l1/todays-exceptions.md
+      - Daily Statement: walkthroughs/l1/daily-statement.md
+      - Transactions: walkthroughs/l1/transactions.md
+    - Investigation:
+      - Who's Getting Money from Too Many Senders?: walkthroughs/investigation/who-is-getting-money-from-too-many-senders.md
+      - Which Sender → Recipient Pair Just Spiked?: walkthroughs/investigation/which-pair-just-spiked.md
+      - Where Did This Transfer Actually Originate?: walkthroughs/investigation/where-did-this-transfer-originate.md
+      - What Does This Account's Money Network Look Like?: walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md
+    - ETL:
+      - How do I populate transactions?: walkthroughs/etl/how-do-i-populate-transactions.md
+      - How do I validate a single account-day?: walkthroughs/etl/how-do-i-validate-a-single-account-day.md
+      - How do I prove my ETL is working?: walkthroughs/etl/how-do-i-prove-my-etl-is-working.md
+      - How do I tag a force-posted transfer?: walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md
+      - How do I add a metadata key?: walkthroughs/etl/how-do-i-add-a-metadata-key.md
+      - What to do when demo passes but prod fails?: walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md
+    - Customization:
+      - How do I map my database to the two base tables?: walkthroughs/customization/how-do-i-map-my-database.md
+      - How do I swap the SQL behind a dataset?: walkthroughs/customization/how-do-i-swap-dataset-sql.md
+      - How do I reskin the dashboards for my brand?: walkthroughs/customization/how-do-i-reskin-the-dashboards.md
+      - How do I configure the deploy for my AWS account?: walkthroughs/customization/how-do-i-configure-the-deploy.md
+      - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
+      - How do I add an app-specific metadata key?: walkthroughs/customization/how-do-i-add-a-metadata-key.md
+      - How do I extend canonical values?: walkthroughs/customization/how-do-i-extend-canonical-values.md
+      - How do I author a new app on the tree?: walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree.md
+      - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
+      - How do I publish docs against my L2?: walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md
+  - Reference:
+    - Overview: reference/index.md
+    # V.8 — 3-level nesting splits the previously-flat 11-item Reference
+    # into three concerns matching the mental model: which dashboard
+    # (App handbooks), what shape your data feed must take (Data
+    # contract), what to do with the tool (Operations).
+    - App handbooks:
+      - L1 Reconciliation Dashboard: handbook/l1.md
+      - L2 Flow Tracing: handbook/l2_flow_tracing.md
+      - Investigation: handbook/investigation.md
+      - Executives: handbook/executives.md
+      - Audit Reconciliation Report: handbook/audit.md
+    - Data contract:
+      - Domain Model (SPEC): SPEC.md
+      - Schema v6 — Data Feed Contract: Schema_v6.md
+      - L1 Invariants: L1_Invariants.md
+      - Seed generator: handbook/seed-generator.md
+    - Operations:
+      - Install: reference/install.md
+      - Self-hosting the dashboards (App 2): reference/self-host.md
+      - ETL — Data Integration: handbook/etl.md
+      - Customization: handbook/customization.md
+      - CLI reference: reference/cli.md
+      - Disabling AWS resource tagging: reference/disable-tagging.md
+      - QuickSight quirks log: reference/quicksight-quirks.md
+  - API Reference:
+    - Overview: api/index.md
+    - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md
+    - Tree — Visuals (KPI / Table / BarChart / Sankey): api/tree-visuals.md
+    - Tree — Data (Dataset / Column / Dim / Measure / CalcField): api/tree-data.md
+    - Tree — Filters + Controls + Parameters: api/tree-filters-controls.md
+    - Tree — Drill Actions: api/tree-actions.md
+    - Common foundations (models / ids / dataset_contract / drill / persona): api/common-foundations.md
+
+plugins:
+  - search
+  - macros:
+      # Phase O.1.c — `{{ diagram(...) }}` macro lives in
+      # `main.py` next to this config. mkdocs-macros's project_dir is
+      # the directory containing this file, so it finds
+      # ``<dir>/main.py`` via local file lookup. The same path resolves
+      # in dev (``<repo>/src/recon_gen/main.py``) and from an
+      # installed wheel (``<site-packages>/recon_gen/main.py``).
+      # mkdocs-macros doesn't reliably support dotted Python imports
+      # for module_name — it treats the value as a relative file
+      # lookup against project_dir.
+      module_name: main
+      # mkdocs-macros resolves include_dir relative to project_dir
+      # (the dir containing mkdocs.yml) — NOT docs_dir. So this is
+      # ``docs/_macros`` not bare ``_macros``. Same in dev
+      # (``<repo>/src/recon_gen/docs/_macros/``) and installed
+      # (``<site-packages>/recon_gen/docs/_macros/``).
+      include_dir: docs/_macros
+  - mkdocstrings:
+      handlers:
+        python:
+          # No ``paths:`` — recon_gen is installed (uv sync /
+          # pip install) so mkdocstrings imports it through the
+          # active Python interpreter. Removes the dev-vs-installed
+          # path difference that ``paths: [src]`` would create.
+          options:
+            show_root_heading: true
+            show_root_full_path: false
+            show_if_no_docstring: true
+            show_source: false
+            members_order: source
+            docstring_style: google
+            heading_level: 2
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - md_in_html
+  - pymdownx.superfences
+  # Q.2.c.exec.3 — admonitions enable the ??? collapse pattern used to
+  # fold screenshot embeds by default. `pymdownx.details` is what makes
+  # the `???` (vs `!!!`) syntax fold-by-default; `admonition` provides
+  # the styling.
+  - admonition
+  - pymdownx.details
+  # Auto-generated CLI reference (docs/reference/cli.md). Reads the
+  # Click command tree at build time.
+  - mkdocs-click

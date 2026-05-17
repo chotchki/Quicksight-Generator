@@ -20,22 +20,22 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.dataset_contract import (
+from recon_gen.common.dataset_contract import (
     ColumnSpec,
     DatasetContract,
     register_contract,
     register_sql,
 )
-from quicksight_gen.common.db import AsyncConnectionPool, make_connection_pool
-from quicksight_gen.common.html._tree_fetcher import (
+from recon_gen.common.db import AsyncConnectionPool, make_connection_pool
+from recon_gen.common.html._tree_fetcher import (
     _find_visual_dataset_identifier,
     make_tree_db_fetcher,
 )
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.sql.dialect import Dialect
-from quicksight_gen.common.tree.datasets import Dataset
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import KPI, BarChart, Sankey, Table
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.sql.dialect import Dialect
+from recon_gen.common.tree.datasets import Dataset
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import KPI, BarChart, Sankey, Table
 from tests._test_helpers import make_test_config
 
 

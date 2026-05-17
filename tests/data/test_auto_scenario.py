@@ -21,12 +21,12 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2 import Identifier, load_instance
-from quicksight_gen.common.l2.auto_scenario import (
+from recon_gen.common.l2 import Identifier, load_instance
+from recon_gen.common.l2.auto_scenario import (
     AutoScenarioReport,
     default_scenario_for,
 )
-from quicksight_gen.common.l2.seed import emit_seed
+from recon_gen.common.l2.seed import emit_seed
 
 
 SPEC_YAML = Path(__file__).parent.parent / "l2" / "spec_example.yaml"

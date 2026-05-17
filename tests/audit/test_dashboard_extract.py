@@ -59,8 +59,8 @@ def l1_app():
     sheet names and visual titles; we walk it to validate the
     extractor's hand-maintained layout map.
     """
-    from quicksight_gen.common.config import load_config
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.common.config import load_config
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 
     cfg = load_config(None)
     app = build_l1_dashboard_app(cfg)

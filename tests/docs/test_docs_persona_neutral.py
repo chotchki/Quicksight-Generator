@@ -36,7 +36,7 @@ SITE = REPO_ROOT / "site"
 # the skip-if-missing guard always tripped and these tests silently
 # never ran in CI. Correct path now.
 MKDOCS_YML = (
-    REPO_ROOT / "src" / "quicksight_gen" / "docs" / "mkdocs.yml"
+    REPO_ROOT / "src" / "recon_gen" / "docs" / "mkdocs.yml"
 )
 
 # Real persona tokens — institution acronym, hand-curated personas,

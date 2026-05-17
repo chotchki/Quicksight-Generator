@@ -1,4 +1,4 @@
-"""CLI smoke for ``quicksight-gen json`` — help + emit-only paths.
+"""CLI smoke for ``recon-gen json`` — help + emit-only paths.
 
 U.9 acceptance net for the json artifact group. Mirrors the shape
 of ``tests/audit/test_cli_smoke.py``: minimal config + ``CliRunner``,
@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"

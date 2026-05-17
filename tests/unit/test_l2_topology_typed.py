@@ -14,7 +14,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Account,
     AccountTemplate,
     Chain,
@@ -26,7 +26,7 @@ from quicksight_gen.common.l2 import (
     TwoLegRail,
     load_instance,
 )
-from quicksight_gen.common.l2.topology import (
+from recon_gen.common.l2.topology import (
     TopologyEdge,
     TopologyGraph,
     TopologyNode,

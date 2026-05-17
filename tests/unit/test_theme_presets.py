@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from quicksight_gen.common.theme import (
+from recon_gen.common.theme import (
     DEFAULT_PRESET,
     ThemePreset,
     build_theme,

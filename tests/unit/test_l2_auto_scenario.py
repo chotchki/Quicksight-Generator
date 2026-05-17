@@ -7,9 +7,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from quicksight_gen.common.l2.auto_scenario import filter_scenario_plants
-from quicksight_gen.common.l2.primitives import Identifier, Name
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.auto_scenario import filter_scenario_plants
+from recon_gen.common.l2.primitives import Identifier, Name
+from recon_gen.common.l2.seed import (
     DriftPlant,
     FailedTransactionPlant,
     InvFanoutPlant,

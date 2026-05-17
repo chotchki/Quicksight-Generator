@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.config import Config
+from recon_gen.common.config import Config
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.db import (
+from recon_gen.common.db import (
     AsyncConnectionPool,
     connect_demo_db,
     execute_script,
@@ -26,7 +26,7 @@ from quicksight_gen.common.db import (
     split_oracle_script,
     sqlite_path,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 # -- oracle_dsn --------------------------------------------------------------
@@ -424,7 +424,7 @@ class TestExecuteOracleStmtLockRetry:
     """
 
     def test_retries_then_succeeds_on_ora_04021(self, monkeypatch) -> None:
-        from quicksight_gen.common import db as db_mod
+        from recon_gen.common import db as db_mod
 
         monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
         cur = _RaiseThenSucceedCursor(
@@ -438,7 +438,7 @@ class TestExecuteOracleStmtLockRetry:
         assert cur.calls == 3  # 1 initial + 2 retries
 
     def test_retries_then_succeeds_on_ora_00054(self, monkeypatch) -> None:
-        from quicksight_gen.common import db as db_mod
+        from recon_gen.common import db as db_mod
 
         monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
         cur = _RaiseThenSucceedCursor(
@@ -451,7 +451,7 @@ class TestExecuteOracleStmtLockRetry:
         assert cur.calls == 2
 
     def test_exhausts_retries_then_reraises_lock_error(self, monkeypatch) -> None:
-        from quicksight_gen.common import db as db_mod
+        from recon_gen.common import db as db_mod
 
         monkeypatch.setattr(db_mod.time, "sleep", lambda _s: None)
         cur = _RaiseThenSucceedCursor(
@@ -465,7 +465,7 @@ class TestExecuteOracleStmtLockRetry:
         assert cur.calls == len(db_mod._ORACLE_LOCK_RETRY_BACKOFF_S) + 1
 
     def test_non_lock_error_propagates_immediately(self, monkeypatch) -> None:
-        from quicksight_gen.common import db as db_mod
+        from recon_gen.common import db as db_mod
 
         sleep_calls: list[float] = []
         monkeypatch.setattr(db_mod.time, "sleep", lambda s: sleep_calls.append(s))

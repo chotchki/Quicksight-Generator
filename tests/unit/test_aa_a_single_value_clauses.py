@@ -26,12 +26,12 @@ Why dedicated unit tests:
 
 from __future__ import annotations
 
-from quicksight_gen.apps.l1_dashboard.datasets import (
+from recon_gen.apps.l1_dashboard.datasets import (
     L1_ALL_SENTINEL,
     _account_display_clause,
     _data_value_clause,
 )
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l2_flow_tracing.datasets import (
     L2FT_ALL_SENTINEL,
     _match_all_in_clause,
 )

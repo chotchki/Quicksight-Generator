@@ -37,7 +37,7 @@ from typing import Any, Callable
 
 import pytest
 
-from quicksight_gen.cli._app_builders import (
+from recon_gen.cli._app_builders import (
     _generate_executives,
     _generate_investigation,
     _generate_l1_dashboard,

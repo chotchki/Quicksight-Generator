@@ -12,7 +12,7 @@ drill-source table cell across all four apps.
 
 from __future__ import annotations
 
-from quicksight_gen.common.clickability import (
+from recon_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )

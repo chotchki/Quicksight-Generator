@@ -64,7 +64,7 @@ jobs:
         # second Python version is reintroduced) still matches.
         env:
           COVERAGE_FILE: .coverage.py3.13
-        run: .venv/bin/pytest --cov=quicksight_gen
+        run: .venv/bin/pytest --cov=recon_gen
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v7
@@ -85,7 +85,7 @@ jobs:
   # apply/seed time), and dialect-divergence regressions are rare
   # enough that catching them at merge time is acceptable.
   #
-  # Runs ``quicksight-gen schema/data/json apply`` against a live
+  # Runs ``recon-gen schema/data/json apply`` against a live
   # Postgres service container, then verifies per-prefix matview row
   # counts via ``tests/e2e/test_demo_apply_row_counts.py`` (Y.2.gate.f.2
   # — was ``tests/integration/verify_demo_apply.py`` CLI before the
@@ -532,17 +532,17 @@ jobs:
       - name: Install wheel into a fresh venv (NOT editable)
         # ``uv venv`` plus ``uv pip install`` against the built wheel
         # mirrors what an end-user does after ``pip install
-        # quicksight-gen[docs]`` — no symlinks back to the repo
+        # recon-gen[docs]`` — no symlinks back to the repo
         # ``src/`` tree, so any path code that walks parents to find
         # repo-root files breaks here.
         run: |
           uv venv /tmp/portable-test-venv
           uv pip install --python /tmp/portable-test-venv/bin/python \
-              "$(ls /tmp/wheelhouse/quicksight_gen-*.whl)[docs]"
+              "$(ls /tmp/wheelhouse/recon_gen-*.whl)[docs]"
 
       - name: Build portable docs from installed wheel
         run: |
-          /tmp/portable-test-venv/bin/quicksight-gen docs apply \
+          /tmp/portable-test-venv/bin/recon-gen docs apply \
               --portable -o /tmp/portable-site
           test -f /tmp/portable-site/index.html
           test -f /tmp/portable-site/handbook/l1.html
@@ -578,7 +578,7 @@ jobs:
         run: |
           set +e
           cd /tmp  # ensure cwd has no docs/_macros — the failure cwd
-          timeout 30 /tmp/portable-test-venv/bin/quicksight-gen docs serve \
+          timeout 30 /tmp/portable-test-venv/bin/recon-gen docs serve \
               -p 8765 > /tmp/serve.log 2>&1
           set -e
           echo "--- docs serve output ---"; cat /tmp/serve.log

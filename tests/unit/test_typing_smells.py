@@ -51,7 +51,7 @@ Four checks today, all extensible — drop a new ``Check`` into
   wrappers (``common/deploy.py``, ``common/cleanup.py``,
   ``common/browser/helpers.py``, ``common/aws_rds.py``,
   ``_dev/runner.py``). Stray clients bypass the
-  ``ManagedBy: quicksight-gen`` tagging convention → break
+  ``ManagedBy: recon-gen`` tagging convention → break
   ``cleanup``. Tests can freely use ``boto3.client`` (scope is
   src/ only).
 
@@ -84,7 +84,7 @@ Four checks today, all extensible — drop a new ``Check`` into
 
 - **no-playwright-leak** (X.2.q.5) — ``import playwright`` /
   ``from playwright[.x] import …`` OR
-  ``from quicksight_gen.common.browser{.helpers|.screenshot} import …``
+  ``from recon_gen.common.browser{.helpers|.screenshot} import …``
   (the Playwright-primitives layer; the AWS-only helpers
   ``get_user_arn`` / ``generate_dashboard_embed_url`` are exempt) in
   any ``tests/e2e/`` file outside the driver layer
@@ -581,7 +581,7 @@ class DeterminismCheck(Check):
 class _Boto3DirectVisitor(ast.NodeVisitor):
     """Walk Call nodes; flag direct ``boto3.client(...)`` calls.
 
-    Stray clients bypass the ``ManagedBy: quicksight-gen`` tagging
+    Stray clients bypass the ``ManagedBy: recon-gen`` tagging
     convention that all production resource creation goes through;
     the cleanup verb relies on every resource carrying that tag to
     find orphans."""
@@ -605,7 +605,7 @@ class _Boto3DirectVisitor(ast.NodeVisitor):
                     "wrappers (``common/deploy.py``, ``common/cleanup.py``, "
                     "``common/browser/helpers.py``, ``common/aws_rds.py``, "
                     "``_dev/runner.py``) so resources stay tagged "
-                    "``ManagedBy: quicksight-gen`` and ``cleanup`` finds "
+                    "``ManagedBy: recon-gen`` and ``cleanup`` finds "
                     "them. If this site is genuinely a new wrapper, add "
                     "it to the lint's allowlist; otherwise route through "
                     "an existing one. Suppress with ``# typing-smell: "
@@ -1035,7 +1035,7 @@ class _CreateTagsVisitor(ast.NodeVisitor):
     ``boto3-direct`` — that lint catches new ``boto3.client()``
     instantiations outside the allowlist; this lint catches new
     ``client.create_X(...)`` shapes in the allowlisted boto3 files
-    that would skip the ManagedBy: quicksight-gen tagging convention."""
+    that would skip the ManagedBy: recon-gen tagging convention."""
 
     def __init__(self, file: Path) -> None:
         self.file = file
@@ -1055,7 +1055,7 @@ class _CreateTagsVisitor(ast.NodeVisitor):
                         f"``{node.func.attr}(...)`` without ``Tags=`` "
                         "or ``**payload`` spread — boto3 QuickSight "
                         "create_* calls must carry the ``ManagedBy: "
-                        "quicksight-gen`` tag (plus per-instance + "
+                        "recon-gen`` tag (plus per-instance + "
                         "extra tags) so the cleanup CLI can find + "
                         "delete the resource later. Either pass "
                         "``Tags=[...]`` directly or build the dict "
@@ -1087,9 +1087,9 @@ _NON_PLAYWRIGHT_BROWSER_HELPERS = frozenset({
     "generate_dashboard_embed_url",
 })
 
-_BROWSER_HELPERS_MOD = "quicksight_gen.common.browser.helpers"
-_BROWSER_SCREENSHOT_MOD = "quicksight_gen.common.browser.screenshot"
-_BROWSER_PKG = "quicksight_gen.common.browser"
+_BROWSER_HELPERS_MOD = "recon_gen.common.browser.helpers"
+_BROWSER_SCREENSHOT_MOD = "recon_gen.common.browser.screenshot"
+_BROWSER_PKG = "recon_gen.common.browser"
 
 # X.2.q.3 migration backlog — ``tests/e2e/`` files that still drive
 # Playwright directly (via ``common/browser/helpers``) instead of through
@@ -1106,7 +1106,7 @@ _PLAYWRIGHT_LEAK_LEGACY: frozenset[str] = frozenset()
 
 class _NoPlaywrightLeakVisitor(ast.NodeVisitor):
     """Flag (a) ``import playwright[...]`` / ``from playwright[...] import``
-    and (b) ``from quicksight_gen.common.browser{.helpers|.screenshot}
+    and (b) ``from recon_gen.common.browser{.helpers|.screenshot}
     import …`` (except the AWS-only helper names) in a browser-e2e test —
     Playwright stays sealed behind the ``DashboardDriver`` layer."""
 
@@ -1233,18 +1233,18 @@ def _build_checks() -> list[Check]:
     # the tree-pattern relies on (Visual subtype dispatch, AWS JSON
     # shapes); they get the file-level opt-out below if needed.
     explicit_any_scope = [
-        REPO_ROOT / "src/quicksight_gen/common/db.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/_sql_executor.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/_tree_fetcher.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/server.py",
-        REPO_ROOT / "src/quicksight_gen/common/config.py",
+        REPO_ROOT / "src/recon_gen/common/db.py",
+        REPO_ROOT / "src/recon_gen/common/html/_sql_executor.py",
+        REPO_ROOT / "src/recon_gen/common/html/_tree_fetcher.py",
+        REPO_ROOT / "src/recon_gen/common/html/server.py",
+        REPO_ROOT / "src/recon_gen/common/config.py",
     ]
     # envvar-bypass spans src/ + tests/ (both have env access). The
     # registry itself + its unit test are the two legit consumers of
     # raw os.environ — whitelisted via path exclusion below.
     envvar_scope = [
         p for p in (
-            _expand_paths([REPO_ROOT / "src/quicksight_gen"])
+            _expand_paths([REPO_ROOT / "src/recon_gen"])
             + _expand_paths([REPO_ROOT / "tests"])
         )
         if p.name != "env_keys.py"
@@ -1257,7 +1257,7 @@ def _build_checks() -> list[Check]:
     # markers, but keep parity with envvar-bypass's exclusions).
     why_comment_scope = [
         p for p in (
-            _expand_paths([REPO_ROOT / "src/quicksight_gen"])
+            _expand_paths([REPO_ROOT / "src/recon_gen"])
             + _expand_paths([REPO_ROOT / "tests"])
         )
         if p.name != "test_typing_smells.py"
@@ -1321,9 +1321,9 @@ def _build_checks() -> list[Check]:
                 "stay deterministic"
             ),
             files=_expand_paths([
-                REPO_ROOT / "src/quicksight_gen/common/l2/seed.py",
-                REPO_ROOT / "src/quicksight_gen/common/l2/auto_scenario.py",
-                REPO_ROOT / "src/quicksight_gen/apps",
+                REPO_ROOT / "src/recon_gen/common/l2/seed.py",
+                REPO_ROOT / "src/recon_gen/common/l2/auto_scenario.py",
+                REPO_ROOT / "src/recon_gen/apps",
             ]),
         ),
         Boto3DirectCheck(
@@ -1337,13 +1337,13 @@ def _build_checks() -> list[Check]:
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
-                if p != REPO_ROOT / "src/quicksight_gen/common/deploy.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/cleanup.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/browser/helpers.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/aws_rds.py"
-                and p != REPO_ROOT / "src/quicksight_gen/_dev/runner.py"
+                if p != REPO_ROOT / "src/recon_gen/common/deploy.py"
+                and p != REPO_ROOT / "src/recon_gen/common/cleanup.py"
+                and p != REPO_ROOT / "src/recon_gen/common/browser/helpers.py"
+                and p != REPO_ROOT / "src/recon_gen/common/aws_rds.py"
+                and p != REPO_ROOT / "src/recon_gen/_dev/runner.py"
             ],
         ),
         QsGenPrefixCheck(
@@ -1355,9 +1355,9 @@ def _build_checks() -> list[Check]:
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
-                if p != REPO_ROOT / "src/quicksight_gen/common/config.py"
+                if p != REPO_ROOT / "src/recon_gen/common/config.py"
             ],
         ),
         NoDatetimeNowCheck(
@@ -1370,16 +1370,16 @@ def _build_checks() -> list[Check]:
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
                 if not str(p.relative_to(REPO_ROOT)).startswith(
-                    "src/quicksight_gen/_dev/runner"
+                    "src/recon_gen/_dev/runner"
                 )
                 and not str(p.relative_to(REPO_ROOT)).startswith(
-                    "src/quicksight_gen/cli/audit/"
+                    "src/recon_gen/cli/audit/"
                 )
-                and p != REPO_ROOT / "src/quicksight_gen/common/sheets/app_info.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/provenance.py"
+                and p != REPO_ROOT / "src/recon_gen/common/sheets/app_info.py"
+                and p != REPO_ROOT / "src/recon_gen/common/provenance.py"
             ],
         ),
         NoSleepCheck(
@@ -1413,8 +1413,8 @@ def _build_checks() -> list[Check]:
                 "deliberate"
             ),
             files=_expand_paths([
-                REPO_ROOT / "src/quicksight_gen/cli",
-                REPO_ROOT / "src/quicksight_gen/common",
+                REPO_ROOT / "src/recon_gen/cli",
+                REPO_ROOT / "src/recon_gen/common",
             ]),
         ),
         TreeDataclassCheck(
@@ -1427,17 +1427,17 @@ def _build_checks() -> list[Check]:
                 "equality on mutable state, breaking object-ref "
                 "identity"
             ),
-            files=_expand_paths([REPO_ROOT / "src/quicksight_gen/common/tree"]),
+            files=_expand_paths([REPO_ROOT / "src/recon_gen/common/tree"]),
         ),
         CreateTagsCheck(
             name="create-tags",
             description=(
                 "boto3 QuickSight ``create_*`` calls must carry "
-                "the ``ManagedBy: quicksight-gen`` tag — pass "
+                "the ``ManagedBy: recon-gen`` tag — pass "
                 "``Tags=[...]`` directly or spread a built "
                 "payload via ``**payload``"
             ),
-            files=[REPO_ROOT / "src/quicksight_gen/common/deploy.py"],
+            files=[REPO_ROOT / "src/recon_gen/common/deploy.py"],
         ),
         NoPlaywrightLeakCheck(
             name="no-playwright-leak",

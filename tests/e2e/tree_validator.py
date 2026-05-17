@@ -30,12 +30,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from quicksight_gen.common.tree import (
+from recon_gen.common.tree import (
     App,
     Sheet,
     VisualLike,
 )
-from quicksight_gen.common.tree.actions import Drill
+from recon_gen.common.tree.actions import Drill
 from tests.e2e._drivers import DashboardDriver
 
 

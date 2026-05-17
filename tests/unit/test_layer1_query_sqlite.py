@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 from tests.e2e._layer1_query import (
     assert_account_in_matview,
     assert_matview_has_row,

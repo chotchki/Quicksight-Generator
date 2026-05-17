@@ -6,7 +6,7 @@ sheet. It's committed + shipped in the wheel (offline-ready, like the
 vendored JS in `scripts/vendor_js_deps.py`), but it has to be rebuilt
 whenever `input.css` (the `@theme` tokens / `@source` globs) changes or a
 new utility class shows up in `render.py` / `bootstrap.js`. This script is
-that rebuild recipe, formalized — it is NOT a `quicksight-gen` CLI verb;
+that rebuild recipe, formalized — it is NOT a `recon-gen` CLI verb;
 end users never run it.
 
 Tooling: `tailwindcss` is the standalone binary `pytailwindcss` puts on
@@ -41,7 +41,7 @@ from pathlib import Path
 
 _ASSETS = (
     Path(__file__).resolve().parent.parent
-    / "src" / "quicksight_gen" / "common" / "html" / "assets"
+    / "src" / "recon_gen" / "common" / "html" / "assets"
 )
 _INPUT = _ASSETS / "input.css"
 _OUTPUT = _ASSETS / "output.css"

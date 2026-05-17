@@ -36,12 +36,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.l2.loader import load_instance as load_l2_instance
-from quicksight_gen.common.tree.controls import (
+from recon_gen.common.config import Config
+from recon_gen.common.l2.loader import load_instance as load_l2_instance
+from recon_gen.common.tree.controls import (
     LinkedValues, ParameterDropdown, ParameterSlider, StaticValues,
 )
-from quicksight_gen.common.tree.structure import App, Sheet
+from recon_gen.common.tree.structure import App, Sheet
 
 
 # Repo root → tests/l2/spec_example.yaml — the canonical, smallest
@@ -136,12 +136,12 @@ def _build_apps(cfg: Config | None = None) -> Sequence[tuple[str, App]]:
     # Late import — avoid circular at module-import time + keep the
     # heavy app modules off the path until a test actually needs them.
     from tests._test_helpers import make_test_config
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-    from quicksight_gen.apps.l2_flow_tracing.app import (
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.apps.l2_flow_tracing.app import (
         build_l2_flow_tracing_app,
     )
-    from quicksight_gen.apps.investigation.app import build_investigation_app
-    from quicksight_gen.apps.executives.app import build_executives_app
+    from recon_gen.apps.investigation.app import build_investigation_app
+    from recon_gen.apps.executives.app import build_executives_app
 
     effective_cfg = cfg or make_test_config(
         default_l2_instance=_DEFAULT_L2,

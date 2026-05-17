@@ -34,7 +34,7 @@ SITE = REPO_ROOT / "site"
 # ``MKDOCS_YML.exists()`` always returned False and the test
 # silently skipped. Correct path now.
 MKDOCS_YML = (
-    REPO_ROOT / "src" / "quicksight_gen" / "docs" / "mkdocs.yml"
+    REPO_ROOT / "src" / "recon_gen" / "docs" / "mkdocs.yml"
 )
 
 HREF_RE = re.compile(r'(?:href|src)="([^"]+)"')

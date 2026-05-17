@@ -13,7 +13,7 @@ from textwrap import dedent
 
 import pytest
 
-from quicksight_gen.common.l2 import L2LoaderError, ThemePreset, load_instance
+from recon_gen.common.l2 import L2LoaderError, ThemePreset, load_instance
 
 
 # A minimal happy-path L2 YAML — single account + zero rails — used as

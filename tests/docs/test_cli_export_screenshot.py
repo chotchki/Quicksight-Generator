@@ -1,4 +1,4 @@
-"""Tests for ``quicksight-gen docs export`` and ``docs screenshot``.
+"""Tests for ``recon-gen docs export`` and ``docs screenshot``.
 
 The legacy ``export training`` command + the whitelabel substitution
 machinery were dropped in O.1.l. Docs render now happens via
@@ -13,11 +13,11 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 def test_bundled_docs_directory_exists():
-    docs = files("quicksight_gen") / "docs"
+    docs = files("recon_gen") / "docs"
     assert docs.is_dir()
     assert (docs / "index.md").is_file()
     assert (docs / "Schema_v6.md").is_file()
@@ -44,7 +44,7 @@ def test_export_docs_requires_output(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# `quicksight-gen docs screenshot` (Q.2.c.exec.1, Q.3.a renamed)
+# `recon-gen docs screenshot` (Q.2.c.exec.1, Q.3.a renamed)
 # ---------------------------------------------------------------------------
 
 
@@ -94,7 +94,7 @@ def test_screenshot_requires_output():
 
 def test_parse_viewport_defaults_and_errors():
     """The viewport parser accepts WxH integers + rejects malformed input."""
-    from quicksight_gen.cli.docs import parse_viewport
+    from recon_gen.cli.docs import parse_viewport
 
     assert parse_viewport("1280x900") == (1280, 900)
     # Case-insensitive 'X'.
@@ -113,7 +113,7 @@ def test_screenshot_apps_table_matches_apps_constant():
     canonical APPS tuple so a new app can't slip into one but not
     the other.
     """
-    from quicksight_gen.cli._helpers import APPS
-    from quicksight_gen.cli.docs import SCREENSHOT_APPS
+    from recon_gen.cli._helpers import APPS
+    from recon_gen.cli.docs import SCREENSHOT_APPS
 
     assert set(SCREENSHOT_APPS.keys()) == set(APPS)

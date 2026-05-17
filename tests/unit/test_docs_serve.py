@@ -1,4 +1,4 @@
-"""X.2.s.1 regression — ``quicksight-gen docs serve`` must run mkdocs
+"""X.2.s.1 regression — ``recon-gen docs serve`` must run mkdocs
 with cwd set to the bundled ``mkdocs.yml``'s directory.
 
 mkdocs-macros resolves its ``include_dir: docs/_macros`` against the
@@ -20,14 +20,14 @@ from unittest import mock
 
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main as cli_root
-from quicksight_gen.cli.docs import _BUNDLED_MKDOCS_YML
+from recon_gen.cli import main as cli_root
+from recon_gen.cli.docs import _BUNDLED_MKDOCS_YML
 
 
 def test_docs_serve_runs_mkdocs_with_bundled_config_cwd() -> None:
     runner = CliRunner()
     with mock.patch(
-        "quicksight_gen.cli.docs.subprocess.call", return_value=0,
+        "recon_gen.cli.docs.subprocess.call", return_value=0,
     ) as m:
         result = runner.invoke(cli_root, ["docs", "serve", "-p", "9999"])
     assert result.exit_code == 0, result.output

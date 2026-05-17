@@ -7,7 +7,7 @@
   },
   "files": {
     "includes": [
-      "src/quicksight_gen/common/html/assets/js/**/*.js",
+      "src/recon_gen/common/html/assets/js/**/*.js",
       "tests/js/**/*.js",
       "tests/js/**/*.html"
     ]

@@ -42,7 +42,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from quicksight_gen.common.browser.helpers import (
+from recon_gen.common.browser.helpers import (
     bump_table_page_size_to_10000,
     visual_is_empty,
     click_context_menu_item,

@@ -19,9 +19,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.seed import (
     DriftPlant,
     LimitBreachPlant,
     OverdraftPlant,

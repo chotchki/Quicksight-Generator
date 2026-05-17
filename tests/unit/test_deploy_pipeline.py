@@ -20,13 +20,13 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.db import connect_demo_db, execute_script
-from quicksight_gen.common.config import (
+from recon_gen.common.config import Config
+from recon_gen.common.db import connect_demo_db, execute_script
+from recon_gen.common.config import (
     EtlDatasourceConfig,
     TestGeneratorConfig,
 )
-from quicksight_gen.common.l2.deploy_pipeline import (
+from recon_gen.common.l2.deploy_pipeline import (
     DeploySummary,
     get_data_generation_id,
     run_deploy_pipeline,
@@ -38,15 +38,15 @@ from quicksight_gen.common.l2.deploy_pipeline import (
     step_4_matviews,
     step_5_reload,
 )
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import L2Instance
-from quicksight_gen.common.l2.schema import (
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import L2Instance
+from recon_gen.common.l2.schema import (
     BASE_DAILY_BALANCES_COLUMNS,
     BASE_TRANSACTIONS_COLUMNS,
     emit_schema,
     wipe_demo_data_sql,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 def _base_cfg() -> Config:
@@ -532,7 +532,7 @@ def test_step_2_pull_end_date_filter_drops_future_rows(
 ) -> None:
     """end_date carves the source: rows after the cutoff aren't pulled."""
     from datetime import date
-    from quicksight_gen.common.config import TestGeneratorConfig
+    from recon_gen.common.config import TestGeneratorConfig
     src_path = tmp_path / "etl.sqlite"
     _build_etl_source_sqlite(
         src_path,
@@ -688,13 +688,13 @@ def test_base_columns_match_emitted_schema(
 # ---------- dialect-from-url ----------
 
 def test_dialect_from_url_postgres() -> None:
-    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    from recon_gen.common.l2.deploy_pipeline import _dialect_from_url
     assert _dialect_from_url("postgresql://u:p@h:5432/d") is Dialect.POSTGRES
     assert _dialect_from_url("postgres://u:p@h:5432/d") is Dialect.POSTGRES
 
 
 def test_dialect_from_url_oracle() -> None:
-    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    from recon_gen.common.l2.deploy_pipeline import _dialect_from_url
     assert _dialect_from_url("oracle://u:p@h:1521/svc") is Dialect.ORACLE
     assert _dialect_from_url(
         "oracle+oracledb://u:p@h:1521/svc",
@@ -702,12 +702,12 @@ def test_dialect_from_url_oracle() -> None:
 
 
 def test_dialect_from_url_sqlite() -> None:
-    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    from recon_gen.common.l2.deploy_pipeline import _dialect_from_url
     assert _dialect_from_url("sqlite:///tmp/foo.db") is Dialect.SQLITE
 
 
 def test_dialect_from_url_unknown_rejects() -> None:
-    from quicksight_gen.common.l2.deploy_pipeline import _dialect_from_url
+    from recon_gen.common.l2.deploy_pipeline import _dialect_from_url
     with pytest.raises(ValueError, match="Cannot infer dialect"):
         _dialect_from_url("mysql://u:p@h:3306/d")
 
@@ -1058,7 +1058,7 @@ def test_covered_rail_names_distinct_set(
 ) -> None:
     """Helper: verify _covered_rail_names returns the de-duplicated set
     of rail_name values from <prefix>_transactions."""
-    from quicksight_gen.common.l2.deploy_pipeline import _covered_rail_names
+    from recon_gen.common.l2.deploy_pipeline import _covered_rail_names
     cfg = _sqlite_cfg(tmp_path)
     _apply_demo_schema_only(cfg, spec_example_instance)
     # Empty table → empty set.
@@ -1123,7 +1123,7 @@ def test_only_template_rails_returns_template_leg_rails(
     spec_example_instance: L2Instance,
 ) -> None:
     """The closure for a known template = its declared leg_rails set."""
-    from quicksight_gen.common.l2.deploy_pipeline import _only_template_rails
+    from recon_gen.common.l2.deploy_pipeline import _only_template_rails
 
     closure = _only_template_rails(
         "MerchantSettlementCycle", spec_example_instance, cfg=_base_cfg(),
@@ -1137,7 +1137,7 @@ def test_only_template_rails_unknown_name_loud_fails(
 ) -> None:
     """Unknown template name halts the deploy with a useful error
     listing the declared templates so the operator can see the typo."""
-    from quicksight_gen.common.l2.deploy_pipeline import _only_template_rails
+    from recon_gen.common.l2.deploy_pipeline import _only_template_rails
 
     with pytest.raises(ValueError, match="MadeUpName"):
         _only_template_rails(

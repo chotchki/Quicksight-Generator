@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
     QS_E2E_IDENTITY_REGION,
     QS_E2E_PAGE_TIMEOUT,
@@ -79,7 +79,7 @@ def cfg():
     ``QS_GEN_CONFIG`` env var when both per-dialect files exist and
     you need to pin to one.
     """
-    from quicksight_gen.common.config import load_config
+    from recon_gen.common.config import load_config
 
     # Soft-fall: registry's must_be_file validator would raise on a
     # bad pin; the discovery loop below has fallback candidates.
@@ -162,8 +162,8 @@ def _resolve_test_l2_instance():  # type: ignore[no-untyped-def]: return-type an
     construction) and the ``*_app`` fixtures (so the tree the test
     walks has the same L2 prefix as the deployed resources).
     """
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.common.l2 import load_instance
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.common.l2 import load_instance
 
     override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
     if override is not None:
@@ -254,8 +254,8 @@ def l1_dataset_ids(l1_app) -> list[str]:
 def l2ft_l2_instance():
     """The loaded ``L2Instance`` the e2e session targets — same resolution
     as `l2ft_l2_prefix`, but the object, not just the prefix string."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.common.l2 import load_instance
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.common.l2 import load_instance
 
     override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
     if override is not None:
@@ -291,7 +291,7 @@ def require_l2ft_feature(l2_instance, feature: str) -> None:
     """`pytest.skip` if ``l2_instance`` declares zero of ``feature``
     (``"chains"`` | ``"templates"``). Call from an autouse fixture in an
     L2FT browser test module that only applies when that feature exists."""
-    from quicksight_gen.apps.l2_flow_tracing import datasets as _l2ft_ds
+    from recon_gen.apps.l2_flow_tracing import datasets as _l2ft_ds
 
     fn_name = _L2FT_FEATURE_DECLARED[feature]
     declared = getattr(_l2ft_ds, fn_name)(l2_instance)
@@ -333,7 +333,7 @@ def inv_app(cfg):
     this the hotfix-v8.8.0a23 derived-fixture pivot would have been
     a step backward — IDs would drift on every non-default L2 run.
     """
-    from quicksight_gen.apps.investigation.app import build_investigation_app
+    from recon_gen.apps.investigation.app import build_investigation_app
 
     app = build_investigation_app(
         cfg, l2_instance=_resolve_test_l2_instance(),
@@ -346,7 +346,7 @@ def inv_app(cfg):
 def exec_app(cfg):
     """Tree-built Executives App (post-emit, auto-IDs resolved).
     See ``inv_app`` for the L2-instance-honoring rationale."""
-    from quicksight_gen.apps.executives.app import build_executives_app
+    from recon_gen.apps.executives.app import build_executives_app
 
     app = build_executives_app(
         cfg, l2_instance=_resolve_test_l2_instance(),
@@ -365,7 +365,7 @@ def l1_app(cfg):
     making derived ``l1_dataset_ids`` ↔ deployed-DataSetId comparisons
     trivially correct. Post-emit so auto-IDs are resolved.
     """
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 
     app = build_l1_dashboard_app(
         cfg, l2_instance=_resolve_test_l2_instance(),
@@ -380,7 +380,7 @@ def l2ft_app(cfg):
     See ``inv_app`` for the L2-instance-honoring rationale.
     ``build_l2_flow_tracing_app`` registers its datasets' CustomSQL +
     contracts internally (``build_all_l2_flow_tracing_datasets``)."""
-    from quicksight_gen.apps.l2_flow_tracing.app import (
+    from recon_gen.apps.l2_flow_tracing.app import (
         build_l2_flow_tracing_app,
     )
 
@@ -625,14 +625,14 @@ def capture_top_queries(cfg, request):
     if not cfg.demo_database_url:
         return
 
-    from quicksight_gen._dev.perf import (
+    from recon_gen._dev.perf import (
         dialect_name,
         fetch_top_queries,
         format_skipped,
         format_top_queries_markdown,
     )
-    from quicksight_gen.common.db import connect_demo_db
-    from quicksight_gen.common.sql import Dialect
+    from recon_gen.common.db import connect_demo_db
+    from recon_gen.common.sql import Dialect
 
     dialect_str = dialect_name(cfg.dialect)
     target_dir = Path(run_dir) / "db" / dialect_str

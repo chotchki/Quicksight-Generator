@@ -6,8 +6,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from quicksight_gen.common.config import TestGeneratorConfig
-from quicksight_gen.common.l2.studio_state import (
+from recon_gen.common.config import TestGeneratorConfig
+from recon_gen.common.l2.studio_state import (
     SIDEFILE_NAME,
     StudioState,
     load_studio_state,

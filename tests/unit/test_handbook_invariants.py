@@ -13,7 +13,7 @@ Two layers:
 
 from __future__ import annotations
 
-from quicksight_gen.common.handbook.invariants import (
+from recon_gen.common.handbook.invariants import (
     INVARIANT_KIND_TO_SHEET,
     InvariantSection,
     load_bundled_invariants,

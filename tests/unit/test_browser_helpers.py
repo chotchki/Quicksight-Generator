@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-from quicksight_gen.common.browser.helpers import (
+from recon_gen.common.browser.helpers import (
     SCREENSHOT_DIR,
     _capture_dir_for,
     _capture_path,
@@ -23,7 +23,7 @@ from quicksight_gen.common.browser.helpers import (
     _test_id_from_pytest_env,
     get_user_arn,
 )
-from quicksight_gen.common.env_keys import QS_E2E_USER_ARN, QS_GEN_RUN_DIR
+from recon_gen.common.env_keys import QS_E2E_USER_ARN, QS_GEN_RUN_DIR
 
 
 class TestGetUserArn:
@@ -237,7 +237,7 @@ class TestNoHardcodedArnInSource:
     ID into source — this test guards against regression."""
 
     def test_no_aws_account_id_literal_in_helpers_module(self) -> None:
-        from quicksight_gen.common.browser import helpers as helpers_mod
+        from recon_gen.common.browser import helpers as helpers_mod
         from pathlib import Path
 
         source = Path(helpers_mod.__file__).read_text()

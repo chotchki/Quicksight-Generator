@@ -28,11 +28,11 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.browser.helpers import (
+from recon_gen.common.browser.helpers import (
     trigger_failure_capture,
     webkit_page,
 )
-from quicksight_gen.common.env_keys import QS_GEN_RUN_DIR, QS_GEN_TRACE_ALL
+from recon_gen.common.env_keys import QS_GEN_RUN_DIR, QS_GEN_TRACE_ALL
 
 
 # Skip cleanly when Playwright (or its WebKit binary) isn't available.

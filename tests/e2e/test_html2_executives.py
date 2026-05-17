@@ -36,9 +36,9 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.executives.app import build_executives_app
-from quicksight_gen.apps.executives.datasets import build_all_datasets
-from quicksight_gen.common.env_keys import QS_GEN_RUN_DIR
+from recon_gen.apps.executives.app import build_executives_app
+from recon_gen.apps.executives.datasets import build_all_datasets
+from recon_gen.common.env_keys import QS_GEN_RUN_DIR
 from tests._test_helpers import make_test_config
 from tests.e2e._drivers import App2Driver
 

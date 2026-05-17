@@ -29,28 +29,28 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.executives.datasets import (
+from recon_gen.apps.executives.datasets import (
     build_all_datasets as build_exec_datasets,
 )
-from quicksight_gen.apps.investigation.datasets import (
+from recon_gen.apps.investigation.datasets import (
     build_all_datasets as build_inv_datasets,
 )
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l1_dashboard.datasets import (
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l1_dashboard.datasets import (
     build_all_l1_dashboard_datasets,
 )
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l2_flow_tracing.datasets import (
     build_all_l2_flow_tracing_datasets,
 )
-from quicksight_gen.common.config import Config, load_config
-from quicksight_gen.common.db import connect_demo_db
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.config import Config, load_config
+from recon_gen.common.db import connect_demo_db
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
     QS_GEN_CONFIG,
     QS_GEN_TEST_L2_INSTANCE,
 )
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.models import DataSet, DatasetParameter
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.models import DataSet, DatasetParameter
 
 
 # ---------------------------------------------------------------------------

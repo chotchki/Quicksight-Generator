@@ -36,11 +36,11 @@ coverage.xml
 site/
 
 # Phase O.1.c — diagram render cache (rebuilt on every mkdocs build)
-src/quicksight_gen/docs/_diagrams/_rendered/
+src/recon_gen/docs/_diagrams/_rendered/
 
 # Per-L2 brand assets copied in by main.py at mkdocs-build time
-src/quicksight_gen/docs/img/_l2_*
-src/quicksight_gen/docs/stylesheets/_l2_*
+src/recon_gen/docs/img/_l2_*
+src/recon_gen/docs/stylesheets/_l2_*
 
 /config.yaml
 tests/e2e/screenshots/
@@ -50,3 +50,5 @@ tests/l2/fuzz_failures/
 
 # Y.6 perf measurement scratch (regenerate via spike/y6/measure.py)
 runs/y6/
+.claude/plan-bridge-state.json
+.claude/plan-bridge-state.json.lock

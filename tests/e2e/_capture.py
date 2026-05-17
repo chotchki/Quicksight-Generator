@@ -49,7 +49,7 @@ def maybe_capture_on_failure(request, driver) -> None:  # type: ignore[no-untype
     # IS the DashboardDriver-friendly verb — it takes the Page from
     # ``driver._page`` / ``driver.page`` and writes 6 artifacts. There's
     # nowhere else to invoke it from.
-    from quicksight_gen.common.browser.helpers import (  # typing-smell: ignore[no-playwright-leak]: shared capture-bridge module
+    from recon_gen.common.browser.helpers import (  # typing-smell: ignore[no-playwright-leak]: shared capture-bridge module
         _sanitize_test_id,
         trigger_failure_capture,
     )

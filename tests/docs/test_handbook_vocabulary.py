@@ -11,18 +11,18 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.handbook import (
+from recon_gen.common.handbook import (
     HandbookVocabulary,
     InvestigationPersonaVocabulary,
     MerchantVocabulary,
     vocabulary_for,
 )
-from quicksight_gen.common.handbook.vocabulary import (
+from recon_gen.common.handbook.vocabulary import (
     _extract_institution_name,
     _institution_acronym,
 )
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import L2Instance
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import L2Instance
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -326,7 +326,7 @@ class TestDemoScenarioVocabulary:
         # example sections cleanly.
         # Use the existing minimal-instance helper which has no rails /
         # accounts, so default_scenario_for returns no plants.
-        from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+        from recon_gen.common.l2.auto_scenario import default_scenario_for
         l2 = _minimal_instance()
         plant = default_scenario_for(l2).scenario
         assume_no_plants = (

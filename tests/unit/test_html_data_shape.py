@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.html._data_shape import (
+from recon_gen.common.html._data_shape import (
     shape_bar_chart,
     shape_for_kind,
     shape_kpi,

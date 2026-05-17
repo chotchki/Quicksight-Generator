@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.config import Config
+from recon_gen.common.sql import Dialect
 
 
 def _cfg(**overrides) -> Config:

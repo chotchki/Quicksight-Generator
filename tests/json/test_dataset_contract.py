@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.config import Config
+from recon_gen.common.config import Config
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.dataset_contract import ColumnSpec, DatasetContract
-from quicksight_gen.apps.investigation import datasets as inv_datasets
+from recon_gen.common.dataset_contract import ColumnSpec, DatasetContract
+from recon_gen.apps.investigation import datasets as inv_datasets
 
 
 @pytest.fixture()
@@ -96,7 +96,7 @@ class TestOracleLowercaseAliasWrapper:
     """
 
     def _oracle_cfg(self) -> Config:
-        from quicksight_gen.common.sql import Dialect
+        from recon_gen.common.sql import Dialect
         return make_test_config(
             aws_region="us-east-2",
             db_table_prefix="spec_example",
@@ -110,7 +110,7 @@ class TestOracleLowercaseAliasWrapper:
         )
 
     def _build(self, cfg: Config, sql: str) -> str:
-        from quicksight_gen.common.dataset_contract import build_dataset
+        from recon_gen.common.dataset_contract import build_dataset
         contract = DatasetContract(columns=[
             ColumnSpec("account_id", "STRING"),
             ColumnSpec("amount", "DECIMAL"),

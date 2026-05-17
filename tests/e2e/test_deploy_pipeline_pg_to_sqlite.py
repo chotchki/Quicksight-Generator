@@ -5,7 +5,7 @@ Exercises the full X.4.g.13 contract end-to-end against real DBs:
   postgres-in-docker  ── etl_datasource ─┐
                                           │
               etl_hook ──────────────────►│  pipeline orchestration
-              (`quicksight-gen data        │  (POST /deploy)
+              (`recon-gen data        │  (POST /deploy)
                apply --execute` against    │
                the postgres container)     ▼
                                   ┌──────────────────┐
@@ -48,11 +48,11 @@ pytest.importorskip("httpx")
 import httpx
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]: third-party library lacks PEP 561 stubs
 
-from quicksight_gen.cli._html_serve import REAL_APPS
-from quicksight_gen.common.config import Config, EtlDatasourceConfig
-from quicksight_gen.common.db import make_connection_pool
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.sql import Dialect
+from recon_gen.cli._html_serve import REAL_APPS
+from recon_gen.common.config import Config, EtlDatasourceConfig
+from recon_gen.common.db import make_connection_pool
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.sql import Dialect
 
 from tests.e2e._studio_deploy_helpers import (
     QUICKSIGHT_GEN_BIN,
@@ -111,7 +111,7 @@ def pg_container_url() -> Iterator[str]:
 def etl_hook_script(
     tmp_path: Path, pg_container_url: str,
 ) -> Path:
-    """Write a shell script that runs ``quicksight-gen data apply
+    """Write a shell script that runs ``recon-gen data apply
     --execute`` against the postgres container, exercising the
     realistic operator pattern. Pre-applies the schema so step 1's
     seed has tables to write into."""
@@ -153,7 +153,7 @@ def test_pg_to_sqlite_deploy_pipeline_full_loop(
         try:
             app = build_studio_app(cfg, pool)
             transport = httpx.ASGITransport(app=app)
-            # 120s timeout because deploy runs `quicksight-gen data
+            # 120s timeout because deploy runs `recon-gen data
             # apply --execute` against postgres as the etl_hook
             # subprocess — that's ~15-30s on sasquatch_pr.
             async with httpx.AsyncClient(

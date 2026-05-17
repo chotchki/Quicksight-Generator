@@ -49,14 +49,14 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.executives.app import build_executives_app
-from quicksight_gen.apps.executives.datasets import build_all_datasets
-from quicksight_gen.common.dataset_contract import get_sql
-from quicksight_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
-from quicksight_gen.common.html._tree_fetcher import (
+from recon_gen.apps.executives.app import build_executives_app
+from recon_gen.apps.executives.datasets import build_all_datasets
+from recon_gen.common.dataset_contract import get_sql
+from recon_gen.common.env_keys import QS_GEN_TEST_L2_INSTANCE
+from recon_gen.common.html._tree_fetcher import (
     _find_visual_dataset_identifier,
 )
-from quicksight_gen.common.tree.structure import App
+from recon_gen.common.tree.structure import App
 from tests.e2e._drivers import App2Driver
 from tests.e2e._harness_html2 import make_live_db_fetcher_for_app
 
@@ -76,8 +76,8 @@ def _load_l2_instance() -> Any:
     """Load the L2 instance the test runs against — env override via
     ``QS_GEN_TEST_L2_INSTANCE``, else the bundled default
     (spec_example)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.common.l2 import load_instance
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.common.l2 import load_instance
 
     override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
     if override is not None:
@@ -91,7 +91,7 @@ def _try_db_connection(cfg: Any) -> tuple[bool, str]:
     if not getattr(cfg, "demo_database_url", None):
         return False, "no demo_database_url in cfg"
     try:
-        from quicksight_gen.common.db import connect_demo_db
+        from recon_gen.common.db import connect_demo_db
         conn = connect_demo_db(cfg)
         conn.close()
         return True, ""
@@ -120,7 +120,7 @@ def live_db_exec_driver(cfg: Any) -> Iterator[_LiveDriver]:
         pytest.skip(
             "live-DB e2e skipped: set QS_GEN_TEST_L2_INSTANCE to the L2 "
             "YAML matching your seeded DB (e.g. "
-            "src/quicksight_gen/_l2_fixtures/sasquatch_pr.yaml)"
+            "src/recon_gen/_l2_fixtures/sasquatch_pr.yaml)"
         )
     ok, reason = _try_db_connection(cfg)
     if not ok:

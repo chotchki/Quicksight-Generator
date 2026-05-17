@@ -1,4 +1,4 @@
-"""Unit tests for the ``quicksight-gen json`` CLI surface.
+"""Unit tests for the ``recon-gen json`` CLI surface.
 
 Exercises the four sub-commands (``apply`` / ``clean`` / ``test`` /
 ``probe``) through Click's ``CliRunner`` with the per-app builders +
@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli.json import json_
+from recon_gen.cli.json import json_
 
 
 def _make_yaml_config(tmp_path: Path) -> Path:
@@ -68,7 +68,7 @@ def _patch_generators(monkeypatch) -> dict[str, list]:
             calls[name].append((config, output, l2_instance_path))
         return fn
 
-    import quicksight_gen.cli._app_builders as ab
+    import recon_gen.cli._app_builders as ab
     monkeypatch.setattr(ab, "_generate_investigation",  _spy("investigation"))
     monkeypatch.setattr(ab, "_generate_executives",     _spy("executives"))
     monkeypatch.setattr(ab, "_generate_l1_dashboard",   _spy("l1_dashboard"))
@@ -89,7 +89,7 @@ def test_apply_without_execute_writes_jsons_and_skips_deploy(
     out_dir = tmp_path / "out"
     calls = _patch_generators(monkeypatch)
     deploy_called: list[Any] = []
-    import quicksight_gen.common.deploy as dep
+    import recon_gen.common.deploy as dep
     monkeypatch.setattr(dep, "deploy", lambda *a, **k: deploy_called.append((a, k)) or 0)
 
     rc = CliRunner().invoke(json_, [
@@ -116,7 +116,7 @@ def test_apply_with_execute_invokes_deploy(tmp_path, monkeypatch):
         deploy_calls.append((cfg_arg, out_arg, list(app_list)))
         return 0
 
-    import quicksight_gen.common.deploy as dep
+    import recon_gen.common.deploy as dep
     monkeypatch.setattr(dep, "deploy", _spy_deploy)
 
     rc = CliRunner().invoke(json_, [
@@ -139,7 +139,7 @@ def test_apply_with_execute_propagates_deploy_failure(tmp_path, monkeypatch):
     sees a non-zero CLI exit too — the ``--execute`` contract."""
     cfg = _make_yaml_config(tmp_path)
     _patch_generators(monkeypatch)
-    import quicksight_gen.common.deploy as dep
+    import recon_gen.common.deploy as dep
     monkeypatch.setattr(dep, "deploy", lambda *_a, **_k: 7)
 
     rc = CliRunner().invoke(json_, [
@@ -167,13 +167,13 @@ def test_apply_demo_database_url_auto_emits_datasource_json(
     flip ``datasource_arn_was_derived`` to False — so the auto-emit gate
     wouldn't fire and the file wouldn't land. Same defensive pattern as
     ``test_apply_no_demo_database_url_skips_datasource_emit`` below."""
-    from quicksight_gen.common.env_keys import QS_GEN_DATASOURCE_ARN
+    from recon_gen.common.env_keys import QS_GEN_DATASOURCE_ARN
     monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
 
     cfg = _make_demo_yaml_config(tmp_path)
     out_dir = tmp_path / "out"
     _patch_generators(monkeypatch)
-    import quicksight_gen.common.deploy as dep
+    import recon_gen.common.deploy as dep
     monkeypatch.setattr(dep, "deploy", lambda *_a, **_k: 0)
 
     rc = CliRunner().invoke(json_, [
@@ -197,13 +197,13 @@ def test_apply_no_demo_database_url_skips_datasource_emit(
     # an ambient QS_GEN_DEMO_DATABASE_URL (e.g. set by the runner in
     # CI mode for the db layer) leaks into the loader's env-fallback
     # path and quietly populates cfg.demo_database_url.
-    from quicksight_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
+    from recon_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
     monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
 
     cfg = _make_yaml_config(tmp_path)  # no demo_database_url
     out_dir = tmp_path / "out"
     _patch_generators(monkeypatch)
-    import quicksight_gen.common.deploy as dep
+    import recon_gen.common.deploy as dep
     monkeypatch.setattr(dep, "deploy", lambda *_a, **_k: 0)
 
     rc = CliRunner().invoke(json_, [
@@ -228,7 +228,7 @@ def test_clean_without_execute_calls_run_cleanup_in_dry_run(
         cleanup_calls.append({"out_dir": out_dir, **kwargs})
         return 0
 
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(cu, "run_cleanup", _spy)
 
     rc = CliRunner().invoke(json_, [
@@ -243,7 +243,7 @@ def test_clean_without_execute_calls_run_cleanup_in_dry_run(
 def test_clean_with_execute_runs_cleanup_for_real(tmp_path, monkeypatch):
     cfg = _make_yaml_config(tmp_path)
     cleanup_calls: list[dict] = []
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "run_cleanup",
         lambda *_a, **kwargs: cleanup_calls.append(kwargs) or 0,
@@ -264,7 +264,7 @@ def test_clean_all_flag_threads_purge_all_through(tmp_path, monkeypatch):
     every matching resource including the live deploy)."""
     cfg = _make_yaml_config(tmp_path)
     cleanup_calls: list[dict] = []
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "run_cleanup",
         lambda *_a, **kwargs: cleanup_calls.append(kwargs) or 0,
@@ -284,7 +284,7 @@ def test_clean_all_without_execute_is_dry_run(tmp_path, monkeypatch):
     sweep without deleting — independent flags."""
     cfg = _make_yaml_config(tmp_path)
     cleanup_calls: list[dict] = []
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(
         cu, "run_cleanup",
         lambda *_a, **kwargs: cleanup_calls.append(kwargs) or 0,
@@ -300,7 +300,7 @@ def test_clean_all_without_execute_is_dry_run(tmp_path, monkeypatch):
 
 def test_clean_propagates_cleanup_failures(tmp_path, monkeypatch):
     cfg = _make_yaml_config(tmp_path)
-    import quicksight_gen.common.cleanup as cu
+    import recon_gen.common.cleanup as cu
     monkeypatch.setattr(cu, "run_cleanup", lambda *_a, **_k: 3)
 
     rc = CliRunner().invoke(json_, [
@@ -322,7 +322,7 @@ def test_probe_iterates_every_app_and_prints_a_report(
     one probe per declared app."""
     cfg = _make_yaml_config(tmp_path)
 
-    import quicksight_gen.cli._app_builders as ab
+    import recon_gen.cli._app_builders as ab
     monkeypatch.setattr(
         ab, "_dashboard_id_for_app",
         lambda app, out: f"qs-{app}-dashboard-id",
@@ -330,7 +330,7 @@ def test_probe_iterates_every_app_and_prints_a_report(
 
     seen: list[str] = []
 
-    import quicksight_gen.common.probe as prob
+    import recon_gen.common.probe as prob
     monkeypatch.setattr(
         prob, "probe_dashboard",
         lambda **kw: seen.append(kw["dashboard_id"]) or [],

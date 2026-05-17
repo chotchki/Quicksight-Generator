@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen._dev import runner as r
+from recon_gen._dev import runner as r
 
 
 _RUN_ID_OLD = "20260101T000000Z-aaaaaaa"

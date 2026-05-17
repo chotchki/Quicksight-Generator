@@ -1,6 +1,6 @@
 """E2E gate: audit PDF render + verify cycle against the live DB.
 
-Wraps the legacy CI workflow steps (`quicksight-gen audit apply --execute
+Wraps the legacy CI workflow steps (`recon-gen audit apply --execute
 -o <pdf>` + `audit verify <pdf>`) as pytest so the runner's `db` layer
 can dispatch them. Reads cfg + L2 from `QS_GEN_CONFIG` /
 `QS_GEN_TEST_L2_INSTANCE`, picking up whatever prefix the variant's
@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
     QS_GEN_CONFIG,
     QS_GEN_TEST_L2_INSTANCE,
@@ -41,7 +41,7 @@ from quicksight_gen.common.env_keys import (
 
 
 _VENV_BIN = Path(__file__).resolve().parents[2] / ".venv" / "bin"
-_QS_GEN = _VENV_BIN / "quicksight-gen"
+_QS_GEN = _VENV_BIN / "recon-gen"
 
 
 def _resolve_cfg_path() -> Path:

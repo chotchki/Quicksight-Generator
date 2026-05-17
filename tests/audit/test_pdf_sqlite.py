@@ -49,7 +49,7 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.cli.audit import (
+from recon_gen.cli.audit import (
     _query_drift_violations,
     _query_executive_summary,
     _query_limit_breach_violations,
@@ -58,7 +58,7 @@ from quicksight_gen.cli.audit import (
     _query_stuck_unbundled_violations,
     _query_supersession,
 )
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 
 
 # --- Fakes -------------------------------------------------------------------
@@ -283,7 +283,7 @@ def patched_connect(db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> 
     """Patch ``connect_demo_db`` so the audit helpers receive the
     in-memory SQLite connection.
 
-    The helpers do a lazy ``from quicksight_gen.common.db import
+    The helpers do a lazy ``from recon_gen.common.db import
     connect_demo_db`` inside the function body; patch the source
     module so that lazy lookup resolves to the fake.
 
@@ -303,7 +303,7 @@ def patched_connect(db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> 
 
     fake_conn = _NoCloseConn(db)
     monkeypatch.setattr(
-        "quicksight_gen.common.db.connect_demo_db",
+        "recon_gen.common.db.connect_demo_db",
         lambda _cfg: fake_conn,
     )
 

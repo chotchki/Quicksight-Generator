@@ -26,16 +26,16 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.db import execute_script
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.schema import emit_schema
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.db import execute_script
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.schema import emit_schema
+from recon_gen.common.l2.seed import (
     emit_baseline_seed,
     emit_full_seed,
     emit_truncate_sql,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 _SPEC_EXAMPLE = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
@@ -55,7 +55,7 @@ def _open_sqlite() -> sqlite3.Connection:
     on the aggregate, but matview refresh does — register here so the
     helper is reusable across both code paths.
     """
-    from quicksight_gen.common.db import _register_sqlite_aggregates
+    from recon_gen.common.db import _register_sqlite_aggregates
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys = ON;")
     _register_sqlite_aggregates(conn)
@@ -77,7 +77,7 @@ class TestSqlTimestampLiteralSqlite:
     """
 
     def test_sqlite_strips_tz_offset(self) -> None:
-        from quicksight_gen.common.l2.seed import _sql_timestamp_literal
+        from recon_gen.common.l2.seed import _sql_timestamp_literal
         # Trailing +HH:MM offset → stripped per the TZ-naive contract.
         out = _sql_timestamp_literal(
             "2030-01-01T09:00:00+00:00", Dialect.SQLITE,
@@ -86,7 +86,7 @@ class TestSqlTimestampLiteralSqlite:
         assert out == "'2030-01-01 09:00:00'"
 
     def test_sqlite_strips_z_offset(self) -> None:
-        from quicksight_gen.common.l2.seed import _sql_timestamp_literal
+        from recon_gen.common.l2.seed import _sql_timestamp_literal
         out = _sql_timestamp_literal(
             "2030-01-01T09:00:00Z", Dialect.SQLITE,
         )
@@ -97,7 +97,7 @@ class TestSqlTimestampLiteralSqlite:
         # PG: ``'2030-01-01 09:00:00'``
         # Oracle: ``TIMESTAMP '2030-01-01 09:00:00'``
         # SQLite: ``'2030-01-01 09:00:00'`` (PG-shaped — no TIMESTAMP word)
-        from quicksight_gen.common.l2.seed import _sql_timestamp_literal
+        from recon_gen.common.l2.seed import _sql_timestamp_literal
         out = _sql_timestamp_literal(
             "2030-01-01T09:00:00", Dialect.SQLITE,
         )
@@ -107,7 +107,7 @@ class TestSqlTimestampLiteralSqlite:
         # SQLite's date functions accept both T and space; we emit
         # space for visual parity with Oracle (and `julianday()` is
         # happier with space).
-        from quicksight_gen.common.l2.seed import _sql_timestamp_literal
+        from recon_gen.common.l2.seed import _sql_timestamp_literal
         out = _sql_timestamp_literal(
             "2030-01-01T09:30:45", Dialect.SQLITE,
         )
@@ -118,7 +118,7 @@ class TestSqlTimestampLiteralSqlite:
         # The most direct functional assertion: the SQLite literal must
         # be parseable by julianday(), which the schema's
         # epoch_seconds_between branch depends on.
-        from quicksight_gen.common.l2.seed import _sql_timestamp_literal
+        from recon_gen.common.l2.seed import _sql_timestamp_literal
         lit = _sql_timestamp_literal(
             "2030-01-01T09:00:00+00:00", Dialect.SQLITE,
         )
@@ -432,7 +432,7 @@ class TestMatviewRefreshSqlite:
     """
 
     def test_full_apply_refresh_loop(self) -> None:
-        from quicksight_gen.common.l2.schema import refresh_matviews_sql
+        from recon_gen.common.l2.schema import refresh_matviews_sql
         instance = load_instance(_SPEC_EXAMPLE)
         scenario = default_scenario_for(instance, today=_ANCHOR).scenario
         conn = _open_sqlite()
@@ -490,7 +490,7 @@ class TestMatviewRefreshSqlite:
         # X.3.c — the SQLite refresh is teardown + rebuild; running
         # it twice in a row should leave the matviews in the same
         # state.
-        from quicksight_gen.common.l2.schema import refresh_matviews_sql
+        from recon_gen.common.l2.schema import refresh_matviews_sql
         instance = load_instance(_SPEC_EXAMPLE)
         scenario = default_scenario_for(instance, today=_ANCHOR).scenario
         conn = _open_sqlite()

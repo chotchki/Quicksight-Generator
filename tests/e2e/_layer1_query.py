@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 
 
 def _placeholder(dialect: Dialect, position: int) -> str:

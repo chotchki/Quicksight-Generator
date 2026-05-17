@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from quicksight_gen.common.html._visual_sql import wrap_for_visual
+from recon_gen.common.html._visual_sql import wrap_for_visual
 
 
 @dataclass

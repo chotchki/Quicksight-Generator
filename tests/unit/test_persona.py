@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.persona import DemoPersona
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.persona import DemoPersona
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
