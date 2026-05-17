@@ -183,6 +183,30 @@ def picker_value(
     return str(value)
 
 
+def non_matching_dropdown_value(
+    driver: Any, picker_label: str, matching_value: str,
+) -> str:
+    """AA.A.7 — return an advertised dropdown option that differs from
+    ``matching_value``, for the inverse-exclusion test.
+
+    Raises ``RuntimeError`` if the dropdown only advertises one option
+    (no inverse value to pick — the dropdown can't distinguish in
+    either direction, the inverse test is meaningless and should be
+    skipped at the call site).
+    """
+    options = [
+        o for o in driver.filter_options(picker_label)
+        if o and o != matching_value
+    ]
+    if not options:
+        raise RuntimeError(
+            f"non_matching_dropdown_value: {picker_label!r} only "
+            f"advertises {matching_value!r}; no inverse value to pick "
+            f"— inverse-exclusion test can't run for this picker."
+        )
+    return options[0]
+
+
 def apply_anchor_to_pickers(
     driver: Any, spec: SheetAnchorSpec, anchor: Mapping[str, Any],
 ) -> None:

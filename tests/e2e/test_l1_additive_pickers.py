@@ -43,6 +43,8 @@ from tests.e2e._picker_anchor import (
     SheetAnchorSpec,
     apply_anchor_to_pickers,
     fetch_anchor_row,
+    non_matching_dropdown_value,
+    picker_value,
 )
 
 
@@ -116,6 +118,37 @@ L1_PICKER_SPECS: tuple[SheetAnchorSpec, ...] = (
             ),
         ),
     ),
+    SheetAnchorSpec(
+        sheet_name="Limit Breach",
+        target_visual="Limit Breach Detail",
+        anchor_table="{p}_limit_breach",
+        anchor_columns=(
+            "account_id", "account_name", "rail_name", "business_day",
+        ),
+        anchor_order="business_day DESC",
+        pickers=(
+            PickerSpec(
+                label="Date From", kind="date_from",
+                column="business_day",
+            ),
+            PickerSpec(
+                label="Date To", kind="date_to",
+                column="business_day",
+            ),
+            PickerSpec(
+                label="Account", kind="dropdown", column="account_id",
+                format=lambda a: f"{a['account_name']} ({a['account_id']})",
+            ),
+            # Limit Breach's "Transfer Type" picker narrows by
+            # ``rail_name`` post-Z.B (transfer_type was subsumed into
+            # rail). Picker label kept as "Transfer Type" for analyst
+            # continuity; the WHERE clause is rail_name. See
+            # ``apps/l1_dashboard/datasets.py::build_limit_breach_dataset``.
+            PickerSpec(
+                label="Transfer Type", kind="dropdown", column="rail_name",
+            ),
+        ),
+    ),
 )
 
 
@@ -178,3 +211,110 @@ def test_l1_additive_pickers_keep_anchor_row(
         f"wrong value format — drill into the failure capture's "
         f"network.txt to see which dataset SQL came back empty."
     )
+
+
+# AA.A.7 — Inverse exclusion: each picker, when toggled to a non-matching
+# value, should narrow the result below the anchor-narrowed count (the
+# anchor row is excluded). Restoring to the matching value should bring
+# the count back. Together AA.A.6 + AA.A.7 pin filter semantics in both
+# directions: matching values keep matching rows; non-matching values
+# exclude them.
+#
+# v1 scope: dropdown pickers only. Slider / datetime / date_range
+# inversion follows the same shape but needs per-kind "generate a
+# non-matching value" logic (slider: anchor ± epsilon; datetime: shift
+# day; date_range: shift both bounds together). Defer until the dropdown
+# shape proves out across the bundled sheets.
+@pytest.mark.parametrize(
+    "spec", L1_PICKER_SPECS, ids=lambda s: s.sheet_name,
+)
+def test_l1_dropdown_pickers_inverse_excludes_anchor(
+    l1_dashboard_driver, cfg, spec: SheetAnchorSpec,
+):
+    """For each sheet with ≥2 pickers: after the AA.A.6 all-pickers-
+    anchored state, iterate over the *dropdown* pickers. For each:
+
+    1. Toggle to a non-matching value (any other advertised option).
+    2. Assert row count strictly decreases (the anchor row is among
+       those excluded; usually the count drops to 0 since the anchor
+       was typically the only row that matched all N constraints).
+    3. Restore the matching value.
+    4. Assert row count returns to the anchor-narrowed count.
+
+    Catches three regression classes AA.A.6 alone can't see:
+
+    - **Picker wired to nothing** — toggle has no effect on the count
+      (the WHERE clause references the wrong column or the param
+      isn't bound at all).
+    - **Picker WHERE too loose** — e.g. ``LIKE '%x%'`` when it should
+      be ``=``; non-matching value still matches.
+    - **Picker binding inverted** — toggling EXCLUDES the matching row
+      instead of EXCLUDING the non-matching one; restore-after-toggle
+      fails to bring the count back.
+
+    Same ``[qs, app2]`` parametrization as AA.A.6 — parity gap = real
+    wiring divergence.
+
+    v1: dropdowns only. A picker whose advertised options have ≤1
+    distinct value can't be inverted (no other option to pick) — those
+    pickers are skipped with a warning so the test stays green on
+    seed-dependent sparse dropdowns. Sliders / dates land as v2 once
+    their inversion semantics settle.
+    """
+    driver, dashboard_arg = l1_dashboard_driver
+    driver.open(dashboard_arg, sheet=spec.sheet_name)
+    driver.wait_loaded(spec.target_visual)
+
+    anchor = fetch_anchor_row(cfg, spec)
+    apply_anchor_to_pickers(driver, spec, anchor)
+    driver.wait_loaded(spec.target_visual)
+    anchor_count = len(driver.table_rows(spec.target_visual))
+    assert anchor_count > 0, (
+        f"{spec.sheet_name!r}: AA.A.6 precondition failed — anchor "
+        f"narrowing produced 0 rows. Inverse test can't run; fix "
+        f"AA.A.6 first."
+    )
+
+    dropdown_pickers = [p for p in spec.pickers if p.kind == "dropdown"]
+    assert dropdown_pickers, (
+        f"{spec.sheet_name!r}: spec has no dropdown pickers — nothing "
+        f"for the inverse-exclusion v1 test to exercise. Either add "
+        f"dropdown(s) to the spec or remove from L1_PICKER_SPECS."
+    )
+
+    for picker in dropdown_pickers:
+        matching = picker_value(picker, anchor)
+        try:
+            non_matching = non_matching_dropdown_value(
+                driver, picker.label, matching,
+            )
+        except RuntimeError:
+            # Seed-dependent sparse dropdown — only one option. Skip
+            # this picker (not the whole test); the other pickers
+            # still exercise the inverse contract.
+            continue
+
+        # Toggle to non-matching.
+        driver.pick_filter(picker.label, [non_matching])
+        driver.wait_loaded(spec.target_visual)
+        post_invert = len(driver.table_rows(spec.target_visual))
+        assert post_invert < anchor_count, (
+            f"{spec.sheet_name!r} picker {picker.label!r}: toggling "
+            f"to non-matching value {non_matching!r} should reduce "
+            f"row count below the anchor-narrowed count "
+            f"({anchor_count}). Got {post_invert}. Picker is wired "
+            f"to nothing, WHERE clause is too loose (LIKE/IN with "
+            f"wrong scope), or binding is inverted."
+        )
+
+        # Restore to matching — anchor row count must come back.
+        driver.pick_filter(picker.label, [matching])
+        driver.wait_loaded(spec.target_visual)
+        post_restore = len(driver.table_rows(spec.target_visual))
+        assert post_restore == anchor_count, (
+            f"{spec.sheet_name!r} picker {picker.label!r}: restoring "
+            f"matching value {matching!r} should return row count to "
+            f"the anchor-narrowed count ({anchor_count}). Got "
+            f"{post_restore}. Picker binding may be inverted or the "
+            f"restore path didn't actually re-fetch."
+        )
