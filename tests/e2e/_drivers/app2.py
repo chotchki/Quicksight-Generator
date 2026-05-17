@@ -282,9 +282,24 @@ class App2Driver:
         self, visual_title: str, *, timeout_ms: int = 15_000,
     ) -> None:
         section = self._section(visual_title)
-        # The .visual-data swap target is filled by HTMX with a chart /
-        # table / KPI after the per-visual GET — wait for *something*
-        # inside it.
+        # AA.B.5.followon.skeleton — the visual is "done" when the
+        # ``.visual-loading`` skeleton element is gone from the
+        # ``.visual-data`` swap target (HTMX wipes it on response;
+        # bootstrap.js re-injects on next request). Polling for its
+        # absence catches both initial-load and refresh in one rule:
+        # before this check, ``wait_loaded`` keyed off the *presence*
+        # of a table/svg/kpi-value, which races on refresh — a queued
+        # refresh that lands AFTER ``wait_loaded`` returns leaves the
+        # test reading stale content. Skeleton-absence is the natural
+        # complement to QuickSight's ``analysis_visual`` readiness
+        # signal — gives the parallel App2 spec.
+        section.locator(".visual-data:not(:has(.visual-loading))").first.wait_for(
+            state="visible", timeout=timeout_ms,
+        )
+        # Defense in depth: also confirm content actually rendered (a
+        # ``.visual-data`` div whose initial-load failed silently would
+        # still satisfy the no-skeleton check). Tables / charts / KPIs
+        # show up here.
         section.locator(
             ".visual-data table, .visual-data svg, .visual-data .kpi-value"
         ).first.wait_for(state="visible", timeout=timeout_ms)
@@ -333,14 +348,37 @@ class App2Driver:
 
     def _wait_for_refetch(self, action: Callable[[], object]) -> None:
         """Run ``action`` (which mutates a ``#filter-form`` input + fires
-        a bubbling ``change``), then block until the resulting visual
-        re-fetch settles — the first ``/visuals/.../data`` response, then
-        ``networkidle`` for the remaining visuals + the bootstrap.js
-        re-hydration that runs synchronously on each swap."""
+        a bubbling ``change``), then block until every visual on the
+        page has settled.
+
+        AA.B.5.followon.skeleton — wait until NO ``.visual-data`` div
+        has a ``.visual-loading`` skeleton inside it. That's the
+        complement of bootstrap.js's per-request inject-on-beforeRequest
+        + HTMX's wipe-on-swap: skeleton present ⇒ a request is in
+        flight or queued; skeleton absent across all visuals ⇒ every
+        visual's most-recent request has landed + swapped.
+
+        Old strategy (first-response + networkidle) raced under
+        ``hx-sync="this:queue last"``: when the pick triggered some
+        visuals immediately + queued others behind in-flight initial-
+        loads, networkidle hit before the queued refreshes fired. The
+        captured test state showed stale data on the slowest 2-3
+        visuals — chain 11c02b0 had 2 [app2] failures on exactly this
+        shape. Polling skeleton-absence is per-visual and ordering-
+        agnostic; queue-last is invisible to the test.
+        """
         with self._page.expect_response(
             _VISUAL_DATA_URL_RE, timeout=_REFETCH_TIMEOUT_MS,
         ):
             action()
+        # Wait for all per-visual skeletons to clear (HTMX wiped each
+        # one on its swap response). 15s ceiling matches wait_loaded.
+        self._page.wait_for_function(
+            "() => document.querySelectorAll("
+            "'.visual-data:has(.visual-loading)'"
+            ").length === 0",
+            timeout=15_000,
+        )
         self._page.wait_for_load_state("networkidle")
 
     def _filter_control(self, label: str) -> Any:

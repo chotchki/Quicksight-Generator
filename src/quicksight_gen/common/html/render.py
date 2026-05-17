@@ -1339,7 +1339,18 @@ def _render_visual(
         f' hx-include="#filter-form"'
         f' hx-sync="this:queue last"'
         f' hx-swap="innerHTML">'
-        f'<!-- HTMX swap target; auto-fetches on DOMContentLoaded -->'
+        # AA.B.5.followon.skeleton — initial-load placeholder. Sits as
+        # a child of the swap target so the first HTMX response wipes
+        # it. Refresh requests re-inject via bootstrap.js's
+        # htmx:beforeRequest hook so refetches show the skeleton too.
+        # Presence/absence of ``.visual-loading`` is the "is this
+        # visual still loading?" signal — tests + drivers can poll
+        # ``.visual-data:not(:has(.visual-loading))`` for "done".
+        # CSS keeps it at opacity 0 with a 300ms transition delay so
+        # fast loads (<300ms) never flash the skeleton.
+        f'<div class="visual-loading" aria-hidden="true">'
+        f'<div class="skeleton-block"></div>'
+        f'</div>'
         f'</div>'
     )
     parts.append("  </section>")
