@@ -510,6 +510,20 @@ class QsEmbedDriver:
         if touched:
             self._settle_after_param_change()
 
+    def set_date(self, label: str, iso: str | None) -> None:
+        # AA.B.5.followon — single-value DateTimePicker control (currently
+        # only L1 Daily Statement's "Business Day"). Reuses
+        # ``set_parameter_datetime_value`` (the same helper the universal
+        # date-range pickers use, just card-scoped by title instead of
+        # bare-id). QS accepts ``YYYY/MM/DD`` text; translate the ISO
+        # form. Block until the dataset re-query lands.
+        if iso is None:
+            return
+        set_parameter_datetime_value(
+            self._page, label, iso.replace("-", "/"), self._page_timeout,
+        )
+        self._settle_after_param_change()
+
     def set_slider(
         self, label: str, lo: float | None, hi: float | None,
     ) -> None:

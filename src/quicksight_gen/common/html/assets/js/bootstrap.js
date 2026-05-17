@@ -81,6 +81,14 @@
     }
     var target = section.querySelector(".visual-data");
     if (!target) return;
+    // WHY: copy data-bound-params from the (about-to-be-wiped) script
+    // tag onto the persistent <section> so failure-capture's dom.html
+    // snapshot reveals what params each visual was queried with. The
+    // server-rendered attr lives on the script which we clear below.
+    var boundParams = dataScript.getAttribute("data-bound-params");
+    if (boundParams !== null) {
+      section.setAttribute("data-bound-params", boundParams);
+    }
     // Clear any prior render — chart-data script tag included. The
     // script already gave us the data; the renderXxx below paints
     // fresh into a clean target. Without this, repeat hydrates

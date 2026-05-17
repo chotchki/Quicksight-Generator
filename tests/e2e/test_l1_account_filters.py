@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.e2e._daily_statement_pick import find_account_day_with_data
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
@@ -31,7 +33,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
 def test_daily_statement_role_then_account_populates_table(
-    l1_dashboard_driver,
+    l1_dashboard_driver, cfg,
 ):
     """AA.B.1 workflow — picking a Role THEN an Account renders the
     Posted Money Records table populated for that account.
@@ -59,53 +61,48 @@ def test_daily_statement_role_then_account_populates_table(
     ``test_aa_b_1_l1_accounts_dataset_is_role_cascaded`` separately
     guards the SQL substitution itself as a structural regression.
 
-    Data-agnostic: iterate Role options until one keeps the Account
-    dropdown populated; pick the first surviving Account; assert the
-    table renders ≥1 row.
+    AA.B.5.followon — the picked ``(role, account, day)`` triple comes
+    from the deployed DB so we don't depend on QS's "yesterday" date
+    default landing on a day with rows for the first-alphabetical
+    account. Was clock-flaky pre-fix: when the chain crossed UTC
+    midnight, "yesterday" shifted to a thinner day and the test failed
+    on calendar luck (cust-011 had 0 tx on 2026-05-16 even though it
+    had 349 lifetime). Now: query DB for the most-recent (account,
+    day) pair with rows, drive all three pickers to those values.
     """
     driver, dashboard_arg = l1_dashboard_driver
     driver.open(dashboard_arg, sheet="Daily Statement")
     target_visual = "Posted Money Records"
     driver.wait_loaded(target_visual)
 
+    picked_account, picked_role, picked_day = find_account_day_with_data(cfg)
+
+    # Sanity: the Role dropdown should advertise the role we just
+    # picked. If it doesn't, the cascade SQL is out of sync with the
+    # deployed data — surface that as the failure shape rather than
+    # silently moving on.
     role_options = driver.filter_options("Role")
-    assert len(role_options) >= 1, (
-        f"Daily Statement Role dropdown should expose ≥1 role; "
-        f"got {role_options}"
+    assert picked_role in role_options, (
+        f"Helper picked role {picked_role!r} for account "
+        f"{picked_account!r} but Role dropdown advertises "
+        f"{role_options}. Cascade SQL out of sync with deployed data."
     )
 
-    # Pick the first role with ≥1 account in its scope. Most L2 seeds
-    # have accounts in every advertised role, but if a role's accounts
-    # are absent for the deployed L2, skip it. (Empty Account dropdown
-    # under a Role would block the pick anyway.)
-    picked_role: str | None = None
-    picked_account: str | None = None
-    for role in role_options:
-        driver.pick_filter("Role", [role])
-        accounts = driver.filter_options("Account")
-        if accounts:
-            picked_role = role
-            picked_account = accounts[0]
-            break
-
-    if picked_role is None:
-        pytest.skip(
-            "No Role had ≥1 Account in the deployed L2's Account "
-            f"dropdown; tried roles: {role_options}. "
-            "(Pre-condition failure, not an AA.B.1 regression.)"
-        )
-
+    driver.pick_filter("Role", [picked_role])
     driver.pick_filter("Account", [picked_account])
+    # No-op on App2 (date picker not rendered there; dataset SQL
+    # already returns all rows since date narrowing is QS-only).
+    driver.set_date("Business Day", picked_day)
     driver.wait_loaded(target_visual)
     rows = driver.table_rows(target_visual)
     driver.screenshot()
     assert len(rows) > 0, (
-        f"After Role={picked_role!r} + Account={picked_account!r}, "
-        f"Posted Money Records should render ≥1 row. Got {len(rows)}. "
-        f"AA.B.1 SQL cascade likely broke the combined-filter shape — "
-        f"the Account's row should survive both the role-narrowed "
-        f"accounts dataset AND the per-account-day matview's Account "
-        f"WHERE clause."
+        f"After Role={picked_role!r} + Account={picked_account!r} + "
+        f"Business Day={picked_day!r}, Posted Money Records should "
+        f"render ≥1 row. Got {len(rows)}. AA.B.1 SQL cascade likely "
+        f"broke the combined-filter shape — the Account's row should "
+        f"survive both the role-narrowed accounts dataset AND the "
+        f"per-account-day matview's Account WHERE clause."
     )
 
 
@@ -158,7 +155,9 @@ def test_account_dropdown_shows_display_form(
     )
 
 
-def test_daily_statement_picked_account_narrows_table(l1_dashboard_driver):
+def test_daily_statement_picked_account_narrows_table(
+    l1_dashboard_driver, cfg,
+):
     """AA.E.2 fix + AA.B.4 — after picking an Account from the Daily
     Statement dropdown, the per-account-day Daily Statement table
     surfaces rows for that account.
@@ -169,21 +168,39 @@ def test_daily_statement_picked_account_narrows_table(l1_dashboard_driver):
     resulted in an empty table. Test pins the fix end-to-end through
     both renderers.
 
-    Data-agnostic: we pick the *first* Account option (whatever the
-    seed produced) and assert the table has ≥1 row after pick. The
-    sentinel default leaves the table empty on first load, so the
-    delta (pre=0 → post≥1) is the cascade signal.
+    AA.B.5.followon — picks the (account, day) pair from the deployed
+    DB so the test isn't clock-fragile. Pre-fix: picked
+    ``options[0]`` (alphabetical first account) and inherited the
+    Business Day picker's "yesterday" default. The combination broke
+    on a chain that crossed UTC midnight — "yesterday" shifted to a
+    thinner day where that account had zero transactions, and QS
+    correctly rendered "No data found." Now: helper returns a known-
+    good ``(account_display, business_day)`` pair, test drives both
+    pickers to those values.
     """
     driver, dashboard_arg = l1_dashboard_driver
     driver.open(dashboard_arg, sheet="Daily Statement")
 
+    picked_account, _picked_role, picked_day = find_account_day_with_data(cfg)
+
+    # Pre-condition sanity: the helper returned an account, and the
+    # dropdown advertises that exact display string. If not, the
+    # AA.E.2 ``account_display`` binding is out of sync with the
+    # dataset's WHERE clause — surface that as the failure shape
+    # rather than blaming the table assertion.
     options = driver.filter_options("Account")
-    assert options, (
-        "Daily Statement Account dropdown returned no options — "
-        "DS_L1_ACCOUNTS companion empty?"
+    assert picked_account in options, (
+        f"Helper picked {picked_account!r} but Account dropdown "
+        f"options don't include it (first 5: {options[:5]}). "
+        f"AA.E.2 binding likely out of sync — the dropdown's "
+        f"``LinkedValues.from_column(..account_display)`` should "
+        f"produce the same ``Name (id)`` shape the helper builds."
     )
-    picked = options[0]
-    driver.pick_filter("Account", [picked])
+
+    driver.pick_filter("Account", [picked_account])
+    # No-op on App2 (date picker not rendered there; dataset SQL
+    # already returns all rows since date narrowing is QS-only).
+    driver.set_date("Business Day", picked_day)
 
     # "Posted Money Records" is the canonical per-account-day detail
     # table on Daily Statement (see `apps/l1_dashboard/app.py::
@@ -199,10 +216,10 @@ def test_daily_statement_picked_account_narrows_table(l1_dashboard_driver):
     rows = driver.table_rows(target_visual)
     driver.screenshot()
     assert len(rows) > 0, (
-        f"After picking Account={picked!r}, the Posted Money Records "
-        f"table should render ≥1 row. Got {len(rows)}. This is "
-        f"the AA.E.2 silent-empty regression — Daily Statement's "
-        f"Account dropdown must bind to 'account_display' for the "
-        f"WHERE clause to match (JSON pin: "
-        f"test_aa_e_2_daily_statement_account_dropdown_binds_display_column)."
+        f"After picking Account={picked_account!r} + "
+        f"Business Day={picked_day!r}, Posted Money Records should "
+        f"render ≥1 row. Got {len(rows)}. This is the AA.E.2 silent-"
+        f"empty regression — Daily Statement's Account dropdown must "
+        f"bind to 'account_display' for the WHERE clause to match "
+        f"(JSON pin: test_aa_e_2_daily_statement_account_dropdown_binds_display_column)."
     )

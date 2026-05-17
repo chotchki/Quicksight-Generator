@@ -411,6 +411,20 @@ class App2Driver:
             {"f": from_, "t": to},
         ))
 
+    def set_date(self, label: str, iso: str | None) -> None:
+        # AA.B.5.followon — App2 doesn't render single-value
+        # ``add_parameter_datetime_picker`` controls today (skipped
+        # during ``_tree_filter_specs.py::specs_for_sheet``). The
+        # dataset SQL pushdown for Daily Statement (DS_DAILY_STATEMENT_*)
+        # narrows on account only — date narrowing is QS-only via the
+        # analysis-level TimeEqualityFilter. So this is a no-op: the
+        # test can call it unconditionally for renderer-agnosticism;
+        # on App2 the unnarrowed result is the intended behavior. When
+        # X.4's renderer-parity sweep adds a date widget here, this
+        # turns into a real driver impl.
+        del label, iso  # explicitly unused
+        return
+
     def set_slider(
         self, label: str, lo: float | None, hi: float | None,
     ) -> None:
