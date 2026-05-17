@@ -292,6 +292,31 @@ jobs:
           demo_database_url: "recon/ci_recon_password@localhost:1521/FREEPDB1"
           EOF
 
+      # Two variant cells (sp_or_lo + sq_or_lo) seed in parallel against
+      # the SAME Oracle container (runner uses asyncio.gather per
+      # m.5.a). gvenzl/oracle-free's default PGA_AGGREGATE_LIMIT is
+      # ~256MB; two concurrent 60k-row INSERT-ALL sessions blow it out
+      # with ORA-04036. Bump to 1G (well under the container's ~2-3GB
+      # working set) so concurrent variant seeds don't exhaust the
+      # process global area. Runs as `system` because ALTER SYSTEM is
+      # admin-only.
+      - name: Bump Oracle PGA_AGGREGATE_LIMIT for concurrent variant seeds
+        run: |
+          .venv/bin/python <<'PY'
+          import oracledb
+          conn = oracledb.connect(
+              user="system",
+              password="ci_ora_password",
+              dsn="localhost:1521/FREEPDB1",
+          )
+          cur = conn.cursor()
+          cur.execute("ALTER SYSTEM SET PGA_AGGREGATE_LIMIT = 1G SCOPE = BOTH")
+          cur.execute("SELECT value FROM v$parameter WHERE name = 'pga_aggregate_limit'")
+          (current,) = cur.fetchone()
+          print(f"PGA_AGGREGATE_LIMIT now: {current} bytes ({int(current) // (1024*1024)} MB)")
+          conn.close()
+          PY
+
       # Y.2.gate.k.1.thin-wrapper (Phase 4): runner drives the entire
       # apply + smoke + audit chain. `--dialects=or --targets=lo`
       # narrows the matrix to Oracle local-container cells. CI mode
