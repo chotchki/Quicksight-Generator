@@ -106,6 +106,15 @@ jobs:
       - name: Build sdist + wheel
         run: .venv/bin/python -m build
 
+      - name: Build quicksight-gen shim (AC.F.1 — PyPI deprecation shim)
+        # Builds the `quicksight-gen` meta-package into the same dist/
+        # directory so the existing upload-artifact / pypi-publish steps
+        # pick up both wheels in one go. The shim has its own pyproject
+        # and version-pins to the same recon-gen version this tag emits
+        # (lockstep — see quicksight-gen-shim/pyproject.toml). Drops in
+        # the next release after the 1-2 month AC.F.3 grace window.
+        run: .venv/bin/python -m build --outdir dist/ quicksight-gen-shim/
+
       - name: Verify long description renders on PyPI
         run: .venv/bin/twine check dist/*
 
@@ -260,6 +269,46 @@ jobs:
           from recon_gen.apps.executives.app import build_executives_app
           print('public surface importable')
           "
+
+      - name: Verify quicksight-gen shim installs + transitively pulls recon-gen
+        # AC.F.1 / AC.F.2 — the shim's `pip install quicksight-gen` path
+        # must keep working transparently during the 1-2 month grace
+        # window. Verify: fresh venv, install the shim from TestPyPI,
+        # confirm (a) the shim wheel installed, (b) recon-gen was
+        # pulled in transitively, (c) `import quicksight_gen` fires the
+        # DeprecationWarning, (d) the `recon-gen` CLI binary is on PATH.
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/shim-verify-testpypi
+          /tmp/shim-verify-testpypi/bin/pip install --upgrade pip
+          for attempt in 1 2 3 4 5 6; do
+            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from TestPyPI"
+            if /tmp/shim-verify-testpypi/bin/pip install \
+                --index-url https://test.pypi.org/simple/ \
+                --extra-index-url https://pypi.org/simple/ \
+                "quicksight-gen==${TAG}"; then
+              echo "Shim install succeeded on attempt ${attempt}"
+              break
+            fi
+            echo "Install failed; sleeping 30s before retry..."
+            sleep 30
+            if [ ${attempt} -eq 6 ]; then
+              echo "::error::pip install quicksight-gen==${TAG} from TestPyPI failed after 6 attempts"
+              exit 1
+            fi
+          done
+          # Confirm DeprecationWarning fires AND recon-gen is reachable
+          OUT=$(/tmp/shim-verify-testpypi/bin/python -W default -c "import quicksight_gen" 2>&1)
+          echo "${OUT}"
+          echo "${OUT}" | grep -q "DeprecationWarning" || {
+            echo "::error::shim import did not fire DeprecationWarning"; exit 1;
+          }
+          echo "${OUT}" | grep -q "recon-gen" || {
+            echo "::error::DeprecationWarning text missing 'recon-gen' migration hint"; exit 1;
+          }
+          # Confirm transitive recon-gen install dropped the CLI binary
+          /tmp/shim-verify-testpypi/bin/recon-gen --version
+          echo "shim verified: install + warning + transitive recon-gen all green"
 
   # ---------------------------------------------------------------------------
   # W.8 — auto-gate prod PyPI on a live AWS QuickSight e2e run against the
