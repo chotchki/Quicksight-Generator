@@ -1,5 +1,30 @@
 # Release Notes
 
+## v11.0.0a3 — hotfix: AC.D test-coverage misses + obsolete dot-binary test
+
+v11.0.0a2's release got past collection but caught three Phase AC tail
+issues the AC.D doc sweep missed:
+
+- `tests/audit/test_cli_smoke.py` asserted the markdown header literal
+  `# QuickSight Generator Audit Report`; the emitter was renamed to
+  `# Recon Generator Audit Report` in AC.D. Flipped both call sites.
+- Test signing cert (`tests/audit/fixtures/test-signing-{cert,key}.pem`)
+  had `CN=quicksight-gen audit test signing, O=quicksight-gen test
+  fixtures`; the corresponding test assertion was already updated to
+  `recon-gen`. Regenerated the self-signed cert (RSA 2048, 100y) with
+  the new CN/Org. No security impact — fixture cert, never trusted by
+  any cert store.
+
+Also deleted `tests/unit/test_l2_topology_dot_layout.py` — that test
+shells out to the `dot` binary, but Phase T (v8.1.0) moved rendering
+to the browser via `@hpcc-js/wasm-graphviz` and the Python lib is
+contract-bound to source-string-only (`Digraph().source`, never
+`.pipe()`, per `pyproject.toml` graphviz dep comment). The test was
+added in X.4.j to guard against a layout-engine regression, but the
+class of bug it guards against can't surface via the Python path now
+that rendering is wasm-side — the equivalent regression risk lives in
+Studio's browser e2e suite.
+
 ## v11.0.0a2 — hotfix: e2e collection skip when RECON_GEN_E2E unset
 
 v11.0.0a1's release pipeline died at `Tests + pyright strict` (same
