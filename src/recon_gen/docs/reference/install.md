@@ -77,8 +77,8 @@ cert at render time and stamps a CMS signature on the cover page.
 ### "I want to hack on the source"
 
 ```bash
-git clone https://github.com/chotchki/Quicksight-Generator
-cd Quicksight-Generator
+git clone https://github.com/chotchki/recon-gen
+cd recon-gen
 uv sync --all-extras            # everything, locked from uv.lock
 .venv/bin/recon-gen --help
 .venv/bin/pytest

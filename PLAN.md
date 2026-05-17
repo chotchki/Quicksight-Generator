@@ -640,9 +640,9 @@ The tool still talks to AWS QuickSight as a target system, so technical referenc
 
 ### AC.E — Repo rename + GitHub redirects
 
-- [ ] **AC.E.1 — Rename GitHub repo** `chotchki/Quicksight-Generator` → `chotchki/recon-gen`. GitHub auto-creates a HTTP redirect (per `AC.spike.5`).
-- [ ] **AC.E.2 — Update remote URLs in CI workflows + README badges.** `gh api repos/chotchki/Quicksight-Generator/...` etc. become `chotchki/recon-gen/...`. Sweep `.github/workflows/*.yml`, README badge SVG URLs.
-- [ ] **AC.E.3 — Operator runbook: `git remote set-url origin <new-url>`** — surface the one-line command in the v11 release notes. Old remote URLs keep working via GitHub's redirect but switching is a 30-second cleanup.
+- [ ] **AC.E.1 — Rename GitHub repo** `chotchki/Quicksight-Generator` → `chotchki/recon-gen` — **operator action** via GitHub Settings → Rename. Auto-creates HTTP redirect per `AC.spike.2`. Must be paired with the OIDC trust-policy `sub` claim update (note added in `.github/E2E_SETUP.md` §OIDC block): `aws iam update-assume-role-policy --role-name <role> --policy-document file://trust.json` with both `sub` entries flipped to `repo:chotchki/recon-gen:ref:...`.
+- [x] **AC.E.2 — Update remote URLs in repo content.** Swept 6 forward-looking files (`README.md` 11 hits, `pyproject.toml` 5, `src/recon_gen/mkdocs.yml` 1, `src/recon_gen/docs/reference/install.md` 2, `.github/E2E_SETUP.md` 3 [reverted 2 OIDC `sub` claim entries to old path], `tests/docs/test_docs_links.py` 1) → 23 hits flipped. Historical-narrative files left alone per AC.D (RELEASE_NOTES, PLAN_ARCHIVE, docs/audits, PLAN itself). All point at the new repo URL; GitHub auto-redirect handles HTTP traffic until operator does AC.E.1. Unit prelude 2664/0 post-sweep.
+- [ ] **AC.E.3 — Operator runbook in v11.0.0 release notes.** Add a one-line note: `git remote set-url origin git@github.com:chotchki/recon-gen.git` (or HTTPS equivalent). Defer to AC.G.2 where the v11.0.0 RELEASE_NOTES entry gets written.
 
 ### AC.F — PyPI release + cutover (clean cut + meta-package shim)
 
