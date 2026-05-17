@@ -273,7 +273,11 @@ class TestCaptureFailureDbCounts:
             conn.commit()
 
         # Route capture output to tmp_path via the legacy SCREENSHOT_DIR
-        # path (no RECON_GEN_RUN_DIR mode).
+        # path. RECON_GEN_RUN_DIR must be unset (it takes priority over
+        # SCREENSHOT_DIR in `_capture_path`); under the runner the env
+        # var is set per-cell, so explicit delenv here forces the
+        # legacy branch the assertions key off.
+        monkeypatch.delenv(RECON_GEN_RUN_DIR.name, raising=False)
         monkeypatch.setattr(
             "recon_gen.common.browser.helpers.SCREENSHOT_DIR", tmp_path,
         )

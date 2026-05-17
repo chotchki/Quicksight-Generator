@@ -1,5 +1,20 @@
 # Release Notes
 
+## v11.0.0a5 — hotfix: TestCaptureFailureDbCounts unit-test env isolation
+
+v11.0.0a4 release pipeline went fully green (published to PyPI) — but
+ci.yml's three runner-driven db jobs (`e2e-sqlite`, `integration-pg`,
+`integration-oracle`) failed at the unit prelude because
+`TestCaptureFailureDbCounts` keyed its assertion paths off the legacy
+`SCREENSHOT_DIR / "_failures"` branch in `_capture_path`. The runner
+sets `RECON_GEN_RUN_DIR` per-cell, which takes priority and routes
+output to `<run_dir>/browser/<test_id>/db_counts.txt` instead. Tests
+passed locally (env var unset) but `FileNotFoundError`'d in CI.
+
+Fix: each test calls `monkeypatch.delenv(RECON_GEN_RUN_DIR.name,
+raising=False)` before patching `SCREENSHOT_DIR`, forcing the legacy
+branch the assertions key off. No prod-code change.
+
 ## v11.0.0a4 — e2e failure capture: per-matview row-count dump
 
 Adds a 7th failure artifact to the browser e2e capture pipeline:
