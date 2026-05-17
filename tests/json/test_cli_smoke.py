@@ -1,4 +1,4 @@
-"""CLI smoke for ``quicksight-gen json`` — help + emit-only paths.
+"""CLI smoke for ``recon-gen json`` — help + emit-only paths.
 
 U.9 acceptance net for the json artifact group. Mirrors the shape
 of ``tests/audit/test_cli_smoke.py``: minimal config + ``CliRunner``,
@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -45,7 +45,7 @@ def min_config(tmp_path: Path) -> Path:
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
         # Z.C — required cfg fields.
-        "deployment_name: qsgen-cli-smoke\n"
+        "deployment_name: recon-cli-smoke\n"
         "db_table_prefix: spec_example\n"
         "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
         ":datasource/ds\n"

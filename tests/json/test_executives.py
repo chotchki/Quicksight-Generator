@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.apps.executives.app import (
+from recon_gen.apps.executives.app import (
     SHEET_EXEC_ACCOUNT_COVERAGE,
     SHEET_EXEC_GETTING_STARTED,
     SHEET_EXEC_MONEY_MOVED,
@@ -21,14 +21,14 @@ from quicksight_gen.apps.executives.app import (
     build_executives_app,
     build_executives_dashboard,
 )
-from quicksight_gen.apps.executives.datasets import (
+from recon_gen.apps.executives.datasets import (
     DS_EXEC_ACCOUNT_SUMMARY,
     DS_EXEC_TRANSACTION_SUMMARY,
     EXEC_ACCOUNT_SUMMARY_CONTRACT,
     EXEC_TRANSACTION_SUMMARY_CONTRACT,
     build_all_datasets,
 )
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 from tests._test_helpers import make_test_config
 
 
@@ -58,7 +58,7 @@ def exec_analysis(exec_app):
 
 def test_analysis_has_five_sheets_in_expected_order(exec_analysis):
     """4 content sheets + the M.4.4.5 App Info ("i") sheet last."""
-    from quicksight_gen.apps.executives.app import SHEET_EXEC_APP_INFO
+    from recon_gen.apps.executives.app import SHEET_EXEC_APP_INFO
 
     sheet_ids = [s.SheetId for s in exec_analysis.Definition.Sheets]
     assert sheet_ids == [
@@ -133,10 +133,10 @@ def test_datasets_in_expected_order():
 def test_datasets_declared_in_analysis(exec_analysis):
     """3 content datasets (Y.2.h split account into base + active) + the
     2 M.4.4.5 App Info datasets."""
-    from quicksight_gen.apps.executives.datasets import (
+    from recon_gen.apps.executives.datasets import (
         DS_EXEC_ACCOUNT_SUMMARY_ACTIVE,
     )
-    from quicksight_gen.common.sheets.app_info import (
+    from recon_gen.common.sheets.app_info import (
         DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     )
 
@@ -263,7 +263,7 @@ def test_account_coverage_legacy_active_filter_dropped(exec_analysis):
 def test_account_coverage_active_dataset_declared(exec_analysis):
     """The Y.2.h active-only dataset is declared on the Executives
     analysis (so the active KPI + bar can reference it)."""
-    from quicksight_gen.apps.executives.datasets import (
+    from recon_gen.apps.executives.datasets import (
         DS_EXEC_ACCOUNT_SUMMARY_ACTIVE,
     )
     decls = {
@@ -316,7 +316,7 @@ class TestCli:
             "aws_account_id: '111122223333'\n"
             "aws_region: us-west-2\n"
             # Z.C — required cfg fields.
-            "deployment_name: qsgen-exec-cli\n"
+            "deployment_name: recon-exec-cli\n"
             "db_table_prefix: spec_example\n"
             "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
             ":datasource/ds\n"

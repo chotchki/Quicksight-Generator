@@ -2,9 +2,9 @@
 
 Mirrors the operator workflow:
 
-  quicksight-gen schema apply --execute  -c sqlite-config.yaml
-  quicksight-gen data   apply --execute  -c sqlite-config.yaml
-  quicksight-gen data   refresh --execute  -c sqlite-config.yaml
+  recon-gen schema apply --execute  -c sqlite-config.yaml
+  recon-gen data   apply --execute  -c sqlite-config.yaml
+  recon-gen data   refresh --execute  -c sqlite-config.yaml
 
 Against a real sqlite file (tmp_path-scoped, not in-memory) — so the
 connect-and-apply machinery, not just the emit, gets exercised. The
@@ -24,22 +24,22 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.cli._helpers import (
+from recon_gen.cli._helpers import (
     build_full_seed_sql,
     connect_and_apply,
 )
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.db import (
+from recon_gen.common.config import Config
+from recon_gen.common.db import (
     _register_sqlite_aggregates,
     connect_demo_db,
     execute_script,
 )
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.schema import (
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.schema import (
     emit_schema,
     refresh_matviews_sql,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +54,7 @@ def _sqlite_cfg(db_path: Path) -> Config:
     return Config(
         aws_account_id="111122223333",
         aws_region="us-west-2",
-        deployment_name="qsgen-sqlite-loop",
+        deployment_name="recon-sqlite-loop",
         db_table_prefix="spec_example",
         datasource_arn=(
             "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"

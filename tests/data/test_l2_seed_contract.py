@@ -49,18 +49,18 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.env_keys import QS_GEN_FUZZ_SEED
+from recon_gen.common.env_keys import RECON_GEN_FUZZ_SEED
 
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-from quicksight_gen.common.l2.seed import emit_seed
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.l2.auto_scenario import default_scenario_for
+from recon_gen.common.l2.seed import emit_seed
 
 from tests.l2.fuzz import random_l2_yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 L2_DIR = REPO_ROOT / "tests" / "l2"
-SCHEMA_DOC = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v6.md"
+SCHEMA_DOC = REPO_ROOT / "src" / "recon_gen" / "docs" / "Schema_v6.md"
 CANONICAL_TODAY = date(2030, 1, 1)
 
 
@@ -68,7 +68,7 @@ CANONICAL_TODAY = date(2030, 1, 1)
 # for CI determinism (M.2d.9.3). Resolved once at module import so every
 # test in this file sees the same fuzz instance within a run.
 def _resolve_fuzz_seed() -> int:
-    override = QS_GEN_FUZZ_SEED.get_or_none()
+    override = RECON_GEN_FUZZ_SEED.get_or_none()
     if override is not None:
         return override
     # secrets.randbits is cryptographically random — different across
@@ -168,8 +168,8 @@ def _announce_fuzz_seed(request) -> None:
     and the matrix's `fuzz-seed-N` test id matches the printed seed."""
     reporter = request.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:
-        override = "QS_GEN_FUZZ_SEED" in os.environ
-        suffix = " (from QS_GEN_FUZZ_SEED)" if override else " (random; pin via QS_GEN_FUZZ_SEED=N)"
+        override = "RECON_GEN_FUZZ_SEED" in os.environ
+        suffix = " (from RECON_GEN_FUZZ_SEED)" if override else " (random; pin via RECON_GEN_FUZZ_SEED=N)"
         reporter.write_sep(
             "-", f"fuzz seed for L2 contract matrix: {FUZZ_SEED}{suffix}",
         )
@@ -179,7 +179,7 @@ def _fuzz_repro_hint() -> str:
     """A trailing hint included in every assertion message on the fuzz
     entry — gives the developer the exact command to reproduce."""
     return (
-        f"\n\n[reproduce] QS_GEN_FUZZ_SEED={FUZZ_SEED} pytest "
+        f"\n\n[reproduce] RECON_GEN_FUZZ_SEED={FUZZ_SEED} pytest "
         f"tests/test_l2_seed_contract.py\n"
         f"[fuzz YAML] {_fuzz_yaml_path()}"
     )
@@ -398,7 +398,7 @@ def test_seed_account_ids_resolve_to_instance_or_synthetic_template(
     ``cust-{n:03d}`` default. Hardcoding the legacy pattern would
     falsely reject any persona that opts in.
     """
-    from quicksight_gen.common.l2.auto_scenario import _materialize_instances
+    from recon_gen.common.l2.auto_scenario import _materialize_instances
     declared_ids = {str(a.id) for a in instance.accounts}
     synthetic_ids: set[str] = set()
     for tmpl in instance.account_templates:

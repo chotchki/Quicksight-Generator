@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import Identifier, L2Instance
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import Identifier, L2Instance
+from recon_gen.common.l2.seed import (
     DriftPlant,
     OverdraftPlant,
     RailFiringPlant,
@@ -32,12 +32,12 @@ from quicksight_gen.common.l2.seed import (
     SupersessionPlant,
     TransferTemplatePlant,
 )
-from quicksight_gen.common.l2.topology import (
+from recon_gen.common.l2.topology import (
     _rail_id,
     _role_id,
     _template_id,
 )
-from quicksight_gen.common.l2.trainer import plants_per_node
+from recon_gen.common.l2.trainer import plants_per_node
 
 
 _SPEC = Path(__file__).resolve().parent.parent / "l2" / "spec_example.yaml"

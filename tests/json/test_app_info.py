@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.apps.executives.app import build_executives_app
-from quicksight_gen.apps.investigation.app import build_investigation_app
-from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-from quicksight_gen.apps.l2_flow_tracing.app import (
+from recon_gen.apps.executives.app import build_executives_app
+from recon_gen.apps.investigation.app import build_investigation_app
+from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from recon_gen.apps.l2_flow_tracing.app import (
     build_l2_flow_tracing_app,
 )
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.sheets.app_info import (
+from recon_gen.common.sheets.app_info import (
     APP_INFO_SHEET_NAME,
     DS_APP_INFO_LIVENESS,
     DS_APP_INFO_MATVIEWS,
@@ -105,8 +105,8 @@ def test_liveness_sql_resolves_per_dialect():
     Oracle deployments — QuickSight rendered the visual as blank
     because the underlying CustomSQL failed at parse time.
     """
-    from quicksight_gen.common.sheets.app_info import build_liveness_dataset
-    from quicksight_gen.common.sql import Dialect
+    from recon_gen.common.sheets.app_info import build_liveness_dataset
+    from recon_gen.common.sql import Dialect
     import dataclasses
 
     pg_cfg = dataclasses.replace(_CFG, dialect=Dialect.POSTGRES)
@@ -133,8 +133,8 @@ def test_matview_status_sql_omits_postgres_only_casts():
     dataset on Oracle (Oracle uses ``CAST(x AS NUMBER)`` syntax,
     not ``x::integer``).
     """
-    from quicksight_gen.common.sheets.app_info import _matview_status_sql
-    from quicksight_gen.common.sql import Dialect
+    from recon_gen.common.sheets.app_info import _matview_status_sql
+    from recon_gen.common.sql import Dialect
 
     sql_with_views = _matview_status_sql(
         [("matview_a", "business_day"), ("matview_b", None)],
@@ -165,7 +165,7 @@ def test_no_two_apps_share_an_app_info_data_set_id():
     must NOT collide is the AWS-side resource ID, which we derive
     here by parsing each Dataset's ARN trailing segment.
     """
-    from quicksight_gen.common.sheets.app_info import (
+    from recon_gen.common.sheets.app_info import (
         build_liveness_dataset, build_matview_status_dataset,
     )
 

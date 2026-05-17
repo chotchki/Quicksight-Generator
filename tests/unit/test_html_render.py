@@ -23,10 +23,10 @@ from __future__ import annotations
 import pytest
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.html import emit_html
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import KPI
+from recon_gen.common.html import emit_html
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import KPI
 
 
 _TEST_CFG = make_test_config()
@@ -167,7 +167,7 @@ def test_emit_html_resolves_auto_visual_ids() -> None:
     land in HTML. Pre-fix this emitted ``data-visual-id=
     "_AutoSentinel.AUTO"`` because resolution only ran inside
     emit_analysis / emit_dashboard."""
-    from quicksight_gen.common.tree._helpers import auto_id
+    from recon_gen.common.tree._helpers import auto_id
 
     sheet = Sheet(
         sheet_id=SheetId("auto-sheet"),
@@ -286,7 +286,7 @@ def test_emit_visual_data_fragment_stamps_url_params_as_data_attr() -> None:
     "picked X, server returned 0 rows because X matches nothing"
     apart from "X never reached the server" without re-deploying.
     """
-    from quicksight_gen.common.html.render import emit_visual_data_fragment
+    from recon_gen.common.html.render import emit_visual_data_fragment
 
     out = emit_visual_data_fragment(
         "v-test",
@@ -311,7 +311,7 @@ def test_emit_visual_data_fragment_omits_attr_when_no_params_supplied() -> None:
     """``url_params=None`` → no ``data-bound-params`` attr (preserves
     the pre-AA.B.5.followon.diag fragment shape for callers that
     don't care about the diagnostic)."""
-    from quicksight_gen.common.html.render import emit_visual_data_fragment
+    from recon_gen.common.html.render import emit_visual_data_fragment
 
     out = emit_visual_data_fragment("v-test", {"rows": []})
     assert "data-bound-params" not in out
@@ -322,7 +322,7 @@ def test_emit_visual_data_fragment_collapses_single_value_lists() -> None:
     """Single-element lists (the common single-valued param case) get
     collapsed to a bare string in the attr JSON; multi-element lists
     (multi-valued ``IN`` expansion) stay as arrays."""
-    from quicksight_gen.common.html.render import emit_visual_data_fragment
+    from recon_gen.common.html.render import emit_visual_data_fragment
 
     out = emit_visual_data_fragment(
         "v-test",

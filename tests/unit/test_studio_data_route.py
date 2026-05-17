@@ -23,16 +23,16 @@ import pytest
 starlette = pytest.importorskip("starlette")
 TestClient = pytest.importorskip("starlette.testclient").TestClient
 
-from quicksight_gen.common.config import TestGeneratorConfig
-from quicksight_gen.common.html._smoke_app import (
+from recon_gen.common.config import TestGeneratorConfig
+from recon_gen.common.html._smoke_app import (
     SMOKE_FILTER_SPECS,
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html._studio_routes import make_studio_routes
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.l2.cache import L2InstanceCache
-from quicksight_gen.common.l2.tg_cache import TestGeneratorCache
+from recon_gen.common.html._studio_routes import make_studio_routes
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.l2.cache import L2InstanceCache
+from recon_gen.common.l2.tg_cache import TestGeneratorCache
 from tests._test_helpers import make_test_config
 
 
@@ -1107,7 +1107,7 @@ def test_timeline_dense_window_renders_anchor_and_full_window(
     by default, sourced from seed.DEFAULT_BASELINE_WINDOW_DAYS) with
     the anchor row highlighted via .timeline-day--anchor + a stable
     id for scrollIntoView."""
-    from quicksight_gen.common.l2.seed import DEFAULT_BASELINE_WINDOW_DAYS
+    from recon_gen.common.l2.seed import DEFAULT_BASELINE_WINDOW_DAYS
 
     # Pin window_end too — the timeline window anchors on window_end
     # (which defaults to date.today()), NOT cfg.end_date. Without this
@@ -1396,7 +1396,7 @@ def test_put_plants_writes_sidefile(
     """A real PUT through the route mutates the cache AND persists to
     the sibling sidefile so the next Studio launch sees the picked
     subset."""
-    from quicksight_gen.common.l2.studio_state import (  # noqa: PLC0415
+    from recon_gen.common.l2.studio_state import (  # noqa: PLC0415
         SIDEFILE_NAME,
         load_studio_state,
     )
@@ -1418,7 +1418,7 @@ def test_put_plants_writes_sidefile(
 def test_put_seed_writes_sidefile(
     writable_l2_yaml: Path, tmp_path: Path,
 ) -> None:
-    from quicksight_gen.common.l2.studio_state import (  # noqa: PLC0415
+    from recon_gen.common.l2.studio_state import (  # noqa: PLC0415
         SIDEFILE_NAME,
         load_studio_state,
     )
@@ -1437,7 +1437,7 @@ def test_put_seed_writes_sidefile(
 def test_put_scope_writes_sidefile(
     writable_l2_yaml: Path, tmp_path: Path,
 ) -> None:
-    from quicksight_gen.common.l2.studio_state import (  # noqa: PLC0415
+    from recon_gen.common.l2.studio_state import (  # noqa: PLC0415
         SIDEFILE_NAME,
         load_studio_state,
     )
@@ -1458,7 +1458,7 @@ def test_put_scope_writes_sidefile(
 def test_put_end_date_writes_sidefile(
     writable_l2_yaml: Path, tmp_path: Path,
 ) -> None:
-    from quicksight_gen.common.l2.studio_state import (  # noqa: PLC0415
+    from recon_gen.common.l2.studio_state import (  # noqa: PLC0415
         SIDEFILE_NAME,
         load_studio_state,
     )
@@ -1481,7 +1481,7 @@ def test_put_end_date_writes_sidefile(
 def test_put_etl_hook_writes_sidefile(
     writable_l2_yaml: Path, tmp_path: Path,
 ) -> None:
-    from quicksight_gen.common.l2.studio_state import (  # noqa: PLC0415
+    from recon_gen.common.l2.studio_state import (  # noqa: PLC0415
         SIDEFILE_NAME,
         load_studio_state,
     )

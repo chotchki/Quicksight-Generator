@@ -11,7 +11,7 @@ dialect) pair to the lock surface is "drop the file"; no Python
 constant to maintain.
 
 Refresh after a reviewed seed-shape change with
-``quicksight-gen data lock -c <postgres-or-oracle config> --l2 <yaml>``
+``recon-gen data lock -c <postgres-or-oracle config> --l2 <yaml>``
 (once per dialect). The CLI keys off ``demo_database_url`` in the
 config to pick which dialect's lock file to write.
 """
@@ -25,9 +25,9 @@ from typing import cast
 
 import pytest
 
-from quicksight_gen.cli._helpers import build_full_seed_sql
-from quicksight_gen.common.l2 import load_instance
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.cli._helpers import build_full_seed_sql
+from recon_gen.common.l2 import load_instance
+from recon_gen.common.sql.dialect import Dialect
 
 from tests._test_helpers import make_test_config
 
@@ -76,7 +76,7 @@ def test_locked_seed_matches_fresh_emit(
 
     On drift, fail with a unified diff of the first ~50 changed lines
     so the reviewer sees the actual SQL shift, not just a hash flip.
-    Re-lock with ``quicksight-gen data lock -c <config> --l2 <yaml>``.
+    Re-lock with ``recon-gen data lock -c <config> --l2 <yaml>``.
     """
     yaml_path = _L2_DIR / f"{instance_name}.yaml"
     assert yaml_path.exists(), (
@@ -112,7 +112,7 @@ def test_locked_seed_matches_fresh_emit(
     pytest.fail(
         f"Locked seed drifted from fresh emit for "
         f"({instance_name!r}, {dialect_name!r}).\n"
-        f"Re-lock with: quicksight-gen data lock -c <config.yaml> "
+        f"Re-lock with: recon-gen data lock -c <config.yaml> "
         f"--l2 tests/l2/{instance_name}.yaml\n\n"
         f"First 50 diff lines:\n{snippet}{truncated}"
     )

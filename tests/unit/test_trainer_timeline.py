@@ -20,17 +20,17 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.config import TestGeneratorConfig
-from quicksight_gen.common.l2 import Identifier
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.config import TestGeneratorConfig
+from recon_gen.common.l2 import Identifier
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.seed import (
     DriftPlant,
     OverdraftPlant,
     ScenarioPlant,
     StuckPendingPlant,
     SupersessionPlant,
 )
-from quicksight_gen.common.l2.trainer_timeline import (
+from recon_gen.common.l2.trainer_timeline import (
     PlantHit,
     TimelineDay,
     _scenario_to_timeline,

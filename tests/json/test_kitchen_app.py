@@ -271,8 +271,8 @@ class TestEmissionRoundTrip:
 # L.1.12 — Validation hooks audit
 # ---------------------------------------------------------------------------
 
-from quicksight_gen.common.config import Config as _Cfg
-from quicksight_gen.common.tree import (
+from recon_gen.common.config import Config as _Cfg
+from recon_gen.common.tree import (
     KPI as _KPI,
     Analysis as _An,
     App as _A,
@@ -283,7 +283,7 @@ from quicksight_gen.common.tree import (
     ParameterSlider as _PS,
     Sheet as _Sh,
 )
-from quicksight_gen.common.ids import (
+from recon_gen.common.ids import (
     ParameterName as _PN,
     SheetId as _SId,
 )
@@ -298,7 +298,7 @@ class TestValidationHooksAudit:
     _CFG = _Cfg(
         aws_account_id="111122223333",
         aws_region="us-west-2",
-        deployment_name="qsgen-kitchen",
+        deployment_name="recon-kitchen",
         db_table_prefix="kitchen",
         datasource_arn=(
             "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
@@ -335,7 +335,7 @@ class TestValidationHooksAudit:
             app.emit_analysis()
 
     def test_unregistered_parameter_in_numeric_filter_caught(self):
-        from quicksight_gen.common.tree import FilterGroup as _FG
+        from recon_gen.common.tree import FilterGroup as _FG
         app = self._app()
         rogue_param = _IP(name=_PN("pRogue"), default=[1])
         sheet = app.analysis.add_sheet(_Sh(
@@ -345,7 +345,7 @@ class TestValidationHooksAudit:
             width=12, title="K", values=[],
                 subtitle="t",
         )
-        from quicksight_gen.common.tree import ParameterBound as _PB
+        from recon_gen.common.tree import ParameterBound as _PB
         fg = app.analysis.add_filter_group(_FG(filters=[
             _NRF(
                 dataset=self._DS_X, column="amount",

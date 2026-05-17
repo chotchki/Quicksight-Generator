@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 from tests._test_helpers import make_test_config
 
 

@@ -1,10 +1,10 @@
 """Pin the X.4.a-regression: the CLI shell must import without ``[serve]``.
 
 Failure mode caught (v10.0.0a2's first push): the GitHub Pages job and
-release.yml's smoke-wheel test both install ``quicksight-gen[docs]`` —
+release.yml's smoke-wheel test both install ``recon-gen[docs]`` —
 no ``[serve]`` extra, so no ``uvicorn`` / ``starlette``. They then run
-``quicksight-gen docs apply`` (Pages) or ``pytest tests/unit/`` (smoke).
-Both go through ``from quicksight_gen.cli import main``. If anything
+``recon-gen docs apply`` (Pages) or ``pytest tests/unit/`` (smoke).
+Both go through ``from recon_gen.cli import main``. If anything
 in the CLI shell's import chain pulls ``uvicorn`` / ``starlette`` at
 module-load time, those jobs explode at startup.
 
@@ -14,7 +14,7 @@ function body. The X.4.a refactor lifted them to the top of
 ``cli/_html_serve.py``, breaking the rule. This test simulates the
 no-``[serve]`` env (``sys.meta_path`` import block) and asserts:
 
-1. ``from quicksight_gen.cli import main`` works.
+1. ``from recon_gen.cli import main`` works.
 2. ``CliRunner.invoke(main, ['--help'])`` exits 0 (full Click registration
    walked — which means ``cli.dashboards`` + ``cli.studio`` got loaded
    without crashing on the simulated-missing imports).
@@ -52,7 +52,7 @@ def no_serve_extra() -> Iterator[None]:
     """Pretend ``uvicorn`` + ``starlette`` aren't installed.
 
     Evicts already-loaded copies from ``sys.modules`` and the
-    ``quicksight_gen.cli`` tree (so the import-time chain re-runs
+    ``recon_gen.cli`` tree (so the import-time chain re-runs
     cleanly), installs the blocking finder, runs the test, then
     restores. Because pytest's other test modules eagerly load
     ``starlette`` (``test_html_server.py`` imports ``TestClient``),
@@ -65,8 +65,8 @@ def no_serve_extra() -> Iterator[None]:
         for k in list(sys.modules)
         if (
             any(k == p or k.startswith(p + ".") for p in _BLOCKED_PREFIXES)
-            or k == "quicksight_gen.cli"
-            or k.startswith("quicksight_gen.cli.")
+            or k == "recon_gen.cli"
+            or k.startswith("recon_gen.cli.")
         )
     }
     for k in saved:
@@ -79,7 +79,7 @@ def no_serve_extra() -> Iterator[None]:
         for k in list(sys.modules):
             if any(k == p or k.startswith(p + ".") for p in _BLOCKED_PREFIXES):
                 del sys.modules[k]
-            elif k == "quicksight_gen.cli" or k.startswith("quicksight_gen.cli."):
+            elif k == "recon_gen.cli" or k.startswith("recon_gen.cli."):
                 del sys.modules[k]
         # Re-load the modules that other tests' module-scope imports
         # hold references to, with the blocker removed.
@@ -88,24 +88,24 @@ def no_serve_extra() -> Iterator[None]:
 
 
 def test_cli_main_imports_without_serve_extra(no_serve_extra: None) -> None:
-    """``from quicksight_gen.cli import main`` must work on a [docs]-only
+    """``from recon_gen.cli import main`` must work on a [docs]-only
     install — no transitive ``uvicorn`` / ``starlette`` import at module-
     load time.
     """
     del no_serve_extra
-    from quicksight_gen.cli import main
+    from recon_gen.cli import main
     assert main is not None
 
 
 def test_cli_help_exits_zero_without_serve_extra(
     no_serve_extra: None,
 ) -> None:
-    """``quicksight-gen --help`` walks every Click command registration
+    """``recon-gen --help`` walks every Click command registration
     (so ``cli.dashboards`` + ``cli.studio`` get loaded) — this proves
     every command's module-top imports are still lazy on the heavy deps.
     """
     del no_serve_extra
-    from quicksight_gen.cli import main
+    from recon_gen.cli import main
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0, result.output
     # Both new commands must be listed (proves they registered).

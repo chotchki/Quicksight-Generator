@@ -9,7 +9,7 @@ SELECT path.
 
 Lives under ``tests/unit/`` — sqlite3 ships with Python, so no
 Docker / no AWS / no service container needed. (Originally landed
-under ``tests/e2e/`` but the e2e conftest's ``QS_GEN_E2E=1`` gate
+under ``tests/e2e/`` but the e2e conftest's ``RECON_GEN_E2E=1`` gate
 silently skipped it in CI — moved here so the existing CI ``test``
 job actually picks it up via pytest discovery.) Imports the helpers
 from ``tests/e2e/_layer1_query.py`` because the helpers themselves
@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 from tests.e2e._layer1_query import (
     assert_account_in_matview,
     assert_matview_has_row,

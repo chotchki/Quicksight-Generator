@@ -7,10 +7,10 @@ drop its 1.2s+700ms-poll heuristic in favor of `page.expect_response`
 (or `WebSocket.expect_event`).
 
 Usage:
-    AWS_PROFILE=quicksight-gen-local \\
-    QS_E2E_USER_ARN="arn:aws:quicksight:us-east-1:470656905821:user/default/quicksight-gen-local" \\
-    QS_GEN_TEST_L2_INSTANCE=tests/l2/sasquatch_pr.yaml \\
-    QS_GEN_CONFIG=run/config.postgres.yaml \\
+    AWS_PROFILE=recon-gen-local \\
+    RECON_E2E_USER_ARN="arn:aws:quicksight:us-east-1:470656905821:user/default/recon-gen-local" \\
+    RECON_GEN_TEST_L2_INSTANCE=tests/l2/sasquatch_pr.yaml \\
+    RECON_GEN_CONFIG=run/config.postgres.yaml \\
     .venv/bin/python scripts/spike_x2r_qs_event_capture.py
 
 Output: prints a timeline of every HTTP response + WS frame across
@@ -27,7 +27,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from quicksight_gen.common.config import load_config
+from recon_gen.common.config import load_config
 from tests.e2e._drivers import QsEmbedDriver
 
 
@@ -161,7 +161,7 @@ def main() -> None:
             t0 = time.monotonic() * 1000.0
             # IMPORTANT: bypass _settle_after_param_change so we see the
             # raw signal — call the underlying helper directly.
-            from quicksight_gen.common.browser.helpers import set_multi_select_values
+            from recon_gen.common.browser.helpers import set_multi_select_values
             set_multi_select_values(
                 page, "Check Type", [chosen], driver._page_timeout,  # noqa: SLF001
             )

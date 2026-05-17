@@ -7,7 +7,7 @@ touched our L2 instance's tables, writes a markdown table to
 ``--output``, and the workflow uploads it as a CI artifact.
 
 Y.2.gate.f.4 (2026-05-09): the implementation lives in
-``quicksight_gen._dev.perf`` (helpers lifted there at W.8a so both this
+``recon_gen._dev.perf`` (helpers lifted there at W.8a so both this
 CLI and the runner's per-cell auto-dump share the same code path). This
 file is now the thin CLI shim — argparse + cfg load + connect + write.
 
@@ -31,10 +31,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from quicksight_gen._dev import perf  # noqa: E402
-from quicksight_gen.common.config import load_config  # noqa: E402
-from quicksight_gen.common.db import connect_demo_db  # noqa: E402
-from quicksight_gen.common.sql import Dialect  # noqa: E402
+from recon_gen._dev import perf  # noqa: E402
+from recon_gen.common.config import load_config  # noqa: E402
+from recon_gen.common.db import connect_demo_db  # noqa: E402
+from recon_gen.common.sql import Dialect  # noqa: E402
 
 
 def main() -> int:

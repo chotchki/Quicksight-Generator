@@ -41,7 +41,7 @@ pytest.importorskip("aiosqlite")
 from playwright.sync_api import sync_playwright  # typing-smell: ignore[no-playwright-leak]: studio chrome is not a dashboard verb
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]: third-party library lacks PEP 561 stubs
 
-from quicksight_gen.cli._html_serve import REAL_APPS
+from recon_gen.cli._html_serve import REAL_APPS
 
 from tests.e2e._studio_deploy_helpers import (
     QUICKSIGHT_GEN_BIN,
@@ -98,7 +98,7 @@ def pg_container_url() -> Iterator[str]:
 def etl_hook_script(
     tmp_path: Path, pg_container_url: str,
 ) -> Path:
-    """Hook that runs `quicksight-gen data apply --execute` against the
+    """Hook that runs `recon-gen data apply --execute` against the
     pg container. Pre-applies the schema."""
     pg_cfg, pg_cfg_path = write_pg_etl_cfg(pg_container_url, tmp_path)
     apply_schema_to(pg_cfg)

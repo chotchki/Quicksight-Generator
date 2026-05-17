@@ -12,7 +12,7 @@ Tests here cover:
 - Dashboard ID + Analysis ID follow the `<l2_prefix>-l1-dashboard`
   convention so multi-instance deployments are distinguishable.
 - Default L2 instance auto-loads the canonical Sasquatch fixture.
-- M.2a.9 CLI smoke: `quicksight-gen generate l1-dashboard` writes the
+- M.2a.9 CLI smoke: `recon-gen generate l1-dashboard` writes the
   expected files.
 """
 
@@ -24,11 +24,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-from quicksight_gen.cli import main
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from recon_gen.cli import main
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.l2 import L2Instance
+from recon_gen.common.l2 import L2Instance
 
 
 # v6.0.1 hotfix regression — the bundled `_default_l2.yaml` next to
@@ -38,7 +38,7 @@ from quicksight_gen.common.l2 import L2Instance
 def test_default_l2_yaml_is_byte_identical_to_test_fixture():
     pkg_yaml = (
         Path(__file__).parent.parent.parent
-        / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
+        / "src" / "recon_gen" / "apps" / "l1_dashboard"
         / "_default_l2.yaml"
     )
     test_yaml = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
@@ -209,7 +209,7 @@ def test_drift_datasets_registered_and_target_l1_views() -> None:
     """The L1 drift datasets must be registered on the App and their
     custom SQL must target the per-L2-instance L1 invariant views by
     prefix — that's the M.2a "L1 dashboard configured by L2" promise."""
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_DRIFT,
         DS_LEDGER_DRIFT,
     )
@@ -224,8 +224,8 @@ def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
     """SQL for each drift dataset must SELECT from the L2-prefixed L1
     invariant view emitted by M.1a.7. Switching L2 instance switches the
     view targets — the parallel-stack v6 promise."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_drift_dataset,
         build_ledger_drift_dataset,
     )
@@ -261,7 +261,7 @@ def test_drift_timelines_has_two_kpis_and_two_line_charts() -> None:
     """Drift Timelines structure: 2 KPIs (max single-day Σ ABS(drift) for
     leaf + parent) + 2 LineCharts (one per role, plotting per-day
     Σ ABS(drift) over the visible date range)."""
-    from quicksight_gen.common.tree import KPI, LineChart
+    from recon_gen.common.tree import KPI, LineChart
 
     app = build_l1_dashboard_app(_CFG)
     timelines = _sheet_by_name(app, "Drift Timelines")
@@ -293,8 +293,8 @@ def test_drift_timeline_datasets_registered_and_aggregate_in_sql() -> None:
     """Both timeline datasets must register on the App + their SQL must
     GROUP BY the (day, role) keys so each dataset row IS one (day, role)
     cell — otherwise the line chart would re-aggregate at render time."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_DRIFT_TIMELINE,
         DS_LEDGER_DRIFT_TIMELINE,
         build_drift_timeline_dataset,
@@ -354,8 +354,8 @@ def test_overdraft_sheet_has_kpi_and_table() -> None:
 def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
     """The L1 overdraft dataset must be registered + its SQL must point
     at the L2-prefixed `<prefix>_overdraft` invariant view."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_OVERDRAFT,
         build_overdraft_dataset,
     )
@@ -394,8 +394,8 @@ def test_limit_breach_sheet_has_kpi_and_table() -> None:
 def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
     """The L1 limit-breach dataset must be registered + its SQL must
     point at the L2-prefixed `<prefix>_limit_breach` invariant view."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_LIMIT_BREACH,
         build_limit_breach_dataset,
     )
@@ -440,8 +440,8 @@ def test_todays_exceptions_dataset_reads_matview() -> None:
     moved into the L1 schema in M.1a.9 so QS reads a precomputed
     table instead of re-running the 5-branch UNION per visual.
     """
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_TODAYS_EXCEPTIONS,
         build_todays_exceptions_dataset,
     )
@@ -481,8 +481,8 @@ def test_transactions_sheet_has_single_table() -> None:
 def test_transactions_dataset_registered_and_targets_matview() -> None:
     """The new transactions dataset reads from the prefix's
     `<prefix>_current_transactions` matview (M.1a.9)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_TRANSACTIONS,
         build_transactions_dataset,
     )
@@ -530,7 +530,7 @@ def test_daily_statement_has_five_kpis_and_one_table() -> None:
 def test_daily_statement_parameters_and_controls() -> None:
     """M.2b.4: 2 new analysis-level parameters drive the sheet's
     per-account-day filter, surfaced as 2 sheet controls."""
-    from quicksight_gen.apps.l1_dashboard.app import (
+    from recon_gen.apps.l1_dashboard.app import (
         P_L1_DS_ACCOUNT, P_L1_DS_BALANCE_DATE,
     )
 
@@ -569,8 +569,8 @@ def test_daily_statement_filter_groups_target_correct_columns() -> None:
 def test_daily_statement_datasets_registered() -> None:
     """Both new datasets register on the App tree + their SQL targets
     the prefixed L2 instance (mirrors the M.2a.3 pattern)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_DAILY_STATEMENT_SUMMARY,
         DS_DAILY_STATEMENT_TRANSACTIONS,
         build_daily_statement_summary_dataset,
@@ -607,11 +607,11 @@ def test_daily_statement_transactions_business_day_is_dialect_aware() -> None:
     shaped value across PG and Oracle. PG uses DATE_TRUNC; Oracle uses
     CAST(TRUNC(...) AS TIMESTAMP)."""
     from dataclasses import replace
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_daily_statement_transactions_dataset,
     )
-    from quicksight_gen.common.sql import Dialect
+    from recon_gen.common.sql import Dialect
 
     instance = default_l2_instance()
     cfg_pg = replace(_CFG, dialect=Dialect.POSTGRES)
@@ -676,7 +676,7 @@ def test_drift_sheet_lists_internal_accounts_from_l2() -> None:
     assert "Internal Accounts in Scope" in accounts_xml
     # Sasquatch fixture has at least one GL control + one DDA template;
     # both should appear.
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
     instance = default_l2_instance()
     internal_account_ids = [
         a.id for a in instance.accounts if a.scope == "internal"
@@ -838,7 +838,7 @@ def test_no_hardcoded_hex_in_l1_dashboard_code() -> None:
 
     pkg_dir = (
         Path(__file__).parent.parent.parent
-        / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
+        / "src" / "recon_gen" / "apps" / "l1_dashboard"
     )
     hex_re = re.compile(r"['\"]#[0-9A-Fa-f]{3,8}['\"]")
     offenders: list[str] = []
@@ -867,8 +867,8 @@ def test_account_id_link_tints_on_every_table_with_account_id() -> None:
     sheet's parameter binding) are not required to carry the tint —
     there's nothing to drill from. The assertion walks each table's
     actual columns to decide whether the tint is required."""
-    from quicksight_gen.common.theme import DEFAULT_PRESET
-    from quicksight_gen.common.tree import CellAccentText, Table
+    from recon_gen.common.theme import DEFAULT_PRESET
+    from recon_gen.common.tree import CellAccentText, Table
 
     accent = DEFAULT_PRESET.accent
     app = build_l1_dashboard_app(_CFG)
@@ -911,7 +911,7 @@ def test_account_id_link_tints_on_every_table_with_account_id() -> None:
 def test_date_range_parameters_registered() -> None:
     """M.2b.1: P_L1_DATE_START + P_L1_DATE_END land on the analysis with
     rolling-date defaults."""
-    from quicksight_gen.apps.l1_dashboard.app import (
+    from recon_gen.apps.l1_dashboard.app import (
         P_L1_DATE_END, P_L1_DATE_START,
     )
 
@@ -1004,7 +1004,7 @@ def test_pending_aging_sheet_has_kpi_bar_table() -> None:
     """Pending Aging structure: 1 KPI (count) + 1 horizontal BarChart
     (5 aging buckets) + 1 detail table sorted naturally by the
     number-prefixed bucket labels."""
-    from quicksight_gen.common.tree import BarChart, KPI, Table
+    from recon_gen.common.tree import BarChart, KPI, Table
 
     app = build_l1_dashboard_app(_CFG)
     pa = _sheet_by_name(app, "Pending Aging")
@@ -1026,8 +1026,8 @@ def test_pending_aging_buckets_computed_in_dataset_sql() -> None:
     the analysis-level CalcField was dropped when the buckets moved into
     the SQL). Number-prefixed labels keep the QS bar chart sort stable
     without an explicit sort_by override."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_stuck_pending_dataset,
     )
 
@@ -1052,7 +1052,7 @@ def test_pending_aging_buckets_computed_in_dataset_sql() -> None:
 def test_pending_aging_drill_to_transactions() -> None:
     """M.2b.7 drill plumbing — the detail table's right-click menu
     drills to Transactions and writes pL1TxTransfer."""
-    from quicksight_gen.common.tree import Drill
+    from recon_gen.common.tree import Drill
 
     app = build_l1_dashboard_app(_CFG)
     pa = _sheet_by_name(app, "Pending Aging")
@@ -1069,8 +1069,8 @@ def test_pending_aging_dataset_registered() -> None:
     bucket-CASE SELECT over the prefixed `<prefix>_stuck_pending` matview
     with the Y.2.g pushdown WHERE (account_id data-value + transfer_type
     / rail_name enums via `<<$pL1Pending*>>`)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_PENDING,
         build_stuck_pending_dataset,
     )
@@ -1102,7 +1102,7 @@ def test_unbundled_aging_sheet_present_after_m2b11() -> None:
 def test_unbundled_aging_sheet_has_kpi_bar_table() -> None:
     """Same KPI + horizontal BarChart + detail-table structure as
     Pending Aging, mirror but backed by stuck_unbundled."""
-    from quicksight_gen.common.tree import BarChart, KPI, Table
+    from recon_gen.common.tree import BarChart, KPI, Table
 
     app = build_l1_dashboard_app(_CFG)
     ua = _sheet_by_name(app, "Unbundled Aging")
@@ -1123,8 +1123,8 @@ def test_unbundled_aging_uses_4_buckets() -> None:
     `max_unbundled_age` is typically days, not hours. Same SQL-side
     CASE-over-`age_seconds` shape (Y.3.e), aliased
     `stuck_unbundled_aging_bucket`."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_stuck_unbundled_dataset,
     )
 
@@ -1143,7 +1143,7 @@ def test_unbundled_aging_uses_4_buckets() -> None:
 
 def test_unbundled_aging_drill_to_transactions() -> None:
     """M.2b.7 drill plumbing — same shape as Pending Aging."""
-    from quicksight_gen.common.tree import Drill
+    from recon_gen.common.tree import Drill
 
     app = build_l1_dashboard_app(_CFG)
     ua = _sheet_by_name(app, "Unbundled Aging")
@@ -1159,8 +1159,8 @@ def test_unbundled_aging_dataset_registered() -> None:
     """DS_STUCK_UNBUNDLED registers + its SQL is the bucket-CASE SELECT
     over the prefixed `<prefix>_stuck_unbundled` matview with the Y.2.g
     pushdown WHERE (`<<$pL1Unbundled*>>`)."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_UNBUNDLED,
         build_stuck_unbundled_dataset,
     )
@@ -1194,7 +1194,7 @@ def test_supersession_audit_has_kpis_and_two_tables() -> None:
     (count of distinct logical keys + count of higher-Entry rows
     with no `supersedes` reason) + 1 transactions audit table +
     1 daily-balances audit table."""
-    from quicksight_gen.common.tree import KPI, Table
+    from recon_gen.common.tree import KPI, Table
 
     app = build_l1_dashboard_app(_CFG)
     sa = _sheet_by_name(app, "Supersession Audit")
@@ -1213,8 +1213,8 @@ def test_supersession_datasets_registered_and_target_base_tables() -> None:
     """Both supersession datasets register on the App and read from
     the BASE tables (NOT Current*) — Current* hides superseded
     entries by design, but the audit specifically needs them."""
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_SUPERSESSION_DAILY_BALANCES,
         DS_SUPERSESSION_TRANSACTIONS,
         build_supersession_daily_balances_dataset,
@@ -1274,7 +1274,7 @@ def test_drill_target_parameters_registered() -> None:
     "__ALL__" default. They never surface as sheet controls — drills
     set them, and the destination calc fields treat the sentinel as
     PASS so the un-drilled state shows everything."""
-    from quicksight_gen.apps.l1_dashboard.app import (
+    from recon_gen.apps.l1_dashboard.app import (
         P_L1_FILTER_ACCOUNT, P_L1_TX_TRANSFER,
     )
 
@@ -1344,7 +1344,7 @@ def test_todays_exceptions_table_carries_two_drills() -> None:
     direction); DATA_POINT_MENU → Daily Statement (forward into the
     per-account-day investigation).
     """
-    from quicksight_gen.common.tree import Drill
+    from recon_gen.common.tree import Drill
 
     app = build_l1_dashboard_app(_CFG)
     te = _sheet_by_name(app, "Today's Exceptions")
@@ -1369,7 +1369,7 @@ def test_per_invariant_sheets_drill_to_daily_statement() -> None:
     Overdraft, Limit Breach) has a DATA_POINT_MENU drill into Daily
     Statement that writes (account, business_day) into the picker
     parameters."""
-    from quicksight_gen.common.tree import Drill
+    from recon_gen.common.tree import Drill
 
     app = build_l1_dashboard_app(_CFG)
     expected: list[tuple[str, str]] = [
@@ -1393,7 +1393,7 @@ def test_per_invariant_sheets_drill_to_daily_statement() -> None:
 def test_daily_statement_drills_to_transactions() -> None:
     """M.2b.7: Daily Statement detail table has DATA_POINT_MENU drill
     into Transactions that writes transfer_id into pL1TxTransfer."""
-    from quicksight_gen.common.tree import Drill
+    from recon_gen.common.tree import Drill
 
     app = build_l1_dashboard_app(_CFG)
     ds = _sheet_by_name(app, "Daily Statement")
@@ -1452,8 +1452,8 @@ def test_dashboard_emits_with_expected_id_suffix() -> None:
     The cfg's deployment_name is the single per-deploy prefix (was
     previously two-segment `<resource_prefix>-<l2_prefix>` per M.2d.3,
     auto-stamped from the L2 yaml). With the test cfg's default
-    deployment_name=`qsgen-test`, the full DashboardId is
-    `qsgen-test-l1-dashboard`.
+    deployment_name=`recon-test`, the full DashboardId is
+    `recon-test-l1-dashboard`.
     """
     app = build_l1_dashboard_app(_CFG)
     dashboard = app.emit_dashboard()
@@ -1465,7 +1465,7 @@ def test_dashboard_emits_with_expected_id_suffix() -> None:
 
 
 class TestCli:
-    """`quicksight-gen generate l1-dashboard` writes the expected files
+    """`recon-gen generate l1-dashboard` writes the expected files
     + the L1 dashboard is included in the `--all` shortcut. Mirrors
     the shape of test_executives.py::TestCli."""
 
@@ -1477,7 +1477,7 @@ class TestCli:
             # Z.C — required cfg fields; pin a deployment_name so the
             # rendered IDs are predictable in the file-existence asserts
             # below.
-            "deployment_name: qsgen-cli-l1\n"
+            "deployment_name: recon-cli-l1\n"
             "db_table_prefix: spec_example\n"
             "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
             ":datasource/ds\n"
@@ -1502,14 +1502,14 @@ class TestCli:
         # `<resource_prefix>-<l2_prefix>-...`).
         ds_dir = out / "datasets"
         for name in (
-            "qsgen-cli-l1-l1-drift-dataset.json",
-            "qsgen-cli-l1-l1-ledger-drift-dataset.json",
-            "qsgen-cli-l1-l1-overdraft-dataset.json",
-            "qsgen-cli-l1-l1-limit-breach-dataset.json",
-            "qsgen-cli-l1-l1-todays-exceptions-dataset.json",
-            "qsgen-cli-l1-l1-daily-statement-summary-dataset.json",
-            "qsgen-cli-l1-l1-daily-statement-transactions-dataset.json",
-            "qsgen-cli-l1-l1-transactions-dataset.json",
+            "recon-cli-l1-l1-drift-dataset.json",
+            "recon-cli-l1-l1-ledger-drift-dataset.json",
+            "recon-cli-l1-l1-overdraft-dataset.json",
+            "recon-cli-l1-l1-limit-breach-dataset.json",
+            "recon-cli-l1-l1-todays-exceptions-dataset.json",
+            "recon-cli-l1-l1-daily-statement-summary-dataset.json",
+            "recon-cli-l1-l1-daily-statement-transactions-dataset.json",
+            "recon-cli-l1-l1-transactions-dataset.json",
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 
@@ -1524,7 +1524,7 @@ def test_y2g_enum_value_helpers_reflect_l2_instance() -> None:
     fixed schema enums (supersede reasons / check types). These are the
     `StaticValues` defaults baked into the dataset params + dropdown
     options — switching L2 instance switches the dropdown contents."""
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.datasets import (
         l1_account_role_values,
         l1_check_type_values,
         l1_rail_values,
@@ -1571,7 +1571,7 @@ def test_y2g_datasets_declare_pushdown_params() -> None:
     parameters that its CustomSql substitutes (``<<$pX>>``) — otherwise
     the analysis-param → dataset-param bridge has no target and the
     dropdown is a no-op."""
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.datasets import (
         build_drift_dataset,
         build_ledger_drift_dataset,
         build_drift_timeline_dataset,
@@ -1633,7 +1633,7 @@ def test_y2g_companion_datasets_registered_and_unparameterized() -> None:
     Other consumers of ``DS_L1_ACCOUNTS`` (every L1 sheet's Account
     dropdown) leave ``pL1DsRole`` at its show-all sentinel default, so
     they still see every account."""
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.datasets import (
         DS_L1_ACCOUNTS, DS_L1_DS_ROLES, DS_L1_TX_FACETS, DS_L1_TX_IDS,
         build_l1_ds_roles_dataset, build_l1_tx_facets_dataset,
         build_l1_tx_ids_dataset,
@@ -1667,7 +1667,7 @@ def test_aa_b_1_l1_accounts_dataset_is_role_cascaded() -> None:
     The SQL's WHERE clause is the standard ``_data_value_clause`` shape:
     ``('__l1_all__' = <<$pL1DsRole>>) OR (account_role = <<$pL1DsRole>>)``.
     """
-    from quicksight_gen.apps.l1_dashboard.datasets import (
+    from recon_gen.apps.l1_dashboard.datasets import (
         L1_ALL_SENTINEL, P_L1_DS_ROLE_DSP, build_l1_accounts_dataset,
     )
 
@@ -1770,7 +1770,7 @@ def test_y2g_drift_dropdowns_bridge_to_both_drift_datasets() -> None:
     ledger-drift datasets. AA.A.3 — both dropdowns are SINGLE_VALUED
     (drill-to-one default; multi-select pre-AA.A.3 lacked a one-click
     pick-this-value gesture)."""
-    from quicksight_gen.common.tree import StringParam
+    from recon_gen.common.tree import StringParam
 
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
@@ -1782,7 +1782,7 @@ def test_y2g_drift_dropdowns_bridge_to_both_drift_datasets() -> None:
             f"{pname}: post-AA.A.3 every L1 pushdown dropdown is SINGLE_VALUED"
         )
         bridged_ds_ids = {ds.identifier for ds, _ in (param.mapped_dataset_params or [])}
-        from quicksight_gen.apps.l1_dashboard.datasets import (
+        from recon_gen.apps.l1_dashboard.datasets import (
             DS_DRIFT, DS_LEDGER_DRIFT,
         )
         assert {DS_DRIFT, DS_LEDGER_DRIFT}.issubset(bridged_ds_ids)

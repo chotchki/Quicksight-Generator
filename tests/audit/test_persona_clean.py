@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -50,7 +50,7 @@ def min_config(tmp_path: Path) -> Path:
     cfg.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "deployment_name: qsgen-test\n"
+        "deployment_name: recon-test\n"
         "db_table_prefix: spec_example\n"
         "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
         ":datasource/ds\n"

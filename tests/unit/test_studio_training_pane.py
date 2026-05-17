@@ -11,11 +11,11 @@ trainer-pane wiring on top of it.
 
 from __future__ import annotations
 
-from quicksight_gen.common.handbook.invariants import (
+from recon_gen.common.handbook.invariants import (
     INVARIANT_KIND_TO_SHEET,
     load_bundled_invariants,
 )
-from quicksight_gen.common.html._studio_training import (
+from recon_gen.common.html._studio_training import (
     _L1_DASHBOARD_SLUG,
     _L1_KIND_TO_SHEET_ID,
     render_training_pane,

@@ -31,7 +31,7 @@ from textwrap import dedent
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     L2LoaderError,
     L2ValidationError,
     SingleLegRail,
@@ -39,11 +39,11 @@ from quicksight_gen.common.l2 import (
     load_instance,
     validate,
 )
-from quicksight_gen.common.l2.auto_scenario import (
+from recon_gen.common.l2.auto_scenario import (
     _materialize_instances,
     default_scenario_for,
 )
-from quicksight_gen.common.l2.seed import emit_seed
+from recon_gen.common.l2.seed import emit_seed
 
 
 CANONICAL_TODAY = date(2030, 1, 1)

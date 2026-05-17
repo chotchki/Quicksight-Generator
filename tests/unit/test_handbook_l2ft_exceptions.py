@@ -12,7 +12,7 @@ Two layers (mirrors :mod:`tests.unit.test_handbook_invariants`):
 
 from __future__ import annotations
 
-from quicksight_gen.common.handbook.l2ft_exceptions import (
+from recon_gen.common.handbook.l2ft_exceptions import (
     L2FT_EXCEPTION_KIND_TO_SHEET,
     L2FTExceptionSection,
     load_bundled_l2ft_exceptions,

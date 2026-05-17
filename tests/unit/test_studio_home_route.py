@@ -25,14 +25,14 @@ import pytest
 starlette = pytest.importorskip("starlette")
 TestClient = pytest.importorskip("starlette.testclient").TestClient
 
-from quicksight_gen.common.html._smoke_app import (
+from recon_gen.common.html._smoke_app import (
     SMOKE_FILTER_SPECS,
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html._studio_routes import make_studio_routes
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.l2.cache import L2InstanceCache
+from recon_gen.common.html._studio_routes import make_studio_routes
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.l2.cache import L2InstanceCache
 from tests._test_helpers import make_test_config
 
 

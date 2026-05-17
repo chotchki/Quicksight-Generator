@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from quicksight_gen.cli.audit import (
+from recon_gen.cli.audit import (
     DriftViolation,
     ExecSummary,
     LimitBreachChildGroupSummary,

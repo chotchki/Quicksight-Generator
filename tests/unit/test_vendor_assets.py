@@ -12,7 +12,7 @@ Two guards:
 2. **No external runtime asset** — the page shell loads every
    ``<script>`` / ``<link>`` from a local ``/static/...`` path; nothing
    is fetched from a CDN at runtime. This *is* the offline guarantee
-   for ``pip install quicksight-gen[serve] && quicksight-gen
+   for ``pip install recon-gen[serve] && recon-gen
    dashboards`` — as a fast unit test (the CI ``docs-portable-install`` job
    adds the "the vendored files actually land in the installed wheel"
    half).
@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.html import render
-from quicksight_gen.common.html.render import emit_dashboards_list
+from recon_gen.common.html import render
+from recon_gen.common.html.render import emit_dashboards_list
 
 _VENDOR_DIR = Path(render.__file__).resolve().parent / "assets" / "vendor"
 _LOCK = json.loads((_VENDOR_DIR / "vendor.lock").read_text(encoding="utf-8"))

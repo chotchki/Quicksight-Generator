@@ -25,17 +25,17 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from quicksight_gen.common.html import (
+from recon_gen.common.html import (
     CategoryFilterSpec,
     NumericRangeSpec,
     ParameterDropdownSpec,
     ParameterMultiSelectSpec,
     emit_html,
 )
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import KPI
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import KPI
 from tests._test_helpers import make_test_config
 
 

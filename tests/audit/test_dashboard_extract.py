@@ -33,14 +33,14 @@ def _cfg_env(monkeypatch_module: pytest.MonkeyPatch):
     other test modules (pre-Z.C.7 this was module-level
     `os.environ.setdefault`, which polluted `tests/unit/test_config_loader.py`).
     """
-    monkeypatch_module.setenv("QS_GEN_AWS_ACCOUNT_ID", "111122223333")
-    monkeypatch_module.setenv("QS_GEN_AWS_REGION", "us-west-2")
+    monkeypatch_module.setenv("RECON_GEN_AWS_ACCOUNT_ID", "111122223333")
+    monkeypatch_module.setenv("RECON_GEN_AWS_REGION", "us-west-2")
     monkeypatch_module.setenv(
-        "QS_GEN_DATASOURCE_ARN",
+        "RECON_GEN_DATASOURCE_ARN",
         "arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
     )
-    monkeypatch_module.setenv("QS_GEN_DEPLOYMENT_NAME", "spec_example")
-    monkeypatch_module.setenv("QS_GEN_DB_TABLE_PREFIX", "spec_example")
+    monkeypatch_module.setenv("RECON_GEN_DEPLOYMENT_NAME", "spec_example")
+    monkeypatch_module.setenv("RECON_GEN_DB_TABLE_PREFIX", "spec_example")
 
 
 @pytest.fixture(scope="module")
@@ -59,8 +59,8 @@ def l1_app():
     sheet names and visual titles; we walk it to validate the
     extractor's hand-maintained layout map.
     """
-    from quicksight_gen.common.config import load_config
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.common.config import load_config
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 
     cfg = load_config(None)
     app = build_l1_dashboard_app(cfg)

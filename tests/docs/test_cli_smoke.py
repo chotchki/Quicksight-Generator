@@ -1,4 +1,4 @@
-"""CLI smoke for ``quicksight-gen docs`` — help + safe-emit paths.
+"""CLI smoke for ``recon-gen docs`` — help + safe-emit paths.
 
 U.9 acceptance net for the docs artifact group. Mirrors the shape
 of ``tests/audit/test_cli_smoke.py``: minimal config + ``CliRunner``,
@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.cli import main
+from recon_gen.cli import main
 
 
 def test_docs_help_lists_subcommands():

@@ -22,8 +22,8 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.db import AsyncConnectionPool, make_connection_pool
-from quicksight_gen.common.html._sql_executor import (
+from recon_gen.common.db import AsyncConnectionPool, make_connection_pool
+from recon_gen.common.html._sql_executor import (
     apply_dataset_param_defaults,
     collect_bind_params,
     execute_visual_sql,
@@ -32,14 +32,14 @@ from quicksight_gen.common.html._sql_executor import (
     rewrite_placeholders_for_dialect,
     translate_qs_dataset_params,
 )
-from quicksight_gen.common.models import (
+from recon_gen.common.models import (
     DatasetParameter,
     IntegerDatasetParameter,
     IntegerDatasetParameterDefaultValues,
     StringDatasetParameter,
     StringDatasetParameterDefaultValues,
 )
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 from tests._test_helpers import make_test_config
 
 

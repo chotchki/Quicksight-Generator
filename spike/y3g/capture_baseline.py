@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from quicksight_gen.apps.investigation.datasets import (
+from recon_gen.apps.investigation.datasets import (
     build_account_network_dataset,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 from tests._test_helpers import make_test_config
 
 BASELINE_DIR = Path(__file__).parent / "baseline"

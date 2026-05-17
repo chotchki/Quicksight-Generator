@@ -29,22 +29,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.html import (
+from recon_gen.common.html import (
     CategoryFilterSpec,
     NumericRangeSpec,
     ParameterDropdownSpec,
     ParameterMultiSelectSpec,
     ParameterNumberSpec,
 )
-from quicksight_gen.common.html.render import emit_dashboards_list, emit_html
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import KPI
+from recon_gen.common.html.render import emit_dashboards_list, emit_html
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import KPI
 
 
 _BOOTSTRAP_JS_PATH = (
     Path(__file__).parents[2]
-    / "src" / "quicksight_gen" / "common" / "html" / "assets" / "js"
+    / "src" / "recon_gen" / "common" / "html" / "assets" / "js"
     / "bootstrap.js"
 )
 
@@ -136,7 +136,7 @@ def test_widget_theme_override_sheet_is_linked() -> None:
         assert '<link rel="stylesheet" href="/static/widgets-theme.css">' in shell
     css_path = (
         Path(__file__).parents[2]
-        / "src" / "quicksight_gen" / "common" / "html" / "assets"
+        / "src" / "recon_gen" / "common" / "html" / "assets"
         / "widgets-theme.css"
     )
     body = css_path.read_text(encoding="utf-8")

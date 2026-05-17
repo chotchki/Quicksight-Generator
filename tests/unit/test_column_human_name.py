@@ -10,7 +10,7 @@ uppercase: ``id`` → ``ID``, ``eod`` → ``EOD``).
 
 from __future__ import annotations
 
-from quicksight_gen.common.dataset_contract import (
+from recon_gen.common.dataset_contract import (
     ColumnSpec,
     _smart_title,
 )

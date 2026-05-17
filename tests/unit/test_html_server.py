@@ -33,16 +33,16 @@ from typing import Any
 from starlette.testclient import TestClient
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.html import (
+from recon_gen.common.html import (
     FilterSpec,
     ParameterDropdownSpec,
     ParameterMultiSelectSpec,
     ParameterNumberSpec,
 )
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import Sankey
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import Sankey
 
 
 _DASHBOARD_ID = "test-dashboard"
@@ -630,7 +630,7 @@ def test_data_generation_id_route_returns_current_counter() -> None:
     ``GET /data_generation_id`` without restarting the server."""
     import asyncio
 
-    from quicksight_gen.common.l2.deploy_pipeline import (
+    from recon_gen.common.l2.deploy_pipeline import (
         get_data_generation_id, step_5_reload,
     )
     client = _make_test_app()
@@ -654,7 +654,7 @@ def test_data_generation_id_route_returns_current_counter() -> None:
 def test_dashboard_page_emits_data_generation_id_meta() -> None:
     """GET /dashboards/<id> embeds <meta name="data-generation-id"
     content="N"> capturing the server's counter at render time."""
-    from quicksight_gen.common.l2.deploy_pipeline import get_data_generation_id
+    from recon_gen.common.l2.deploy_pipeline import get_data_generation_id
     expected = get_data_generation_id()
     client = _make_test_app()
     body = client.get(_DASHBOARD_PATH).text
@@ -667,7 +667,7 @@ def test_sheet_page_emits_data_generation_id_meta() -> None:
     """GET /dashboards/<id>/sheets/<sheet_id> emits the same meta —
     sheet-tab navigation is a full page reload, so each sheet page
     needs its own baseline for the poller to compare against."""
-    from quicksight_gen.common.l2.deploy_pipeline import get_data_generation_id
+    from recon_gen.common.l2.deploy_pipeline import get_data_generation_id
     expected = get_data_generation_id()
     client = _make_test_app()
     body = client.get(
@@ -696,7 +696,7 @@ def test_dashboard_meta_advances_when_counter_bumps() -> None:
     server-side render time being ground truth."""
     import asyncio
 
-    from quicksight_gen.common.l2.deploy_pipeline import (
+    from recon_gen.common.l2.deploy_pipeline import (
         get_data_generation_id, step_5_reload,
     )
     client = _make_test_app()

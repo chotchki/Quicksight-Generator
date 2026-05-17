@@ -1,8 +1,8 @@
-"""Cross-reference docs ``quicksight-gen ...`` invocations against the
+"""Cross-reference docs ``recon-gen ...`` invocations against the
 live Click tree (X.1.h.B v0).
 
-Walks ``src/quicksight_gen/docs/**/*.md``, extracts every
-``quicksight-gen <command> <flags>`` line out of fenced bash blocks,
+Walks ``src/recon_gen/docs/**/*.md``, extracts every
+``recon-gen <command> <flags>`` line out of fenced bash blocks,
 and asserts each cited subcommand chain + each flag exists in the
 shipped CLI surface. Catches the "doc cites a removed verb / renamed
 flag" hallucination class (the X.1.h.A motivator was a step further:
@@ -30,12 +30,12 @@ from pathlib import Path
 import click
 import pytest
 
-from quicksight_gen.cli import main as cli_root
+from recon_gen.cli import main as cli_root
 
 
 _DOCS_DIR = (
     Path(__file__).parent.parent.parent
-    / "src" / "quicksight_gen" / "docs"
+    / "src" / "recon_gen" / "docs"
 )
 
 
@@ -99,7 +99,7 @@ def _split_at_subshell_or_pipe(line: str) -> str:
     """Strip everything from the first ``|``, ``&&``, ``||``, ``;``, or
     inline ``#`` comment so we only check the head invocation. We don't
     try to parse subshells (``$(...)``) — if a doc nests
-    ``quicksight-gen`` inside a subshell, the test will currently miss
+    ``recon-gen`` inside a subshell, the test will currently miss
     it. That's acceptable for the v0 cut.
     """
     for sep in (" | ", " && ", " || ", " ; ", " # "):
@@ -110,22 +110,22 @@ def _split_at_subshell_or_pipe(line: str) -> str:
 
 
 def _is_qsg_command_position(tokens: list[str], idx: int) -> bool:
-    """The token at ``idx`` is the ``quicksight-gen`` *command*
+    """The token at ``idx`` is the ``recon-gen`` *command*
     (rather than e.g. an argument to ``pip install``).
 
     Accepted shapes:
 
     - first executable token in the line, or
     - preceded only by env-var assignments (``KEY=val``) and/or path
-      segments that resolve to a ``quicksight-gen`` binary.
+      segments that resolve to a ``recon-gen`` binary.
 
-    Rejects ``pip install quicksight-gen`` and similar package-name
-    references where ``quicksight-gen`` appears as an argument to a
+    Rejects ``pip install recon-gen`` and similar package-name
+    references where ``recon-gen`` appears as an argument to a
     different command.
     """
     for prior in tokens[:idx]:
         if "=" in prior and not prior.startswith("-"):
-            # Env-var assignment like ``QS_GEN_E2E=1`` — skip.
+            # Env-var assignment like ``RECON_GEN_E2E=1`` — skip.
             continue
         return False
     return True
@@ -164,7 +164,7 @@ def _iter_qsg_invocations(
     md_text: str,
 ) -> list[tuple[list[str] | None, list[str], list[str]]]:
     """Yield ``(resolved_chain, attempted_chain, flag_tokens)`` for
-    every ``quicksight-gen ...`` invocation in the markdown body's
+    every ``recon-gen ...`` invocation in the markdown body's
     bash blocks.
 
     - ``resolved_chain`` is the longest non-flag-token prefix that
@@ -172,7 +172,7 @@ def _iter_qsg_invocations(
       ``["audit", "verify"]`` from ``audit verify report.pdf``).
       ``None`` means no prefix resolved — the doc cites an unknown
       subcommand. An empty list means there were no non-flag tokens
-      after ``quicksight-gen`` (bare ``quicksight-gen --version``).
+      after ``recon-gen`` (bare ``recon-gen --version``).
     - ``attempted_chain`` is the raw run of non-flag tokens for error
       reporting, even when nothing resolved.
     - ``flag_tokens`` is every ``-x`` / ``--xxx`` token (no values).
@@ -190,7 +190,7 @@ def _iter_qsg_invocations(
                 continue
             idx = None
             for i, t in enumerate(tokens):
-                if t == "quicksight-gen" or t.endswith("/quicksight-gen"):
+                if t == "recon-gen" or t.endswith("/recon-gen"):
                     if _is_qsg_command_position(tokens, i):
                         idx = i
                         break
@@ -227,25 +227,25 @@ def _markdown_files() -> list[Path]:
 
 @pytest.mark.parametrize("md_path", _markdown_files(), ids=lambda p: p.name)
 def test_docs_cli_invocations_resolve(md_path: Path) -> None:
-    """Every ``quicksight-gen ...`` invocation in the doc's bash blocks
+    """Every ``recon-gen ...`` invocation in the doc's bash blocks
     cites a real subcommand chain + real flags from the live Click
     tree."""
     invocations = _iter_qsg_invocations(md_path.read_text())
     if not invocations:
-        pytest.skip(f"No quicksight-gen invocations in {md_path.name}")
+        pytest.skip(f"No recon-gen invocations in {md_path.name}")
 
     failures: list[str] = []
     for resolved_chain, attempted, flags in invocations:
         attempted_str = " ".join(attempted)
         if resolved_chain is None:
             failures.append(
-                f"  unknown subcommand chain: 'quicksight-gen "
+                f"  unknown subcommand chain: 'recon-gen "
                 f"{attempted_str}' (closest matches: "
                 f"{[c for c in _CLI_TREE if attempted and attempted[0] in c][:3]})"
             )
             continue
         if not resolved_chain:
-            # Bare ``quicksight-gen [--version|--help]`` — only
+            # Bare ``recon-gen [--version|--help]`` — only
             # global flags are valid; no subcommand to look up.
             allowed = _GLOBAL_FLAGS
             chain_str = ""
@@ -255,7 +255,7 @@ def test_docs_cli_invocations_resolve(md_path: Path) -> None:
         for flag in flags:
             if flag not in allowed:
                 failures.append(
-                    f"  unknown flag for 'quicksight-gen {chain_str}': "
+                    f"  unknown flag for 'recon-gen {chain_str}': "
                     f"{flag!r} (allowed: {sorted(allowed - _GLOBAL_FLAGS)})"
                 )
     assert not failures, (

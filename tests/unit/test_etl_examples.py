@@ -1,7 +1,7 @@
 """Unit tests for ``common/etl_examples.py`` (X.1.h).
 
 The handbook's ``etl.md`` "exemplary helper" section promises the
-``quicksight-gen data etl-example`` CLI emits canonical INSERT
+``recon-gen data etl-example`` CLI emits canonical INSERT
 patterns covering every base-table shape. Pre-X.1.h the helper
 returned a single placeholder line — these tests guard the rewrite,
 asserting every promised pattern is in the output and carries the
@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-from quicksight_gen.common.etl_examples import generate_etl_examples_sql
+from recon_gen.common.etl_examples import generate_etl_examples_sql
 
 
 @pytest.fixture(scope="module")

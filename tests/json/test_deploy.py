@@ -1,4 +1,4 @@
-"""Unit tests for src/quicksight_gen/common/deploy.py — focuses on the
+"""Unit tests for src/recon_gen/common/deploy.py — focuses on the
 dataset-scoping logic that keeps `deploy <single-app>` from clobbering
 the *other* app's datasets and leaving its analysis with stale refs.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from quicksight_gen.common.deploy import AppFiles, _dataset_ids_for_apps
+from recon_gen.common.deploy import AppFiles, _dataset_ids_for_apps
 
 
 def _write_analysis(path: Path, dataset_ids: list[str]) -> None:

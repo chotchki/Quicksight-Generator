@@ -19,7 +19,7 @@ Four checks today, all extensible — drop a new ``Check`` into
 - **envvar-bypass** (Y.2.gate.b.15.lint.envvar) — direct
   ``os.environ.get`` / ``os.environ[...]`` / ``os.getenv`` /
   ``monkeypatch.setenv`` / ``monkeypatch.delenv`` calls with a
-  ``QS_GEN_*`` or ``QS_E2E_*`` string literal as the first arg.
+  ``RECON_GEN_*`` or ``RECON_E2E_*`` string literal as the first arg.
   These bypass the typed ``EnvVar`` registry at
   ``common/env_keys.py``, defeating type coercion + value
   validation + the operator-facing ``EnvVarRequired`` /
@@ -51,16 +51,19 @@ Four checks today, all extensible — drop a new ``Check`` into
   wrappers (``common/deploy.py``, ``common/cleanup.py``,
   ``common/browser/helpers.py``, ``common/aws_rds.py``,
   ``_dev/runner.py``). Stray clients bypass the
-  ``ManagedBy: quicksight-gen`` tagging convention → break
+  ``ManagedBy: recon-gen`` tagging convention → break
   ``cleanup``. Tests can freely use ``boto3.client`` (scope is
   src/ only).
 
-- **qs-gen-prefix** (Y.2.gate.b.15.lint.qs-gen-prefix) — hardcoded
-  ``"qs-gen-..."`` string literals in src code outside
-  ``common/config.py``. Resource IDs flow through
-  ``cfg.prefixed(name)`` which weaves in the L2 instance prefix;
-  bypassing it (``f"qs-gen-foo"`` direct) defeats multi-tenant
-  scoping. Docstrings are ignored.
+- **recon-prefix** (Y.2.gate.b.15.lint.recon-prefix, originally
+  ``qs-gen-prefix`` — renamed at AC.B.1) — hardcoded
+  ``"recon-<env>-..."`` deployment-prefix string literals in src
+  code outside ``common/config.py``. Resource IDs flow through
+  ``cfg.prefixed(name)`` which weaves in the operator's
+  ``deployment_name``; bypassing it (``f"recon-prod-foo"`` direct)
+  defeats multi-tenant scoping. Bare ``recon-gen`` (package /
+  CLI binary mentions) is allowed — the regex requires
+  ``recon-<env>-`` with a trailing dash. Docstrings are ignored.
 
 - **no-datetime-now** (Y.2.gate.b.15.lint.no-datetime-now) —
   ``datetime.now()`` / ``datetime.utcnow()`` / ``date.today()``
@@ -84,7 +87,7 @@ Four checks today, all extensible — drop a new ``Check`` into
 
 - **no-playwright-leak** (X.2.q.5) — ``import playwright`` /
   ``from playwright[.x] import …`` OR
-  ``from quicksight_gen.common.browser{.helpers|.screenshot} import …``
+  ``from recon_gen.common.browser{.helpers|.screenshot} import …``
   (the Playwright-primitives layer; the AWS-only helpers
   ``get_user_arn`` / ``generate_dashboard_embed_url`` are exempt) in
   any ``tests/e2e/`` file outside the driver layer
@@ -309,12 +312,15 @@ class ExplicitAnyCheck(Check):
 # Names matching this pattern are owned by the env_keys.py registry.
 # Anything matching that the lint encounters outside the whitelist is
 # a bug going forward.
-_ENV_VAR_NAME_RE = re.compile(r"^QS_(GEN|E2E)_[A-Z0-9_]+$")
+_ENV_VAR_NAME_RE = re.compile(r"^(QS|RECON)_(GEN|E2E)_[A-Z0-9_]+$")
 
 
 def _is_qs_env_literal(node: ast.AST) -> str | None:
     """Return the env-var name if ``node`` is a ``Constant(str)`` matching
-    the QS_GEN/QS_E2E pattern; else None."""
+    the QS_GEN/QS_E2E (legacy) or RECON_GEN/RECON_E2E (canonical)
+    pattern; else None. AC.B.3 grace period — registry's typed
+    fallback handles legacy reads, but new bypass calls with either
+    prefix are still smells."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         if _ENV_VAR_NAME_RE.match(node.value):
             return node.value
@@ -581,7 +587,7 @@ class DeterminismCheck(Check):
 class _Boto3DirectVisitor(ast.NodeVisitor):
     """Walk Call nodes; flag direct ``boto3.client(...)`` calls.
 
-    Stray clients bypass the ``ManagedBy: quicksight-gen`` tagging
+    Stray clients bypass the ``ManagedBy: recon-gen`` tagging
     convention that all production resource creation goes through;
     the cleanup verb relies on every resource carrying that tag to
     find orphans."""
@@ -605,7 +611,7 @@ class _Boto3DirectVisitor(ast.NodeVisitor):
                     "wrappers (``common/deploy.py``, ``common/cleanup.py``, "
                     "``common/browser/helpers.py``, ``common/aws_rds.py``, "
                     "``_dev/runner.py``) so resources stay tagged "
-                    "``ManagedBy: quicksight-gen`` and ``cleanup`` finds "
+                    "``ManagedBy: recon-gen`` and ``cleanup`` finds "
                     "them. If this site is genuinely a new wrapper, add "
                     "it to the lint's allowlist; otherwise route through "
                     "an existing one. Suppress with ``# typing-smell: "
@@ -623,11 +629,18 @@ class Boto3DirectCheck(Check):
 
 
 # ---------------------------------------------------------------------------
-# Check: qs-gen-prefix (Y.2.gate.b.15.lint.qs-gen-prefix)
+# Check: recon-prefix (Y.2.gate.b.15.lint.recon-prefix, originally
+# qs-gen-prefix; renamed at AC.B.1 alongside the qsgen- → recon-
+# deployment prefix sweep)
 # ---------------------------------------------------------------------------
 
 
-_QS_GEN_PREFIX_RE = re.compile(r"^qs-gen[\-_]")
+# Match deployment-style prefixes like ``recon-prod-foo`` / ``recon-myorg-prod-bar``
+# — recon, followed by an env-name segment, followed by a resource segment.
+# Deliberately does NOT match ``recon-gen`` (the package / CLI binary name)
+# or bare ``recon-`` mentions: the trailing ``-`` after the env segment is
+# the discriminator.
+_RECON_PREFIX_RE = re.compile(r"^recon-[a-z]+-")
 
 
 def _docstring_node_ids(tree: ast.AST) -> set[int]:
@@ -646,9 +659,10 @@ def _docstring_node_ids(tree: ast.AST) -> set[int]:
     return out
 
 
-class _QsGenPrefixVisitor(ast.NodeVisitor):
-    """Walk Constant string nodes; flag ``qs-gen-...`` literals
-    (excluding docstrings)."""
+class _ReconPrefixVisitor(ast.NodeVisitor):
+    """Walk Constant string nodes; flag ``recon-<env>-...`` literals
+    (deployment-prefix style; excludes docstrings + bare
+    ``recon-gen`` package/binary mentions)."""
 
     def __init__(self, file: Path, docstring_ids: set[int]) -> None:
         self.file = file
@@ -660,26 +674,26 @@ class _QsGenPrefixVisitor(ast.NodeVisitor):
             return
         if id(node) in self.docstring_ids:
             return
-        if _QS_GEN_PREFIX_RE.match(node.value):
+        if _RECON_PREFIX_RE.match(node.value):
             self.smells.append(Smell(
                 file=self.file,
                 lineno=node.lineno,
-                checker="qs-gen-prefix",
+                checker="recon-prefix",
                 message=(
-                    f"hardcoded ``qs-gen-`` resource-prefix string "
+                    f"hardcoded ``recon-<env>-`` deployment-prefix string "
                     f"({node.value!r}) — use ``cfg.prefixed(<name>)`` "
-                    f"so the L2 instance prefix is woven in. Direct "
-                    f"``f\"qs-gen-foo\"`` defeats multi-tenant scoping. "
-                    f"Suppress with ``# typing-smell: ignore"
-                    f"[qs-gen-prefix]: <reason>`` if intentional."
+                    f"so the operator's deployment_name is woven in. "
+                    f"Direct ``f\"recon-prod-foo\"`` defeats multi-tenant "
+                    f"scoping. Suppress with ``# typing-smell: ignore"
+                    f"[recon-prefix]: <reason>`` if intentional."
                 ),
             ))
 
 
-class QsGenPrefixCheck(Check):
+class ReconPrefixCheck(Check):
     def find_smells(self, src: str, tree: ast.AST, file: Path) -> Iterable[Smell]:
         docstring_ids = _docstring_node_ids(tree)
-        v = _QsGenPrefixVisitor(file, docstring_ids)
+        v = _ReconPrefixVisitor(file, docstring_ids)
         v.visit(tree)
         return v.smells
 
@@ -1035,7 +1049,7 @@ class _CreateTagsVisitor(ast.NodeVisitor):
     ``boto3-direct`` — that lint catches new ``boto3.client()``
     instantiations outside the allowlist; this lint catches new
     ``client.create_X(...)`` shapes in the allowlisted boto3 files
-    that would skip the ManagedBy: quicksight-gen tagging convention."""
+    that would skip the ManagedBy: recon-gen tagging convention."""
 
     def __init__(self, file: Path) -> None:
         self.file = file
@@ -1055,7 +1069,7 @@ class _CreateTagsVisitor(ast.NodeVisitor):
                         f"``{node.func.attr}(...)`` without ``Tags=`` "
                         "or ``**payload`` spread — boto3 QuickSight "
                         "create_* calls must carry the ``ManagedBy: "
-                        "quicksight-gen`` tag (plus per-instance + "
+                        "recon-gen`` tag (plus per-instance + "
                         "extra tags) so the cleanup CLI can find + "
                         "delete the resource later. Either pass "
                         "``Tags=[...]`` directly or build the dict "
@@ -1087,9 +1101,9 @@ _NON_PLAYWRIGHT_BROWSER_HELPERS = frozenset({
     "generate_dashboard_embed_url",
 })
 
-_BROWSER_HELPERS_MOD = "quicksight_gen.common.browser.helpers"
-_BROWSER_SCREENSHOT_MOD = "quicksight_gen.common.browser.screenshot"
-_BROWSER_PKG = "quicksight_gen.common.browser"
+_BROWSER_HELPERS_MOD = "recon_gen.common.browser.helpers"
+_BROWSER_SCREENSHOT_MOD = "recon_gen.common.browser.screenshot"
+_BROWSER_PKG = "recon_gen.common.browser"
 
 # X.2.q.3 migration backlog — ``tests/e2e/`` files that still drive
 # Playwright directly (via ``common/browser/helpers``) instead of through
@@ -1106,7 +1120,7 @@ _PLAYWRIGHT_LEAK_LEGACY: frozenset[str] = frozenset()
 
 class _NoPlaywrightLeakVisitor(ast.NodeVisitor):
     """Flag (a) ``import playwright[...]`` / ``from playwright[...] import``
-    and (b) ``from quicksight_gen.common.browser{.helpers|.screenshot}
+    and (b) ``from recon_gen.common.browser{.helpers|.screenshot}
     import …`` (except the AWS-only helper names) in a browser-e2e test —
     Playwright stays sealed behind the ``DashboardDriver`` layer."""
 
@@ -1233,18 +1247,18 @@ def _build_checks() -> list[Check]:
     # the tree-pattern relies on (Visual subtype dispatch, AWS JSON
     # shapes); they get the file-level opt-out below if needed.
     explicit_any_scope = [
-        REPO_ROOT / "src/quicksight_gen/common/db.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/_sql_executor.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/_tree_fetcher.py",
-        REPO_ROOT / "src/quicksight_gen/common/html/server.py",
-        REPO_ROOT / "src/quicksight_gen/common/config.py",
+        REPO_ROOT / "src/recon_gen/common/db.py",
+        REPO_ROOT / "src/recon_gen/common/html/_sql_executor.py",
+        REPO_ROOT / "src/recon_gen/common/html/_tree_fetcher.py",
+        REPO_ROOT / "src/recon_gen/common/html/server.py",
+        REPO_ROOT / "src/recon_gen/common/config.py",
     ]
     # envvar-bypass spans src/ + tests/ (both have env access). The
     # registry itself + its unit test are the two legit consumers of
     # raw os.environ — whitelisted via path exclusion below.
     envvar_scope = [
         p for p in (
-            _expand_paths([REPO_ROOT / "src/quicksight_gen"])
+            _expand_paths([REPO_ROOT / "src/recon_gen"])
             + _expand_paths([REPO_ROOT / "tests"])
         )
         if p.name != "env_keys.py"
@@ -1257,7 +1271,7 @@ def _build_checks() -> list[Check]:
     # markers, but keep parity with envvar-bypass's exclusions).
     why_comment_scope = [
         p for p in (
-            _expand_paths([REPO_ROOT / "src/quicksight_gen"])
+            _expand_paths([REPO_ROOT / "src/recon_gen"])
             + _expand_paths([REPO_ROOT / "tests"])
         )
         if p.name != "test_typing_smells.py"
@@ -1295,9 +1309,9 @@ def _build_checks() -> list[Check]:
             name="envvar-bypass",
             description=(
                 "bare os.environ.get / os.environ[...] / os.getenv / "
-                "monkeypatch.setenv|delenv with a QS_GEN_/QS_E2E_ "
-                "string literal — use the typed EnvVar registry at "
-                "common/env_keys.py instead"
+                "monkeypatch.setenv|delenv with a RECON_GEN_/RECON_E2E_ "
+                "(or legacy QS_GEN_/QS_E2E_) string literal — use the "
+                "typed EnvVar registry at common/env_keys.py instead"
             ),
             files=envvar_scope,
         ),
@@ -1321,9 +1335,9 @@ def _build_checks() -> list[Check]:
                 "stay deterministic"
             ),
             files=_expand_paths([
-                REPO_ROOT / "src/quicksight_gen/common/l2/seed.py",
-                REPO_ROOT / "src/quicksight_gen/common/l2/auto_scenario.py",
-                REPO_ROOT / "src/quicksight_gen/apps",
+                REPO_ROOT / "src/recon_gen/common/l2/seed.py",
+                REPO_ROOT / "src/recon_gen/common/l2/auto_scenario.py",
+                REPO_ROOT / "src/recon_gen/apps",
             ]),
         ),
         Boto3DirectCheck(
@@ -1337,27 +1351,28 @@ def _build_checks() -> list[Check]:
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
-                if p != REPO_ROOT / "src/quicksight_gen/common/deploy.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/cleanup.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/browser/helpers.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/aws_rds.py"
-                and p != REPO_ROOT / "src/quicksight_gen/_dev/runner.py"
+                if p != REPO_ROOT / "src/recon_gen/common/deploy.py"
+                and p != REPO_ROOT / "src/recon_gen/common/cleanup.py"
+                and p != REPO_ROOT / "src/recon_gen/common/browser/helpers.py"
+                and p != REPO_ROOT / "src/recon_gen/common/aws_rds.py"
+                and p != REPO_ROOT / "src/recon_gen/_dev/runner.py"
             ],
         ),
-        QsGenPrefixCheck(
-            name="qs-gen-prefix",
+        ReconPrefixCheck(
+            name="recon-prefix",
             description=(
-                "hardcoded ``qs-gen-...`` resource-prefix literal in "
-                "src code — use ``cfg.prefixed(<name>)`` so the L2 "
-                "instance prefix is woven in (multi-tenant scoping)"
+                "hardcoded ``recon-<env>-...`` deployment-prefix literal "
+                "in src code — use ``cfg.prefixed(<name>)`` so the "
+                "operator's deployment_name is woven in (multi-tenant "
+                "scoping). Bare ``recon-gen`` (package/CLI) is allowed."
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
-                if p != REPO_ROOT / "src/quicksight_gen/common/config.py"
+                if p != REPO_ROOT / "src/recon_gen/common/config.py"
             ],
         ),
         NoDatetimeNowCheck(
@@ -1370,16 +1385,16 @@ def _build_checks() -> list[Check]:
             ),
             files=[
                 p for p in _expand_paths(
-                    [REPO_ROOT / "src/quicksight_gen"]
+                    [REPO_ROOT / "src/recon_gen"]
                 )
                 if not str(p.relative_to(REPO_ROOT)).startswith(
-                    "src/quicksight_gen/_dev/runner"
+                    "src/recon_gen/_dev/runner"
                 )
                 and not str(p.relative_to(REPO_ROOT)).startswith(
-                    "src/quicksight_gen/cli/audit/"
+                    "src/recon_gen/cli/audit/"
                 )
-                and p != REPO_ROOT / "src/quicksight_gen/common/sheets/app_info.py"
-                and p != REPO_ROOT / "src/quicksight_gen/common/provenance.py"
+                and p != REPO_ROOT / "src/recon_gen/common/sheets/app_info.py"
+                and p != REPO_ROOT / "src/recon_gen/common/provenance.py"
             ],
         ),
         NoSleepCheck(
@@ -1413,8 +1428,8 @@ def _build_checks() -> list[Check]:
                 "deliberate"
             ),
             files=_expand_paths([
-                REPO_ROOT / "src/quicksight_gen/cli",
-                REPO_ROOT / "src/quicksight_gen/common",
+                REPO_ROOT / "src/recon_gen/cli",
+                REPO_ROOT / "src/recon_gen/common",
             ]),
         ),
         TreeDataclassCheck(
@@ -1427,17 +1442,17 @@ def _build_checks() -> list[Check]:
                 "equality on mutable state, breaking object-ref "
                 "identity"
             ),
-            files=_expand_paths([REPO_ROOT / "src/quicksight_gen/common/tree"]),
+            files=_expand_paths([REPO_ROOT / "src/recon_gen/common/tree"]),
         ),
         CreateTagsCheck(
             name="create-tags",
             description=(
                 "boto3 QuickSight ``create_*`` calls must carry "
-                "the ``ManagedBy: quicksight-gen`` tag — pass "
+                "the ``ManagedBy: recon-gen`` tag — pass "
                 "``Tags=[...]`` directly or spread a built "
                 "payload via ``**payload``"
             ),
-            files=[REPO_ROOT / "src/quicksight_gen/common/deploy.py"],
+            files=[REPO_ROOT / "src/recon_gen/common/deploy.py"],
         ),
         NoPlaywrightLeakCheck(
             name="no-playwright-leak",

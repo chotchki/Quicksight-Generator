@@ -11,7 +11,7 @@
 # Defaults to run/sasquatch_pr.yaml. Container is torn down on exit
 # (EXIT trap). Prints the bound Studio URL before spawning.
 #
-# Prereqs: docker daemon running, .venv with quicksight-gen + dev
+# Prereqs: docker daemon running, .venv with recon-gen + dev
 # extras installed (uv sync --extra dev --extra audit), the L2 yaml
 # at the path argument exists.
 
@@ -26,7 +26,7 @@ fi
 L2_YAML_ABS="$(cd "$(dirname "$L2_YAML")" && pwd)/$(basename "$L2_YAML")"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QSGEN="$REPO_ROOT/.venv/bin/quicksight-gen"
+QSGEN="$REPO_ROOT/.venv/bin/recon-gen"
 if [[ ! -x "$QSGEN" ]]; then
   echo "error: $QSGEN not found — run 'uv sync --extra dev --extra audit' first" >&2
   exit 2
@@ -91,7 +91,7 @@ if [[ -z "$INSTANCE_PREFIX" ]]; then
 fi
 echo "L2 instance: $INSTANCE_PREFIX"
 
-# Per-pipeline pg cfg (the etl_hook invokes quicksight-gen against this).
+# Per-pipeline pg cfg (the etl_hook invokes recon-gen against this).
 PG_CFG="$WORK_DIR/pg_etl_cfg.yaml"
 cat >"$PG_CFG" <<EOF
 aws_account_id: "111122223333"
@@ -101,7 +101,7 @@ demo_database_url: "$PG_URL"
 dialect: postgres
 EOF
 
-# etl_hook: shells out to quicksight-gen data apply --execute against
+# etl_hook: shells out to recon-gen data apply --execute against
 # the postgres container. Mirrors tests/e2e/_studio_deploy_helpers.py
 # write_etl_hook_script.
 ETL_HOOK="$WORK_DIR/etl_hook.sh"

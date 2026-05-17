@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Account,
     AccountTemplate,
     Chain,
@@ -248,7 +248,7 @@ def test_rails_default_to_no_aging_or_posted_requirements() -> None:
 def test_supersede_reason_v1_set() -> None:
     """SPEC v1 SupersedeReason categories. The TypeAlias is open (Literal
     accepts the v1 set; storage column is open enum at the schema layer)."""
-    from quicksight_gen.common.l2 import SupersedeReason
+    from recon_gen.common.l2 import SupersedeReason
     # Smoke: the three v1 values type-check as SupersedeReason at runtime.
     inflight: SupersedeReason = "Inflight"
     bundle: SupersedeReason = "BundleAssignment"
@@ -260,7 +260,7 @@ def test_supersede_reason_v1_set() -> None:
 
 def test_duration_is_timedelta() -> None:
     """Duration is an alias for datetime.timedelta — same arithmetic + comparisons."""
-    from quicksight_gen.common.l2 import Duration
+    from recon_gen.common.l2 import Duration
     d: Duration = timedelta(hours=24)
     assert isinstance(d, timedelta)
     assert d == timedelta(days=1)

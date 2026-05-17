@@ -10,7 +10,7 @@ handles paragraph + line breaks AND inline ``[text](url)`` links.
 
 from __future__ import annotations
 
-from quicksight_gen.common import rich_text as rt
+from recon_gen.common import rich_text as rt
 
 
 class TestBody:

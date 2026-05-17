@@ -9,7 +9,7 @@ compares lexicographically with no cast needed.
 
 from __future__ import annotations
 
-from quicksight_gen.common.sql import Dialect, app2_date_filter
+from recon_gen.common.sql import Dialect, app2_date_filter
 
 
 class TestPostgres:

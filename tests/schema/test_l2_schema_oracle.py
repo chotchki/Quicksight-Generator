@@ -21,18 +21,18 @@ from datetime import timedelta
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Identifier,
     L2Instance,
     emit_schema,
     refresh_matviews_sql,
 )
-from quicksight_gen.common.l2.primitives import (
+from recon_gen.common.l2.primitives import (
     LimitSchedule,
     RoleExpression,
     SingleLegRail,
 )
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 def _strip_comments(sql: str) -> str:

@@ -27,7 +27,7 @@ wire-shape assertions (param-name attributes, fetcher's calls log).
 Stub fetcher (not live PG) keeps the test fast + DB-free, same shape as
 ``test_html2_executives.py``. The live-PG variant is the ``app2`` chain
 layer (``./run_tests.sh up_to=app2 …``) which runs this file with
-``QS_GEN_E2E=1`` against a seeded container.
+``RECON_GEN_E2E=1`` against a seeded container.
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+from recon_gen.apps.l2_flow_tracing.datasets import (
     build_all_l2_flow_tracing_datasets,
 )
 from tests._test_helpers import make_test_config

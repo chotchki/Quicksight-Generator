@@ -36,7 +36,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.sql import Dialect
 
 
 L1Invariant = Literal[

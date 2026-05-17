@@ -37,7 +37,7 @@ from typing import Any, Callable
 
 import pytest
 
-from quicksight_gen.cli._app_builders import (
+from recon_gen.cli._app_builders import (
     _generate_executives,
     _generate_investigation,
     _generate_l1_dashboard,
@@ -64,7 +64,7 @@ def _write_min_config(tmp_path: Path) -> Path:
         "aws_region": "us-east-1",
         # Z.C — both required cfg fields. db_table_prefix matches
         # sasquatch_pr because that's the L2 yaml the bundle reads.
-        "deployment_name": "qsgen-cross-ref",
+        "deployment_name": "recon-cross-ref",
         "db_table_prefix": "sasquatch_pr",
         "datasource_arn": (
             "arn:aws:quicksight:us-east-1:111122223333:datasource/x"

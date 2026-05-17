@@ -43,7 +43,7 @@ from unittest.mock import patch
 
 import pytest
 
-from quicksight_gen.cli.audit import (
+from recon_gen.cli.audit import (
     _query_drift_violations,
     _query_executive_summary,
     _query_limit_breach_violations,
@@ -52,7 +52,7 @@ from quicksight_gen.cli.audit import (
     _query_stuck_unbundled_violations,
     _query_supersession,
 )
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 
 
 # --- Fakes -------------------------------------------------------------------
@@ -170,14 +170,14 @@ def captured_sql() -> list[str]:
 def patched_connect(captured_sql, monkeypatch):
     """Patch ``connect_demo_db`` with the recording stub.
 
-    The query functions do a lazy ``from quicksight_gen.common.db
+    The query functions do a lazy ``from recon_gen.common.db
     import connect_demo_db`` inside the function body, so we patch
     the source module — that's where the lookup resolves.
     """
     cursor = _RecordingCursor(captured_sql)
     conn = _RecordingConn(cursor)
     with patch(
-        "quicksight_gen.common.db.connect_demo_db",
+        "recon_gen.common.db.connect_demo_db",
         return_value=conn,
     ):
         yield

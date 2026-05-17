@@ -29,12 +29,12 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2 import (
+from recon_gen.common.l2 import (
     Identifier,
     Name,
     load_instance,
 )
-from quicksight_gen.common.l2.seed import (
+from recon_gen.common.l2.seed import (
     DriftPlant,
     LimitBreachPlant,
     OverdraftPlant,

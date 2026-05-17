@@ -21,19 +21,19 @@ import pytest
 starlette = pytest.importorskip("starlette")
 TestClient = pytest.importorskip("starlette.testclient").TestClient
 
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.db import connect_demo_db, execute_script
-from quicksight_gen.common.html._smoke_app import (
+from recon_gen.common.config import Config
+from recon_gen.common.db import connect_demo_db, execute_script
+from recon_gen.common.html._smoke_app import (
     SMOKE_FILTER_SPECS,
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html._studio_routes import make_studio_routes
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.l2.cache import L2InstanceCache
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.schema import emit_schema
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.html._studio_routes import make_studio_routes
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.l2.cache import L2InstanceCache
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.schema import emit_schema
+from recon_gen.common.sql import Dialect
 
 
 _FIXTURES = Path(__file__).resolve().parent.parent / "l2"
@@ -52,7 +52,7 @@ def _sqlite_cfg(tmp_path: Path, **overrides: object) -> Config:
     base = Config(
         aws_account_id="111122223333",
         aws_region="us-east-1",
-        deployment_name="qsgen-test",
+        deployment_name="recon-test",
         db_table_prefix="test",
         datasource_arn=(
             "arn:aws:quicksight:us-east-1:111122223333:datasource/x"

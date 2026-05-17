@@ -16,14 +16,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from quicksight_gen.common.config import load_config
-from quicksight_gen.common.env_keys import (
-    QS_GEN_AWS_ACCOUNT_ID,
-    QS_GEN_AWS_REGION,
-    QS_GEN_DATASOURCE_ARN,
-    QS_GEN_DB_TABLE_PREFIX,
-    QS_GEN_DEMO_DATABASE_URL,
-    QS_GEN_DEPLOYMENT_NAME,
+from recon_gen.common.config import load_config
+from recon_gen.common.env_keys import (
+    RECON_GEN_AWS_ACCOUNT_ID,
+    RECON_GEN_AWS_REGION,
+    RECON_GEN_DATASOURCE_ARN,
+    RECON_GEN_DB_TABLE_PREFIX,
+    RECON_GEN_DEMO_DATABASE_URL,
+    RECON_GEN_DEPLOYMENT_NAME,
 )
 
 
@@ -34,7 +34,7 @@ _REQUIRED = {
     # Z.C: required cfg fields. Defaults pinned for the assertion-light
     # tests below; tests that exercise the resource-ID shape override
     # ``deployment_name`` explicitly.
-    "deployment_name": "qsgen-test",
+    "deployment_name": "recon-test",
     "db_table_prefix": "test",
 }
 
@@ -60,7 +60,7 @@ def _write_yaml(tmp_path: Path, body: dict) -> Path:
 def test_minimal_valid_config_loads(tmp_path: Path) -> None:
     cfg = load_config(_write_yaml(tmp_path, _required_yaml()))
     assert cfg.aws_account_id == "111122223333"
-    assert cfg.deployment_name == "qsgen-test"
+    assert cfg.deployment_name == "recon-test"
     assert cfg.db_table_prefix == "test"
 
 
@@ -70,7 +70,7 @@ def test_full_valid_config_loads(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path, _required_yaml({
         "aws_region": "us-east-2",
         "datasource_arn": "arn:aws:quicksight:us-east-2:111122223333:datasource/x",
-        "deployment_name": "qsgen-test-full",
+        "deployment_name": "recon-test-full",
         "db_table_prefix": "test_full",
         "principal_arns": ["arn:aws:iam::111122223333:user/u"],
         "extra_tags": {"Owner": "team"},
@@ -86,7 +86,7 @@ def test_full_valid_config_loads(tmp_path: Path) -> None:
     assert cfg.signing is not None
     assert cfg.dialect.value == "postgres"
     assert cfg.tagging_enabled is False
-    assert cfg.deployment_name == "qsgen-test-full"
+    assert cfg.deployment_name == "recon-test-full"
     assert cfg.db_table_prefix == "test_full"
 
 
@@ -112,7 +112,7 @@ def test_tagging_enabled_true_populates_tags_kwarg(tmp_path: Path) -> None:
     """Z.C: cfg.tags() emits a single ``Deployment=<name>`` tag instead of
     the v8.x two-tag (ResourcePrefix + L2Instance) pair."""
     cfg = load_config(_write_yaml(tmp_path, _required_yaml({
-        "deployment_name": "qsgen-customprefix",
+        "deployment_name": "recon-customprefix",
         "extra_tags": {"Owner": "team"},
     })))
     tags = cfg.tags()
@@ -123,7 +123,7 @@ def test_tagging_enabled_true_populates_tags_kwarg(tmp_path: Path) -> None:
     assert "ResourcePrefix" not in keys
     assert "L2Instance" not in keys
     by_key = {tag.Key: tag.Value for tag in tags}
-    assert by_key["Deployment"] == "qsgen-customprefix"
+    assert by_key["Deployment"] == "recon-customprefix"
 
 
 def test_tagging_enabled_non_bool_rejected(tmp_path: Path) -> None:
@@ -232,9 +232,9 @@ def test_missing_aws_account_id_fails_loud_with_env_var_hint(
     Clear the env vars so the loader's env-fallback path can't quietly
     fill them — we're testing the missing-everything case.
     """
-    monkeypatch.delenv(QS_GEN_AWS_ACCOUNT_ID.name, raising=False)
-    monkeypatch.delenv(QS_GEN_AWS_REGION.name, raising=False)
-    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_AWS_ACCOUNT_ID.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_AWS_REGION.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DATASOURCE_ARN.name, raising=False)
 
     p = _write_yaml(tmp_path, {
         # aws_account_id deliberately absent — also missing from env.
@@ -251,7 +251,7 @@ def test_missing_aws_account_id_fails_loud_with_env_var_hint(
     assert "aws_account_id" in msg, (
         f"loud-fail message must name the missing key; got: {msg}"
     )
-    assert "QS_GEN_AWS_ACCOUNT_ID" in msg, (
+    assert "RECON_GEN_AWS_ACCOUNT_ID" in msg, (
         f"loud-fail message must surface the env-var fallback so the "
         f"operator knows the alternative; got: {msg}"
     )
@@ -263,8 +263,8 @@ def test_missing_datasource_arn_without_demo_url_fails_loud(
     """gate.h.5 — datasource_arn is required UNLESS demo_database_url
     is set (the latter auto-derives the former). Without either, fail
     loud with the missing key + env-var fallback."""
-    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
-    monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DATASOURCE_ARN.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DEMO_DATABASE_URL.name, raising=False)
 
     p = _write_yaml(tmp_path, {
         "aws_account_id": "111122223333",
@@ -275,7 +275,7 @@ def test_missing_datasource_arn_without_demo_url_fails_loud(
         load_config(p)
     msg = str(exc_info.value)
     assert "datasource_arn" in msg
-    assert "QS_GEN_DATASOURCE_ARN" in msg
+    assert "RECON_GEN_DATASOURCE_ARN" in msg
 
 
 def test_demo_database_url_satisfies_datasource_arn_requirement(
@@ -285,7 +285,7 @@ def test_demo_database_url_satisfies_datasource_arn_requirement(
     is auto-derived from it — no loud-fail. Locks the contract that
     the missing-cfg check is necessity-aware, not just a blanket key
     list."""
-    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DATASOURCE_ARN.name, raising=False)
     body = {
         k: v for k, v in _REQUIRED.items() if k != "datasource_arn"
     }
@@ -316,8 +316,8 @@ def test_datasource_arn_was_derived_flag(
     is no longer applicable. The ARN-was-derived flag survives normal
     construction; that's all we need to verify here.
     """
-    monkeypatch.delenv(QS_GEN_DATASOURCE_ARN.name, raising=False)
-    monkeypatch.delenv(QS_GEN_DEMO_DATABASE_URL.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DATASOURCE_ARN.name, raising=False)
+    monkeypatch.delenv(RECON_GEN_DEMO_DATABASE_URL.name, raising=False)
     explicit_arn = "arn:aws:quicksight:us-east-1:111122223333:datasource/customer-managed-ds"
     dir_a = tmp_path / "a"; dir_a.mkdir()
     dir_b = tmp_path / "b"; dir_b.mkdir()
@@ -342,20 +342,20 @@ def test_datasource_arn_was_derived_flag(
     # demo_database_url only → derived; ARN carries the deployment_name
     # in the path (per Config.prefixed and __post_init__).
     cfg3 = load_config(_write_yaml(dir_c, _required_yaml({
-        "deployment_name": "qsgen-sasquatch-pr",
+        "deployment_name": "recon-sasquatch-pr",
         "demo_database_url": "postgresql://u:p@h:5432/d", "dialect": "postgres",
     })))
     # Drop the explicit datasource_arn from _required_yaml so __post_init__
     # actually does the derive (otherwise the explicit ARN wins).
     cfg3 = load_config(_write_yaml(dir_c, {
         k: v for k, v in _required_yaml({
-            "deployment_name": "qsgen-sasquatch-pr",
+            "deployment_name": "recon-sasquatch-pr",
             "demo_database_url": "postgresql://u:p@h:5432/d",
             "dialect": "postgres",
         }).items() if k != "datasource_arn"
     }))
     assert cfg3.datasource_arn_was_derived is True
-    assert "qsgen-sasquatch-pr" in (cfg3.datasource_arn or "")
+    assert "recon-sasquatch-pr" in (cfg3.datasource_arn or "")
 
 
 # X.4.g.1+2+3 — Deploy-pipeline config schema. Three new fields on Config:
@@ -372,8 +372,8 @@ def _base_cfg(extras: dict[str, object]) -> dict[str, object]:
 # --- Z.C — deployment_name + db_table_prefix loud-fail ---
 
 @pytest.mark.parametrize("missing_key,env_var", [
-    ("deployment_name", "QS_GEN_DEPLOYMENT_NAME"),
-    ("db_table_prefix", "QS_GEN_DB_TABLE_PREFIX"),
+    ("deployment_name", "RECON_GEN_DEPLOYMENT_NAME"),
+    ("db_table_prefix", "RECON_GEN_DB_TABLE_PREFIX"),
 ])
 def test_missing_zc_field_fails_loud_with_env_var_hint(
     tmp_path: Path, missing_key: str, env_var: str,
@@ -402,17 +402,17 @@ def test_zc_field_env_overrides_yaml(
     """Z.C: env var override path covers both fields (the runner relies
     on this to inject per-cell deployment_name + db_table_prefix without
     rewriting the operator's cfg yaml)."""
-    monkeypatch.setenv(QS_GEN_DEPLOYMENT_NAME.name, "qsgen-from-env")
-    monkeypatch.setenv(QS_GEN_DB_TABLE_PREFIX.name, "from_env")
+    monkeypatch.setenv(RECON_GEN_DEPLOYMENT_NAME.name, "recon-from-env")
+    monkeypatch.setenv(RECON_GEN_DB_TABLE_PREFIX.name, "from_env")
     body = dict(_REQUIRED)
     # Leave the yaml fields in place to confirm env wins.
-    body["deployment_name"] = "qsgen-from-yaml"
+    body["deployment_name"] = "recon-from-yaml"
     body["db_table_prefix"] = "from_yaml"
     cfg = load_config(_write_yaml(tmp_path, body))
-    assert cfg.deployment_name == "qsgen-from-env"
+    assert cfg.deployment_name == "recon-from-env"
     assert cfg.db_table_prefix == "from_env"
     # And cfg.prefixed picks the env value up.
-    assert cfg.prefixed("foo") == "qsgen-from-env-foo"
+    assert cfg.prefixed("foo") == "recon-from-env-foo"
 
 
 def test_etl_hook_defaults_none(tmp_path: Path) -> None:

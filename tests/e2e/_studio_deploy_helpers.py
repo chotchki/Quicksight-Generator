@@ -12,7 +12,7 @@ Public surface:
   - ``apply_schema_to(cfg)`` — emit + apply v6 schema for sasquatch_pr
   - ``write_pg_etl_cfg(pg_url, tmp_path)`` — generate per-test pg cfg yaml
   - ``write_etl_hook_script(tmp_path, pg_cfg_path)`` — generate
-    `quicksight-gen data apply --execute` shell script + chmod +x
+    `recon-gen data apply --execute` shell script + chmod +x
   - ``make_studio_cfg(tmp_path, ...)`` — full Config wiring
   - ``build_studio_app(cfg, pool)`` — in-process studio ASGI app
   - ``studio_server(cfg)`` — uvicorn-in-thread context manager (browser e2e)
@@ -32,36 +32,36 @@ from typing import Any
 
 import yaml
 
-from quicksight_gen.cli._html_serve import (
+from recon_gen.cli._html_serve import (
     APP_TITLES,
     REAL_APPS,
     build_real_app,
 )
-from quicksight_gen.common.config import (
+from recon_gen.common.config import (
     Config,
     EtlDatasourceConfig,
     TestGeneratorConfig,
 )
-from quicksight_gen.common.db import (
+from recon_gen.common.db import (
     AsyncConnectionPool,
     connect_demo_db,
     execute_script,
     make_connection_pool,
 )
-from quicksight_gen.common.html._studio_routes import make_studio_routes
-from quicksight_gen.common.html._tree_fetcher import make_tree_db_fetcher
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.l2.cache import L2InstanceCache
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.schema import emit_schema
-from quicksight_gen.common.sql import Dialect
+from recon_gen.common.html._studio_routes import make_studio_routes
+from recon_gen.common.html._tree_fetcher import make_tree_db_fetcher
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.l2.cache import L2InstanceCache
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.schema import emit_schema
+from recon_gen.common.sql import Dialect
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SASQUATCH_YAML = _REPO_ROOT / "run" / "sasquatch_pr.yaml"
-# Resolve quicksight-gen relative to this interpreter so the active venv
+# Resolve recon-gen relative to this interpreter so the active venv
 # is honored (whether `.venv/bin/pytest` or a runner-managed tmpvenv).
-QUICKSIGHT_GEN_BIN = Path(sysconfig.get_path("scripts")) / "quicksight-gen"
+QUICKSIGHT_GEN_BIN = Path(sysconfig.get_path("scripts")) / "recon-gen"
 
 
 def docker_available() -> bool:
@@ -101,14 +101,14 @@ def apply_schema_to(cfg: Config) -> None:
 
 def write_pg_etl_cfg(pg_url: str, tmp_path: Path) -> tuple[Config, Path]:
     """Build a Config + write a yaml file for the postgres ETL source.
-    The etl_hook script invokes `quicksight-gen` against this yaml so
+    The etl_hook script invokes `recon-gen` against this yaml so
     `data apply` can re-seed the postgres on each pipeline run."""
     pg_cfg_path = tmp_path / "pg_etl_cfg.yaml"
     # Z.C — deployment_name + db_table_prefix are required cfg fields.
     pg_cfg_dict = {
         "aws_account_id": "111122223333",
         "aws_region": "us-east-1",
-        "deployment_name": "qsgen-pg-etl",
+        "deployment_name": "recon-pg-etl",
         "db_table_prefix": "sasquatch_pr",
         "datasource_arn": (
             "arn:aws:quicksight:us-east-1:111122223333:datasource/x"
@@ -120,7 +120,7 @@ def write_pg_etl_cfg(pg_url: str, tmp_path: Path) -> tuple[Config, Path]:
     cfg = Config(
         aws_account_id="111122223333",
         aws_region="us-east-1",
-        deployment_name="qsgen-pg-etl",
+        deployment_name="recon-pg-etl",
         db_table_prefix="sasquatch_pr",
         datasource_arn=(
             "arn:aws:quicksight:us-east-1:111122223333:datasource/x"
@@ -134,7 +134,7 @@ def write_pg_etl_cfg(pg_url: str, tmp_path: Path) -> tuple[Config, Path]:
 def write_etl_hook_script(
     tmp_path: Path, pg_cfg_path: Path,
 ) -> Path:
-    """Write a shell script that runs ``quicksight-gen data apply
+    """Write a shell script that runs ``recon-gen data apply
     --execute`` against the postgres container, then chmod +x."""
     script_path = tmp_path / "etl_hook.sh"
     script_path.write_text(
@@ -161,7 +161,7 @@ def make_studio_cfg(
     cfg_kwargs: dict[str, Any] = {  # noqa: ANN401
         "aws_account_id": "111122223333",
         "aws_region": "us-east-1",
-        "deployment_name": "qsgen-studio",
+        "deployment_name": "recon-studio",
         "db_table_prefix": db_prefix,
         "datasource_arn": (
             "arn:aws:quicksight:us-east-1:111122223333:datasource/x"

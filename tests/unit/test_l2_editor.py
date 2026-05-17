@@ -20,20 +20,20 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.editor import (
+from recon_gen.common.l2.editor import (
     delete_l2_entity,
     mutate_l2,
     rename_identifier,
 )
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import (
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import (
     Account,
     Identifier,
     L2Instance,
     Rail,
     TransferTemplate,
 )
-from quicksight_gen.common.l2.validate import (
+from recon_gen.common.l2.validate import (
     L2ValidationError,
     validate as validate_instance,
 )
@@ -319,7 +319,7 @@ def test_mutate_round_trip_through_serializer_preserves_change(
     import os
     import tempfile
 
-    from quicksight_gen.common.l2.serializer import serialize_l2
+    from recon_gen.common.l2.serializer import serialize_l2
 
     new_inst = mutate_l2(
         spec_example,

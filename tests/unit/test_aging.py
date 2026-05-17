@@ -11,7 +11,7 @@ quietly fork the visual style.
 
 from __future__ import annotations
 
-from quicksight_gen.common.aging import aging_bar_visual
+from recon_gen.common.aging import aging_bar_visual
 
 
 def test_returns_horizontal_bar_chart_with_title_subtitle() -> None:

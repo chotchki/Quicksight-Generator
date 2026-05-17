@@ -25,20 +25,20 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.dataset_contract import (
+from recon_gen.common.dataset_contract import (
     ColumnShape,
     ColumnSpec,
     DatasetContract,
     register_contract,
 )
-from quicksight_gen.common.drill import (
+from recon_gen.common.drill import (
     DrillParam,
     DrillResetSentinel,
     DrillSourceField,
     field_source,
     set_drill_parameters,
 )
-from quicksight_gen.common.ids import ParameterName
+from recon_gen.common.ids import ParameterName
 
 
 # ---------------------------------------------------------------------------

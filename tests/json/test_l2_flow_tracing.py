@@ -22,7 +22,7 @@ Tests here cover:
 - 4 sheets in display order match the M.3.4 spec.
 - Getting Started welcome uses ``l2_instance.description`` as the
   body (description-driven prose contract).
-- M.3.4 CLI smoke: ``quicksight-gen generate l2-flow-tracing``
+- M.3.4 CLI smoke: ``recon-gen generate l2-flow-tracing``
   writes the expected files.
 - ``--all`` includes l2-flow-tracing in the bundle.
 - Per-instance prefix isolation: changing the L2 instance changes
@@ -37,13 +37,13 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l2_flow_tracing.app import (
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l2_flow_tracing.app import (
     build_l2_flow_tracing_app,
 )
-from quicksight_gen.cli import main
-from quicksight_gen.cli._helpers import APPS
-from quicksight_gen.common.l2 import L2Instance, load_instance
+from recon_gen.cli import main
+from recon_gen.cli._helpers import APPS
+from recon_gen.common.l2 import L2Instance, load_instance
 from tests._test_helpers import make_test_config
 
 
@@ -128,7 +128,7 @@ def test_emit_analysis_and_dashboard_succeed() -> None:
 def test_analysis_id_uses_deployment_prefix() -> None:
     """Z.C — `<deployment_name>-l2-flow-tracing-analysis`. Default
     deployment_name is whatever ``make_test_config`` defaulted to
-    (``qsgen-test``)."""
+    (``recon-test``)."""
     app = build_l2_flow_tracing_app(_CFG)
     analysis = app.emit_analysis()
     assert analysis.AnalysisId == (
@@ -149,8 +149,8 @@ def test_per_deployment_prefix_isolates_resource_ids() -> None:
     analysis IDs. Prevents multi-deploy collisions in the same QS account
     (replaces the prior per-L2-instance prefix isolation; deployments are
     now the per-tenant axis on cfg, not on the L2 yaml)."""
-    cfg_a = make_test_config(deployment_name="qsgen-spec")
-    cfg_b = make_test_config(deployment_name="qsgen-sasq")
+    cfg_a = make_test_config(deployment_name="recon-spec")
+    cfg_b = make_test_config(deployment_name="recon-sasq")
     a_app = build_l2_flow_tracing_app(cfg_a, l2_instance=default_l2_instance())
     b_app = build_l2_flow_tracing_app(
         cfg_b, l2_instance=load_instance(SASQUATCH_PR_YAML),
@@ -158,8 +158,8 @@ def test_per_deployment_prefix_isolates_resource_ids() -> None:
     a_id = a_app.emit_analysis().AnalysisId
     b_id = b_app.emit_analysis().AnalysisId
     assert a_id != b_id
-    assert "qsgen-spec" in a_id
-    assert "qsgen-sasq" in b_id
+    assert "recon-spec" in a_id
+    assert "recon-sasq" in b_id
 
 
 # -- Sheet structure (M.3.4 — 4 sheets) --------------------------------------
@@ -278,7 +278,7 @@ def test_cli_json_apply_l2_instance_flag(tmp_path: Path) -> None:
     cfg_path.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "deployment_name: qsgen-l2ft-l2flag\n"
+        "deployment_name: recon-l2ft-l2flag\n"
         "db_table_prefix: sasquatch_pr\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
     )
@@ -298,13 +298,13 @@ def test_cli_json_apply_l2_instance_flag(tmp_path: Path) -> None:
     # L2 yaml stem.
     chain_inst = (
         out_dir / "datasets"
-        / "qsgen-l2ft-l2flag-l2ft-chain-instances-dataset.json"
+        / "recon-l2ft-l2flag-l2ft-chain-instances-dataset.json"
     )
     assert chain_inst.exists()
 
 
 def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
-    """CLI smoke: ``quicksight-gen json apply`` writes theme + analysis
+    """CLI smoke: ``recon-gen json apply`` writes theme + analysis
     + dashboard + every dataset under datasets/ for L2 flow tracing.
     M.3.10c — postings + meta-values replace the M.3.5 rails dataset
     + the M.3.8 per-key dropdown fan-out."""
@@ -313,7 +313,7 @@ def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
         # Z.C — required cfg fields.
-        "deployment_name: qsgen-l2ft-cli\n"
+        "deployment_name: recon-l2ft-cli\n"
         "db_table_prefix: spec_example\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
     )
@@ -334,11 +334,11 @@ def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
     # Z.C — dataset JSONs use the deployment_name single-prefix shape
     # (was `qs-gen-<l2_prefix>-l2ft-...`).
     assert (
-        out_dir / "datasets" / "qsgen-l2ft-cli-l2ft-postings-dataset.json"
+        out_dir / "datasets" / "recon-l2ft-cli-l2ft-postings-dataset.json"
     ).exists()
     assert (
         out_dir / "datasets"
-        / "qsgen-l2ft-cli-l2ft-meta-values-dataset.json"
+        / "recon-l2ft-cli-l2ft-meta-values-dataset.json"
     ).exists()
 
 
@@ -347,7 +347,7 @@ def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
 
 def test_rails_sheet_has_a_table_visual() -> None:
     """The Rails sheet hosts the transactions Table (postings dataset)."""
-    from quicksight_gen.common.tree import Table
+    from recon_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     rails = _sheet_by_name(app, "Rails")
     table_visuals = [v for v in rails.visuals if isinstance(v, Table)]
@@ -357,7 +357,7 @@ def test_rails_sheet_has_a_table_visual() -> None:
 def test_rails_table_sources_from_postings_dataset() -> None:
     """The transactions Table reads from the postings dataset (not the
     M.3.5 declared-rails aggregate that moved to a future Docs tab)."""
-    from quicksight_gen.common.tree import Table
+    from recon_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     rails = _sheet_by_name(app, "Rails")
     table = next(v for v in rails.visuals if isinstance(v, Table))
@@ -408,7 +408,7 @@ def _chains_dataset_sql_against(yaml_path: Path) -> str:
     cfg's prefix to the yaml stem so the assertions still find
     `<yaml_stem>_current_transactions` in the rendered SQL.
     """
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_chains_dataset,
     )
     from dataclasses import replace
@@ -493,7 +493,7 @@ def test_chains_dataset_orphan_rate_avoids_divide_by_zero() -> None:
 def test_chains_dataset_contract_columns_match_builder() -> None:
     """Contract columns and SQL projection match — visual ds["col"]
     references resolve cleanly."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         CHAINS_CONTRACT, build_chains_dataset,
     )
     aws_ds = build_chains_dataset(_CFG, default_l2_instance())
@@ -511,7 +511,7 @@ def test_chains_dataset_handles_empty_chains_list() -> None:
     no-chains case by stripping ``chains`` off a loaded instance.)"""
     from dataclasses import replace
 
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_chains_dataset,
     )
     no_chains = replace(default_l2_instance(), chains=())
@@ -525,17 +525,17 @@ def test_chains_dataset_id_uses_deployment_prefix() -> None:
     """Z.C — dataset ID is prefixed by `cfg.deployment_name`. Was
     previously the M.2d.3 two-segment shape with the L2 instance
     prefix as the middle segment; now collapsed to one prefix."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_chains_dataset,
     )
     from dataclasses import replace
     cfg = replace(
         _CFG,
-        deployment_name="qsgen-sasq",
+        deployment_name="recon-sasq",
         db_table_prefix="sasquatch_pr",
     )
     ds = build_chains_dataset(cfg, load_instance(SASQUATCH_PR_YAML))
-    assert ds.DataSetId == "qsgen-sasq-l2ft-chains-dataset"
+    assert ds.DataSetId == "recon-sasq-l2ft-chains-dataset"
 
 
 # -- Chains sheet — M.3.10d per-instance explorer ---------------------------
@@ -549,7 +549,7 @@ def test_chains_sheet_is_a_single_table() -> None:
     was reverted: chains is a runtime causality concept, not a
     multi-leg flow graph — Sankey doesn't read naturally for it.
     Multi-leg Sankey visualization belongs on TransferTemplates."""
-    from quicksight_gen.common.tree import Table
+    from recon_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     chains = _sheet_by_name(app, "Chains")
     table_visuals = [v for v in chains.visuals if isinstance(v, Table)]
@@ -563,7 +563,7 @@ def test_chains_table_carries_completion_status_column() -> None:
     """The completion_status column is the answer the explorer is
     built around — without it the Completion filter has nothing to
     visibly affect."""
-    from quicksight_gen.common.tree import Table
+    from recon_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     chains = _sheet_by_name(app, "Chains")
     table = next(v for v in chains.visuals if isinstance(v, Table))
@@ -611,7 +611,7 @@ def test_chain_instances_dataset_declares_cascade_and_pushdown_parameters() -> N
     ``_match_all_in_clause`` turns the sentinel into "match all" on
     load. An instance with zero chains lands on the same sentinel
     default — harmless, the chain-instances table is empty anyway."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         L2FT_ALL_SENTINEL, build_chain_instances_dataset,
         declared_chain_parents,
     )
@@ -649,7 +649,7 @@ def test_chain_instances_dataset_pushes_chain_completion_into_sql() -> None:
     substitution (post-AA.A.3 SINGLE_SELECT form); the projection wraps
     in a subquery so the CASE-aliased `completion_status` is visible to
     the outer WHERE. Metadata cascade on `parent_metadata` stays inner."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_chain_instances_dataset,
     )
     sql = list(
@@ -705,7 +705,7 @@ def test_metadata_value_control_is_text_field() -> None:
     so a future regression to ParameterDropdown can't silently
     re-introduce the cold-deploy failure mode.
     """
-    from quicksight_gen.common.tree import ParameterTextField
+    from recon_gen.common.tree import ParameterTextField
     app = build_l2_flow_tracing_app(_CFG)
     found_at_least_one = False
     for sheet_name in ("Rails", "Chains", "Transfer Templates"):
@@ -739,7 +739,7 @@ def test_tt_datasets_declare_cascade_and_pushdown_parameters() -> None:
     ``[L2FT_ALL_SENTINEL]`` turned into "match all" by the SQL
     ``_match_all_in_clause``. An instance with zero templates lands on
     the same sentinel default."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         L2FT_ALL_SENTINEL, build_tt_instances_dataset,
         build_tt_legs_dataset, declared_template_names,
     )
@@ -781,7 +781,7 @@ def test_tt_datasets_push_template_completion_into_sql() -> None:
     for tt-legs) wraps in a subquery so the CASE-aliased
     `completion_status` is visible to the outer WHERE. Metadata cascade
     stays inner."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_tt_instances_dataset, build_tt_legs_dataset,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -842,7 +842,7 @@ _EXC_DATASETS = (
 def _exc_dataset_sql(builder_name: str, yaml_path: Path) -> str:
     """Z.C — pin cfg.db_table_prefix to the yaml stem so the rendered
     SQL references `<yaml_stem>_current_transactions`."""
-    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    import recon_gen.apps.l2_flow_tracing.datasets as ds_mod
     from dataclasses import replace
     inst = load_instance(yaml_path)
     cfg = replace(_CFG, db_table_prefix=yaml_path.stem)
@@ -873,16 +873,16 @@ def test_exc_dataset_id_uses_deployment_prefix(
     """Z.C — every exception dataset's ID is prefixed by
     ``cfg.deployment_name`` so multi-deploy collisions don't happen
     in the same QS account."""
-    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    import recon_gen.apps.l2_flow_tracing.datasets as ds_mod
     from dataclasses import replace
     cfg = replace(
         _CFG,
-        deployment_name="qsgen-sasq",
+        deployment_name="recon-sasq",
         db_table_prefix="sasquatch_pr",
     )
     builder = getattr(ds_mod, builder_name)
     aws_ds = builder(cfg, load_instance(SASQUATCH_PR_YAML))
-    assert aws_ds.DataSetId.startswith("qsgen-sasq-l2ft-exc-"), (
+    assert aws_ds.DataSetId.startswith("recon-sasq-l2ft-exc-"), (
         f"{builder_name} dataset ID lacks prefix: {aws_ds.DataSetId}"
     )
 
@@ -971,7 +971,7 @@ def test_exc_dataset_contract_columns_match_builder(
 ) -> None:
     """Every exception dataset's contract columns match its SQL
     projection — visual ds["col"] references resolve cleanly."""
-    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    import recon_gen.apps.l2_flow_tracing.datasets as ds_mod
     contract_name_map = {
         "l2ft-exc-chain-orphans-ds": "EXC_CHAIN_ORPHANS_CONTRACT",
         "l2ft-exc-unmatched-rail-name-ds":
@@ -1012,7 +1012,7 @@ def test_exceptions_sheet_visuals_read_unified_dataset() -> None:
     """Every visual on the L2 Exceptions sheet reads from the unified
     dataset — catches accidental wiring back to a sub-dataset that
     isn't in the deployed dataset list anymore."""
-    from quicksight_gen.common.tree import BarChart, KPI, Table
+    from recon_gen.common.tree import BarChart, KPI, Table
     app = build_l2_flow_tracing_app(_CFG)
     exc = _sheet_by_name(app, "L2 Exceptions")
     expected_ds = "l2ft-unified-exceptions-ds"
@@ -1044,7 +1044,7 @@ def _l2ft_text_box_by_id(sheet, text_box_id: str):
 
 def test_aa_c_4_l2ft_exceptions_sheet_carries_hygiene_panel() -> None:
     """AA.C.4: the L2 Hygiene Exceptions sheet has a bottom panel
-    sourced from ``src/quicksight_gen/docs/L2FT_Exceptions.md``. Unlike
+    sourced from ``src/recon_gen/docs/L2FT_Exceptions.md``. Unlike
     L1 (which lands one panel per invariant kind on its dedicated
     sheet), the L2FT side rolls every check kind onto the one unified
     sheet — so the panel is the bullet-roll-up shape, not a stack of
@@ -1083,7 +1083,7 @@ def test_unified_exceptions_dataset_unions_all_six_check_types() -> None:
     """The unified dataset's SQL UNIONs all 6 check_type literals so
     every L2 hygiene check feeds the same KPI / bar / table. Catches
     accidental drops of a check branch from the UNION."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_unified_l2_exceptions_dataset,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -1112,7 +1112,7 @@ def test_declared_metadata_keys_walks_union_across_rails() -> None:
     Rail's `metadata_keys`. Drives the cascade Key dropdown's
     StaticValues — single source of truth so a key declared on a
     rail surfaces in the cascade dropdown."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         declared_metadata_keys,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -1131,7 +1131,7 @@ def test_declared_metadata_keys_walks_union_across_rails() -> None:
 def test_postings_dataset_targets_prefixed_current_transactions() -> None:
     """Postings reads from `<prefix>_current_transactions` (Z.C —
     where prefix = cfg.db_table_prefix)."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset,
     )
     from dataclasses import replace
@@ -1147,7 +1147,7 @@ def test_postings_dataset_uses_cascade_substitution() -> None:
     branches with literal JSON paths (P.9f.b — Oracle JSON_VALUE
     rejects runtime-concatenated paths so we emit one branch per
     declared metadata key)."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset, META_KEY_ALL_SENTINEL,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -1171,7 +1171,7 @@ def test_postings_dataset_declares_cascade_and_pushdown_parameters() -> None:
     pre-AA.A.3 status / bundle had value-list defaults and rail had the
     sentinel-list default (X.2.t.2). AA.A.3 unified all three on the
     SINGLE shape per the drill-to-one default."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         L2FT_ALL_SENTINEL, build_postings_dataset, META_KEY_ALL_SENTINEL,
         META_VALUE_PLACEHOLDER_SENTINEL,
     )
@@ -1206,7 +1206,7 @@ def test_postings_dataset_pushes_rail_status_bundle_into_sql() -> None:
     substitution post-AA.A.3), not via analysis-level CategoryFilters.
     The projection wraps in a subquery so the CASE-aliased ``status`` /
     ``bundle_status`` are visible to the outer WHERE."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -1250,7 +1250,7 @@ def test_meta_values_dataset_is_long_form_with_metadata_key_column() -> None:
     declared key via UNION ALL — QS's CascadingControlConfiguration filters
     by metadata_key column-match (NOT by dataset-parameter substitution,
     which doesn't trigger a re-query at the QS widget level)."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_meta_values_dataset,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
@@ -1308,10 +1308,10 @@ def test_meta_value_param_maps_to_postings_only() -> None:
 def test_meta_key_dropdown_includes_sentinel_plus_declared_keys() -> None:
     """Key dropdown shows the `__ALL__` sentinel first (default state
     = no metadata filter) followed by every declared key."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         META_KEY_ALL_SENTINEL, declared_metadata_keys,
     )
-    from quicksight_gen.common.tree import StaticValues
+    from recon_gen.common.tree import StaticValues
     app = build_l2_flow_tracing_app(_CFG)
     rails = _sheet_by_name(app, "Rails")
     key_ctrl = next(c for c in rails.parameter_controls if c.title == "Metadata Key")
@@ -1346,11 +1346,11 @@ def test_unified_l2_exceptions_empty_metadata_branch_is_dialect_aware() -> None:
     insensitive so the SQL is functionally identical to the legacy
     uppercase ``NULL::TEXT``."""
     from dataclasses import replace
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         build_unified_l2_exceptions_dataset,
     )
-    from quicksight_gen.common.l2 import L2Instance
-    from quicksight_gen.common.sql import Dialect
+    from recon_gen.common.l2 import L2Instance
+    from recon_gen.common.sql import Dialect
 
     # Empty-rails instance — every CTE helper hits its fallback branch.
     # Z.C — L2Instance no longer carries an `instance` field.

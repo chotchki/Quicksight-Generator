@@ -35,12 +35,12 @@ from typing import Any
 from starlette.testclient import TestClient
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.html._studio_routes import make_studio_routes
-from quicksight_gen.common.html.server import ServedDashboard, make_app
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.l2.cache import L2InstanceCache
-from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import Sankey
+from recon_gen.common.html._studio_routes import make_studio_routes
+from recon_gen.common.html.server import ServedDashboard, make_app
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.l2.cache import L2InstanceCache
+from recon_gen.common.tree.structure import Analysis, App, Sheet
+from recon_gen.common.tree.visuals import Sankey
 
 
 _FIXTURES = Path(__file__).parent.parent / "l2"
@@ -137,14 +137,14 @@ def test_dashboards_module_does_not_import_studio() -> None:
     A regression here means "someone made Dashboards depend on Studio";
     catches it at code-time before the runtime severability degrades.
     """
-    from quicksight_gen.cli import dashboards as dashboards_module
+    from recon_gen.cli import dashboards as dashboards_module
     source = _read_module_source(dashboards_module)
     forbidden = (
         "_studio_routes",
         "make_studio_routes",
         "L2InstanceCache",
-        "from quicksight_gen.cli.studio",
-        "from quicksight_gen.common.l2.cache",
+        "from recon_gen.cli.studio",
+        "from recon_gen.common.l2.cache",
     )
     for token in forbidden:
         assert token not in source, (
@@ -161,7 +161,7 @@ def test_html_serve_studio_routes_is_optional() -> None:
     reference in the source is guarded by ``studio_routes_factory is
     not None``. Pins the severability seam in the shared helper.
     """
-    from quicksight_gen.cli import _html_serve as helper
+    from recon_gen.cli import _html_serve as helper
     source = _read_module_source(helper)
     # The cache module appears (the factory contract is typed against
     # it), but its only construction site is gated on the factory.

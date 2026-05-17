@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.topology import visible_entities_for
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.topology import visible_entities_for
 
 
 _FIXTURE = Path(__file__).resolve().parent.parent / "l2" / "spec_example.yaml"

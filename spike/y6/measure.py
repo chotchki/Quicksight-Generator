@@ -27,22 +27,22 @@ from pathlib import Path
 import psycopg
 
 # Project imports
-from quicksight_gen.common.config import Config
-from quicksight_gen.common.sql import Dialect
-from quicksight_gen.common.dataset_contract import get_sql, get_dataset_params
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.html._sql_executor import execute_visual_sql
+from recon_gen.common.config import Config
+from recon_gen.common.sql import Dialect
+from recon_gen.common.dataset_contract import get_sql, get_dataset_params
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.html._sql_executor import execute_visual_sql
 
 # Apps — importing each registers its datasets + SQL via build_*_app(cfg)
-from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
-from quicksight_gen.apps.executives.app import build_executives_app
-from quicksight_gen.apps.investigation.app import build_investigation_app
+from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from recon_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+from recon_gen.apps.executives.app import build_executives_app
+from recon_gen.apps.investigation.app import build_investigation_app
 
 
 L2_YAML = Path("tests/l2/sasquatch_pr.yaml")
 DB_URL = os.environ.get(
-    "QS_GEN_DEMO_DATABASE_URL",
+    "RECON_GEN_DEMO_DATABASE_URL",
     "postgresql://postgres:itGKQHRaSocmIwEReXyZ@"
     "database-2.cluster-cup0y2gmc2hu.us-east-1.rds.amazonaws.com:5432/postgres",
 )
@@ -83,10 +83,10 @@ def _build_all_apps() -> list[tuple[str, object]]:
     l2 = load_instance(L2_YAML)
 
     # Inv + Exec need explicit dataset registration (CLI does this).
-    from quicksight_gen.apps.investigation.datasets import (
+    from recon_gen.apps.investigation.datasets import (
         build_all_datasets as _inv_ds,
     )
-    from quicksight_gen.apps.executives.datasets import (
+    from recon_gen.apps.executives.datasets import (
         build_all_datasets as _exec_ds,
     )
     _inv_ds(cfg, l2)

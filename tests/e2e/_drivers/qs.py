@@ -14,7 +14,7 @@ renderer-agnostic.
 embed URL signed for the dashboard's region (the region match matters —
 see ``generate_dashboard_embed_url``), and loads it. The ``.embed()``
 factory owns the WebKit page lifecycle; it needs a live QuickSight
-account and ``QS_E2E_USER_ARN`` (the test runner derives it from
+account and ``RECON_E2E_USER_ARN`` (the test runner derives it from
 ``cfg.auth.aws_profile``; export it yourself for a direct ``pytest`` run).
 
 Implemented: all the navigation + read verbs (incl. ``table_rows`` via
@@ -42,7 +42,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from quicksight_gen.common.browser.helpers import (
+from recon_gen.common.browser.helpers import (
     bump_table_page_size_to_10000,
     visual_is_empty,
     click_context_menu_item,

@@ -22,10 +22,10 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.executives.app import build_executives_app
-from quicksight_gen.apps.executives.datasets import build_all_datasets
-from quicksight_gen.common.db import AsyncConnectionPool
-from quicksight_gen.common.html._tree_fetcher import make_tree_db_fetcher
+from recon_gen.apps.executives.app import build_executives_app
+from recon_gen.apps.executives.datasets import build_all_datasets
+from recon_gen.common.db import AsyncConnectionPool
+from recon_gen.common.html._tree_fetcher import make_tree_db_fetcher
 from tests._test_helpers import make_test_config
 
 

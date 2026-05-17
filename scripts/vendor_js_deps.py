@@ -3,10 +3,10 @@
 
 App 2 ships a handful of pre-built minified JS/CSS dist files
 (htmx / d3 / d3-sankey / tom-select / flatpickr / nouislider) committed
-under ``src/quicksight_gen/common/html/assets/vendor/`` so a
-``pip install quicksight-gen[serve]`` works offline (no CDN at runtime).
+under ``src/recon_gen/common/html/assets/vendor/`` so a
+``pip install recon-gen[serve]`` works offline (no CDN at runtime).
 This script is the maintainer chore that keeps those committed files in
-sync with ``vendor.lock`` — it is NOT a ``quicksight-gen`` CLI verb;
+sync with ``vendor.lock`` — it is NOT a ``recon-gen`` CLI verb;
 end users never run it.
 
 Usage::
@@ -37,7 +37,7 @@ from pathlib import Path
 
 _VENDOR_DIR = (
     Path(__file__).resolve().parent.parent
-    / "src" / "quicksight_gen" / "common" / "html" / "assets" / "vendor"
+    / "src" / "recon_gen" / "common" / "html" / "assets" / "vendor"
 )
 _LOCK_PATH = _VENDOR_DIR / "vendor.lock"
 

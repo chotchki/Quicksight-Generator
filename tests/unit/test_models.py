@@ -2,7 +2,7 @@
 
 import json
 
-from quicksight_gen.common.models import (
+from recon_gen.common.models import (
     Analysis,
     AnalysisDefinition,
     BarChartAggregatedFieldWells,
@@ -52,9 +52,9 @@ from quicksight_gen.common.models import (
     Visual,
     VisualTitleLabelOptions,
 )
-from quicksight_gen.common.config import Config
+from recon_gen.common.config import Config
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.datasource import build_datasource
+from recon_gen.common.datasource import build_datasource
 
 
 class TestStripNones:
@@ -78,7 +78,7 @@ class TestStripNones:
         visual = Visual(KPIVisual=kpi)
         out = visual.to_aws_json() if hasattr(visual, "to_aws_json") else {}
         # Use the internal helper directly
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         out = _strip_nones(asdict(visual))
         assert "Subtitle" not in out["KPIVisual"]
         assert "BarChartVisual" not in out
@@ -168,7 +168,7 @@ class TestAnalysisSerialization:
 
 class TestVisualSerialization:
     def test_kpi_visual(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         kpi = Visual(
             KPIVisual=KPIVisual(
                 VisualId="kpi-1",
@@ -199,7 +199,7 @@ class TestVisualSerialization:
         assert vals[0]["NumericalMeasureField"]["AggregationFunction"]["SimpleNumericalAggregation"] == "SUM"
 
     def test_bar_chart_visual(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         bar = Visual(
             BarChartVisual=BarChartVisual(
                 VisualId="bar-1",
@@ -230,7 +230,7 @@ class TestVisualSerialization:
         assert cat["CategoricalDimensionField"]["Column"]["ColumnName"] == "merchant"
 
     def test_pie_chart_visual(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         pie = Visual(
             PieChartVisual=PieChartVisual(
                 VisualId="pie-1",
@@ -257,7 +257,7 @@ class TestVisualSerialization:
         assert "PieChartVisual" in out
 
     def test_table_visual(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         tbl = Visual(
             TableVisual=TableVisual(
                 VisualId="tbl-1",
@@ -283,7 +283,7 @@ class TestVisualSerialization:
         assert vals[0]["FieldId"] == "f1"
 
     def test_visual_union_only_one_set(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         v = Visual(KPIVisual=KPIVisual(VisualId="kpi-1"))
         out = _strip_nones(asdict(v))
         assert len(out) == 1
@@ -292,7 +292,7 @@ class TestVisualSerialization:
 
 class TestFilterSerialization:
     def test_category_filter(self):
-        from quicksight_gen.common.models import _strip_nones, asdict
+        from recon_gen.common.models import _strip_nones, asdict
         fg = FilterGroup(
             FilterGroupId="fg-1",
             CrossDataset="SINGLE_DATASET",
@@ -339,10 +339,10 @@ class TestTagSerialization:
             Name="T",
             BaseThemeId="CLASSIC",
             Configuration=ThemeConfiguration(),
-            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+            Tags=[Tag(Key="ManagedBy", Value="recon-gen")],
         )
         out = theme.to_aws_json()
-        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "recon-gen"}]
 
     def test_tag_in_dataset(self):
         ds = DataSet(
@@ -350,11 +350,11 @@ class TestTagSerialization:
             DataSetId="ds-1",
             Name="Test",
             PhysicalTableMap={},
-            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen"), Tag(Key="Env", Value="dev")],
+            Tags=[Tag(Key="ManagedBy", Value="recon-gen"), Tag(Key="Env", Value="dev")],
         )
         out = ds.to_aws_json()
         assert len(out["Tags"]) == 2
-        assert out["Tags"][0] == {"Key": "ManagedBy", "Value": "quicksight-gen"}
+        assert out["Tags"][0] == {"Key": "ManagedBy", "Value": "recon-gen"}
         assert out["Tags"][1] == {"Key": "Env", "Value": "dev"}
 
     def test_tag_in_analysis(self):
@@ -367,10 +367,10 @@ class TestTagSerialization:
                     DataSetIdentifierDeclaration(Identifier="ds", DataSetArn="arn:x")
                 ],
             ),
-            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+            Tags=[Tag(Key="ManagedBy", Value="recon-gen")],
         )
         out = analysis.to_aws_json()
-        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "recon-gen"}]
 
     def test_no_tags_stripped(self):
         ds = DataSet(
@@ -392,8 +392,8 @@ class TestConfigTags:
         cfg = make_test_config()
         tags_by_key = {t.Key: t.Value for t in cfg.tags()}
         assert tags_by_key == {
-            "ManagedBy": "quicksight-gen",
-            "Deployment": "qsgen-test",
+            "ManagedBy": "recon-gen",
+            "Deployment": "recon-test",
         }
 
     def test_extra_tags_merged(self):
@@ -427,13 +427,13 @@ class TestConfigPrefixed:
     segment (replaces v8.x's <resource_prefix>-<l2_instance_prefix>-...)."""
 
     def test_prefixed_uses_deployment_name(self):
-        cfg = make_test_config(deployment_name="qsgen-prod")
-        assert cfg.prefixed("l1-dashboard") == "qsgen-prod-l1-dashboard"
+        cfg = make_test_config(deployment_name="recon-prod")
+        assert cfg.prefixed("l1-dashboard") == "recon-prod-l1-dashboard"
 
     def test_prefixed_lets_two_deployments_coexist(self):
         """The headline use case: same dashboard kind, different deployment."""
-        cfg_a = make_test_config(deployment_name="qsgen-sasquatch")
-        cfg_b = make_test_config(deployment_name="qsgen-wonkawash")
+        cfg_a = make_test_config(deployment_name="recon-sasquatch")
+        cfg_b = make_test_config(deployment_name="recon-wonkawash")
         assert cfg_a.prefixed("l1-dashboard") != cfg_b.prefixed("l1-dashboard")
 
 
@@ -509,10 +509,10 @@ class TestDataSourceSerialization:
                     Host="h", Port=5432, Database="db",
                 ),
             ),
-            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+            Tags=[Tag(Key="ManagedBy", Value="recon-gen")],
         )
         out = ds.to_aws_json()
-        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "recon-gen"}]
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +578,7 @@ class TestBuildDatasourceOracle:
     ``oracle://user:pass@host:port/SERVICE``)."""
 
     def _oracle_cfg(self, url: str) -> Config:
-        from quicksight_gen.common.sql import Dialect
+        from recon_gen.common.sql import Dialect
         return make_test_config(
             demo_database_url=url,
             dialect=Dialect.ORACLE,
@@ -625,7 +625,7 @@ class TestConfigDatasourceArnDerivation:
             aws_account_id="111122223333",
             aws_region="us-west-2",
             # Z.C — required cfg fields.
-            deployment_name="qsgen-derived",
+            deployment_name="recon-derived",
             db_table_prefix="derived",
             demo_database_url="postgresql://u:p@h:5432/db",
         )
@@ -638,7 +638,7 @@ class TestConfigDatasourceArnDerivation:
         cfg = Config(
             aws_account_id="111122223333",
             aws_region="us-west-2",
-            deployment_name="qsgen-explicit",
+            deployment_name="recon-explicit",
             db_table_prefix="explicit",
             datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/custom",
             demo_database_url="postgresql://u:p@h:5432/db",
@@ -651,6 +651,6 @@ class TestConfigDatasourceArnDerivation:
             Config(
                 aws_account_id="123",
                 aws_region="us-east-1",
-                deployment_name="qsgen-fail-test",
+                deployment_name="recon-fail-test",
                 db_table_prefix="fail_test",
             )

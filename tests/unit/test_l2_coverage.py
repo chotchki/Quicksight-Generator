@@ -25,20 +25,20 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.db import AsyncConnectionPool, make_connection_pool
-from quicksight_gen.common.l2.coverage import (
+from recon_gen.common.db import AsyncConnectionPool, make_connection_pool
+from recon_gen.common.l2.coverage import (
     CoverageEntry,
     chain_edge_id,
     coverage_for,
 )
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import Identifier, L2Instance
-from quicksight_gen.common.l2.topology import (
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import Identifier, L2Instance
+from recon_gen.common.l2.topology import (
     _rail_id,
     _role_id,
     _template_id,
 )
-from quicksight_gen.common.sql.dialect import Dialect
+from recon_gen.common.sql.dialect import Dialect
 from tests._test_helpers import make_test_config
 
 

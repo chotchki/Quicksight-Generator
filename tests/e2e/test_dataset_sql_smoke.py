@@ -29,28 +29,28 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.apps.executives.datasets import (
+from recon_gen.apps.executives.datasets import (
     build_all_datasets as build_exec_datasets,
 )
-from quicksight_gen.apps.investigation.datasets import (
+from recon_gen.apps.investigation.datasets import (
     build_all_datasets as build_inv_datasets,
 )
-from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-from quicksight_gen.apps.l1_dashboard.datasets import (
+from recon_gen.apps.l1_dashboard._l2 import default_l2_instance
+from recon_gen.apps.l1_dashboard.datasets import (
     build_all_l1_dashboard_datasets,
 )
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l2_flow_tracing.datasets import (
     build_all_l2_flow_tracing_datasets,
 )
-from quicksight_gen.common.config import Config, load_config
-from quicksight_gen.common.db import connect_demo_db
-from quicksight_gen.common.env_keys import (
+from recon_gen.common.config import Config, load_config
+from recon_gen.common.db import connect_demo_db
+from recon_gen.common.env_keys import (
     EnvVarInvalid,
-    QS_GEN_CONFIG,
-    QS_GEN_TEST_L2_INSTANCE,
+    RECON_GEN_CONFIG,
+    RECON_GEN_TEST_L2_INSTANCE,
 )
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.models import DataSet, DatasetParameter
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.models import DataSet, DatasetParameter
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +178,10 @@ def _build_all_datasets(cfg: Config, l2: L2Instance) -> list[DataSet]:
 
 def _load_cfg() -> Config:
     """Load cfg the same way the rest of the e2e suite does — explicit
-    QS_GEN_CONFIG override, then per-dialect candidates."""
+    RECON_GEN_CONFIG override, then per-dialect candidates."""
     # Soft-fall on validator (matches sweep / fixture pattern).
     try:
-        explicit = QS_GEN_CONFIG.get_or_none()
+        explicit = RECON_GEN_CONFIG.get_or_none()
     except EnvVarInvalid:
         explicit = None
     if explicit is not None:
@@ -199,9 +199,9 @@ def _load_cfg() -> Config:
 
 
 def _load_l2() -> L2Instance:
-    """Honor the same QS_GEN_TEST_L2_INSTANCE override the rest of the
+    """Honor the same RECON_GEN_TEST_L2_INSTANCE override the rest of the
     suite uses; default to the persona-neutral spec_example fixture."""
-    override = QS_GEN_TEST_L2_INSTANCE.get_or_none()
+    override = RECON_GEN_TEST_L2_INSTANCE.get_or_none()
     if override is not None:
         return load_instance(override)
     return default_l2_instance()

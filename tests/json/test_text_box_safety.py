@@ -60,12 +60,12 @@ def _build_all_apps():
     failures in others (each shows up as its own pytest collection
     error rather than a module-level ImportError).
     """
-    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
-    from quicksight_gen.apps.l2_flow_tracing.app import (
+    from recon_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from recon_gen.apps.l2_flow_tracing.app import (
         build_l2_flow_tracing_app,
     )
-    from quicksight_gen.apps.investigation.app import build_investigation_app
-    from quicksight_gen.apps.executives.app import build_executives_app
+    from recon_gen.apps.investigation.app import build_investigation_app
+    from recon_gen.apps.executives.app import build_executives_app
 
     builders = [
         ("l1_dashboard", build_l1_dashboard_app),

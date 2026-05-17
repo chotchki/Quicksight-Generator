@@ -35,14 +35,14 @@ from collections import Counter
 
 import pytest
 
-from quicksight_gen.apps.l2_flow_tracing.app import (
+from recon_gen.apps.l2_flow_tracing.app import (
     build_l2_flow_tracing_app,
 )
-from quicksight_gen.apps.l2_flow_tracing.datasets import (
+from recon_gen.apps.l2_flow_tracing.datasets import (
     declared_metadata_keys,
 )
-from quicksight_gen.common.l2 import L2Instance, load_instance
-from quicksight_gen.common.tree import KPI, Sankey, Table
+from recon_gen.common.l2 import L2Instance, load_instance
+from recon_gen.common.tree import KPI, Sankey, Table
 
 # Reuse the matrix definition from the seed-contract test so every
 # substep that adds an L2 instance to ``L2_INSTANCES`` automatically
@@ -193,10 +193,10 @@ def test_metadata_key_dropdown_options_scale_with_declared_keys(
     """The Key dropdown's StaticValues includes the sentinel +
     every declared metadata key — that scales per-instance. An
     instance with N keys produces N+1 dropdown options."""
-    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    from recon_gen.apps.l2_flow_tracing.datasets import (
         META_KEY_ALL_SENTINEL,
     )
-    from quicksight_gen.common.tree import StaticValues
+    from recon_gen.common.tree import StaticValues
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
     n_keys = len(declared_metadata_keys(l2_instance))
     rails = next(s for s in app.analysis.sheets if s.name == "Rails")
@@ -222,13 +222,13 @@ def test_deployments_produce_different_dataset_id_namespaces() -> None:
     pointing at the same L2 yaml MUST still get isolated namespaces by
     setting different deployment_names in their cfg.yamls."""
     from pathlib import Path
-    from quicksight_gen.common.l2 import load_instance
+    from recon_gen.common.l2 import load_instance
 
     sasq = load_instance(
         Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
     )
-    cfg_a = make_test_config(deployment_name="qsgen-deploy-a")
-    cfg_b = make_test_config(deployment_name="qsgen-deploy-b")
+    cfg_a = make_test_config(deployment_name="recon-deploy-a")
+    cfg_b = make_test_config(deployment_name="recon-deploy-b")
     a_app = build_l2_flow_tracing_app(cfg_a, l2_instance=sasq)
     b_app = build_l2_flow_tracing_app(cfg_b, l2_instance=sasq)
 

@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.serializer import serialize_l2
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.serializer import serialize_l2
 
 
 _FIXTURES_DIR = Path(__file__).resolve().parent.parent / "l2"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.sql import (
+from recon_gen.common.sql import (
     Dialect,
     analyze_table,
     boolean_type,
@@ -488,7 +488,7 @@ class TestSqliteDdlIdempotency:
 class TestSqliteMatviews:
     def test_matview_options_empty(self):
         # CREATE TABLE … AS — no per-keyword suffix.
-        from quicksight_gen.common.sql import matview_create_keyword
+        from recon_gen.common.sql import matview_create_keyword
         assert matview_options(SQLITE) == ""
         assert matview_create_keyword(SQLITE) == "CREATE TABLE"
 
@@ -518,7 +518,7 @@ class TestSqliteRecursiveCte:
 class TestSqliteDualFrom:
     def test_no_from_dual_clause(self):
         # SQLite accepts the bare ``SELECT 'x'`` form (like Postgres).
-        from quicksight_gen.common.sql import dual_from
+        from recon_gen.common.sql import dual_from
         assert dual_from(SQLITE) == ""
 
 

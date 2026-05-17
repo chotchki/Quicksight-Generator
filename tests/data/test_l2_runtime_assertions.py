@@ -20,7 +20,7 @@ the expected shape:
   - TransferTemplates whose legs don't actually net to expected_net
   - LimitSchedules absent from any rail
 
-Both tests gate on a live Postgres connection via ``QS_GEN_DEMO_DATABASE_URL``
+Both tests gate on a live Postgres connection via ``RECON_GEN_DEMO_DATABASE_URL``
 or fall back to ``run/config.postgres.yaml``'s ``demo_database_url``.
 Skip cleanly when the DB isn't reachable (CI environments without it,
 fresh checkouts).
@@ -29,7 +29,7 @@ These run as ordinary pytest tests — no e2e harness needed. The data
 comes from a previous ``demo apply`` run; nothing is mutated. Run after
 applying the seed:
 
-    quicksight-gen demo apply --all -c run/config.postgres.yaml \\
+    recon-gen demo apply --all -c run/config.postgres.yaml \\
         --l2-instance tests/l2/sasquatch_pr.yaml -o run/out
     pytest tests/test_l2_runtime_assertions.py -v
 """
@@ -41,10 +41,10 @@ from typing import Any
 
 import pytest
 
-from quicksight_gen.common.env_keys import QS_GEN_DEMO_DATABASE_URL
-from quicksight_gen.common.l2 import L2Instance
-from quicksight_gen.common.l2.loader import load_instance
-from quicksight_gen.common.l2.primitives import TwoLegRail
+from recon_gen.common.env_keys import RECON_GEN_DEMO_DATABASE_URL
+from recon_gen.common.l2 import L2Instance
+from recon_gen.common.l2.loader import load_instance
+from recon_gen.common.l2.primitives import TwoLegRail
 
 
 _SASQUATCH_PR_YAML = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
@@ -55,7 +55,7 @@ def _demo_database_url() -> str | None:
 
     Returns None if no URL is reachable; the test will skip.
     """
-    env_url = QS_GEN_DEMO_DATABASE_URL.get_or_none()
+    env_url = RECON_GEN_DEMO_DATABASE_URL.get_or_none()
     if env_url:
         return env_url
     cfg_path = Path(__file__).parent.parent / "run" / "config.postgres.yaml"
@@ -77,7 +77,7 @@ def demo_db_conn() -> Any:
     url = _demo_database_url()
     if not url:
         pytest.skip(
-            "Demo DB URL not configured — set QS_GEN_DEMO_DATABASE_URL or "
+            "Demo DB URL not configured — set RECON_GEN_DEMO_DATABASE_URL or "
             "populate run/config.postgres.yaml::demo_database_url to run "
             "live runtime assertions."
         )

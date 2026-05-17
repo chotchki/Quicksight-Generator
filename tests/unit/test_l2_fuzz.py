@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.common.l2 import load_instance
+from recon_gen.common.l2 import load_instance
 
 from tests.l2.fuzz import random_l2_yaml
 
@@ -101,7 +101,7 @@ def test_fuzzer_exercises_every_primitive_kind_across_seeds(
         if inst.limit_schedules:
             saw["limit_schedules"] = True
         for r in inst.rails:
-            from quicksight_gen.common.l2 import SingleLegRail, TwoLegRail
+            from recon_gen.common.l2 import SingleLegRail, TwoLegRail
             if isinstance(r, TwoLegRail):
                 saw["two_leg_rail"] = True
             if isinstance(r, SingleLegRail):

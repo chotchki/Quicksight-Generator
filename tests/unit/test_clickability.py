@@ -12,7 +12,7 @@ drill-source table cell across all four apps.
 
 from __future__ import annotations
 
-from quicksight_gen.common.clickability import (
+from recon_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )
@@ -50,7 +50,7 @@ class TestLinkTextFormat:
         assert expr.endswith('"')
         # Sentinel string itself is opaque from the caller's POV but
         # must not be a value any real row could carry.
-        assert "qsgen_never_matches" in expr
+        assert "recon_never_matches" in expr
 
 
 class TestMenuLinkTextFormat:

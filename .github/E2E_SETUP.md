@@ -60,7 +60,7 @@ IAM console → Roles → Create role → Web identity:
   one you just registered)
 - Audience: `sts.amazonaws.com`
 - GitHub organization: `chotchki`
-- GitHub repository: `Quicksight-Generator`
+- GitHub repository: `recon-gen`
 - GitHub branch: `main`
 
 Then on the next screen, REPLACE the auto-generated trust policy
@@ -101,10 +101,19 @@ Replace `ACCOUNT_ID` with your AWS account number. Do NOT add a
 prefixes — that would let any branch in the repo assume the role,
 defeating the trigger-model lockdown.
 
+> **AC.E.1 follow-up (post-repo-rename):** when the GitHub repo
+> renames from `chotchki/Quicksight-Generator` → `chotchki/recon-gen`
+> (Phase AC), update both `sub` claim entries above to match the
+> new repo path. **GitHub auto-redirects HTTP traffic, but OIDC
+> `sub` claims do NOT redirect — leaving this at the old value
+> after the rename breaks CI auth.** Flip via `aws iam
+> update-assume-role-policy --role-name <role> --policy-document
+> file://trust.json`.
+
 ### Step 3: Attach the permissions policy
 
 Create a new inline policy on the role with this JSON. Scope is
-exactly what `quicksight-gen json apply --execute` + `json clean
+exactly what `recon-gen json apply --execute` + `json clean
 --execute` + `audit apply --execute` + `audit verify` need, plus
 the embed-URL generation for browser tests. Anything beyond this
 is a leak.

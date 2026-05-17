@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.ids import SheetId, VisualId
-from quicksight_gen.common.tree import (
+from recon_gen.common.ids import SheetId, VisualId
+from recon_gen.common.tree import (
     KPI,
     Analysis,
     App,
