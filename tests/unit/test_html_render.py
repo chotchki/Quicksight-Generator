@@ -244,3 +244,66 @@ def test_emit_html_handles_visual_without_subtitle() -> None:
     )
     assert "Bare KPI" in out
     assert 'class="subtitle"' not in out
+
+
+# AA.B.5.followon.diag — emit_visual_data_fragment carries url-param echo
+
+
+def test_emit_visual_data_fragment_stamps_url_params_as_data_attr() -> None:
+    """When ``url_params`` is supplied, the rendered ``<script>`` tag
+    carries a ``data-bound-params`` attribute with the param_*, filter_*,
+    and date_from/date_to keys. Failure-capture ``dom.html`` then
+    self-describes what each visual was queried with — telling
+    "picked X, server returned 0 rows because X matches nothing"
+    apart from "X never reached the server" without re-deploying.
+    """
+    from quicksight_gen.common.html.render import emit_visual_data_fragment
+
+    out = emit_visual_data_fragment(
+        "v-test",
+        {"rows": []},
+        url_params={
+            "param_pL1DsAccount": ["Customer 11 (cust-011)"],
+            "param_pL1DsRole": ["CustomerSubledger"],
+            "date_from": [""],
+            "date_to": [""],
+            "page_size": ["50"],  # NOT param_/filter_/date — should be excluded
+        },
+    )
+    assert 'data-bound-params="' in out
+    assert "Customer 11 (cust-011)" in out
+    assert "CustomerSubledger" in out
+    assert "page_size" not in out  # excluded
+    # Attribute value uses HTML-escaped JSON (quote-safe).
+    assert '&quot;param_pL1DsAccount&quot;' in out
+
+
+def test_emit_visual_data_fragment_omits_attr_when_no_params_supplied() -> None:
+    """``url_params=None`` → no ``data-bound-params`` attr (preserves
+    the pre-AA.B.5.followon.diag fragment shape for callers that
+    don't care about the diagnostic)."""
+    from quicksight_gen.common.html.render import emit_visual_data_fragment
+
+    out = emit_visual_data_fragment("v-test", {"rows": []})
+    assert "data-bound-params" not in out
+    assert "chart-data" in out  # still emits the JSON payload script
+
+
+def test_emit_visual_data_fragment_collapses_single_value_lists() -> None:
+    """Single-element lists (the common single-valued param case) get
+    collapsed to a bare string in the attr JSON; multi-element lists
+    (multi-valued ``IN`` expansion) stay as arrays."""
+    from quicksight_gen.common.html.render import emit_visual_data_fragment
+
+    out = emit_visual_data_fragment(
+        "v-test",
+        {},
+        url_params={
+            "param_pSingle": ["only"],
+            "param_pMulti": ["a", "b", "c"],
+        },
+    )
+    # Single → bare string "only"
+    assert '&quot;param_pSingle&quot;: &quot;only&quot;' in out
+    # Multi → array
+    assert '&quot;param_pMulti&quot;: [&quot;a&quot;' in out

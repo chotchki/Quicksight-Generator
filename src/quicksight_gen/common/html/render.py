@@ -48,7 +48,7 @@ from __future__ import annotations
 import datetime as _dt
 import html
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -1106,7 +1106,12 @@ def emit_html(
     )
 
 
-def emit_visual_data_fragment(visual_id: str, data: Any) -> str:
+def emit_visual_data_fragment(
+    visual_id: str,
+    data: Any,
+    *,
+    url_params: Mapping[str, list[str]] | None = None,
+) -> str:
     """Server-side fragment HTMX swaps into ``#visual-data-<visual_id>``.
 
     Carries the d3-shaped chart data as a ``<script
@@ -1125,6 +1130,19 @@ def emit_visual_data_fragment(visual_id: str, data: Any) -> str:
     but kept in the signature so future callers can attach it as
     a ``data-`` attribute on the script tag if needed.
 
+    ``url_params`` (AA.B.5.followon.diag) — the URL query params
+    that drove this fetch. When supplied, the rendered ``param_*``
+    and ``filter_*`` / date entries (everything that influences the
+    SQL bind) get stamped as ``data-bound-params='<json>'`` on the
+    script tag. That makes failure-capture ``dom.html`` self-
+    describing: instead of inferring "did the right param reach the
+    server?" from the network log (which already showed 200s with
+    empty rows looking identical to no-request-fired), the test
+    artifact carries the actual params each visual was queried with.
+    The same flow that returns 0 rows for "user picked something
+    that matches nothing" can be told apart from "the picked value
+    never arrived" by reading one attribute on the script tag.
+
     JSON serialization uses ``json.dumps`` — caller is responsible
     for shaping the payload (d3-sankey wants
     ``{"nodes": [...], "links": [...]}``; a future TimeSeries kind
@@ -1132,8 +1150,25 @@ def emit_visual_data_fragment(visual_id: str, data: Any) -> str:
     """
     del visual_id  # reserved for future debug/diagnostic use
     payload = json.dumps(data, default=_json_default)  # typing-smell: ignore[json-indent]: embedded HTML script payload — compact form keeps DOM small + matches d3 hydration expectations
+    bound_attr = ""
+    if url_params is not None:
+        relevant = {
+            k: (vs if len(vs) > 1 else vs[0]) if vs else ""
+            for k, vs in url_params.items()
+            if (
+                k.startswith("param_") or k.startswith("filter_")
+                or k in ("date_from", "date_to")
+            )
+        }
+        if relevant:
+            bound_json = html.escape(
+                json.dumps(relevant, sort_keys=True),  # typing-smell: ignore[json-indent]: compact embedded attr value — must fit on one line
+                quote=True,
+            )
+            bound_attr = f' data-bound-params="{bound_json}"'
     return (
-        f'<script type="application/json" class="chart-data">{payload}</script>'
+        f'<script type="application/json" class="chart-data"'
+        f'{bound_attr}>{payload}</script>'
     )
 
 
