@@ -617,6 +617,9 @@ def _populate_rails_sheet(
             time_granularity="DAY",
             minimum={"Parameter": "pL2ftDateStart"},
             maximum={"Parameter": "pL2ftDateEnd"},
+            # AA.A.daterange — inclusive-both, see L1 _scope_one.
+            include_minimum=True,
+            include_maximum=True,
         )],
     ))
     fg_date.scope_sheet(sheet)
@@ -799,6 +802,9 @@ def _populate_chains_sheet(
             time_granularity="DAY",
             minimum={"Parameter": "pL2ftChainsDateStart"},
             maximum={"Parameter": "pL2ftChainsDateEnd"},
+            # AA.A.daterange — inclusive-both, see L1 _scope_one.
+            include_minimum=True,
+            include_maximum=True,
         )],
     ))
     fg_date.scope_sheet(sheet)
@@ -953,6 +959,9 @@ def _populate_transfer_templates_sheet(
             time_granularity="DAY",
             minimum={"Parameter": "pL2ftTtDateStart"},
             maximum={"Parameter": "pL2ftTtDateEnd"},
+            # AA.A.daterange — inclusive-both, see L1 _scope_one.
+            include_minimum=True,
+            include_maximum=True,
         )],
     ))
     fg_date.scope_sheet(sheet)

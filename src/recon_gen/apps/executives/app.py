@@ -636,6 +636,9 @@ def _wire_date_range_filter(
             time_granularity="DAY",
             minimum=min_bound,
             maximum=max_bound,
+            # AA.A.daterange — inclusive-both, see L1 _scope_one.
+            include_minimum=True,
+            include_maximum=True,
         )],
     ))
     acct_fg.scope_sheet(account_coverage_sheet)
@@ -656,6 +659,9 @@ def _wire_date_range_filter(
             time_granularity="DAY",
             minimum=min_bound,
             maximum=max_bound,
+            # AA.A.daterange — inclusive-both, see L1 _scope_one.
+            include_minimum=True,
+            include_maximum=True,
         )],
     ))
     acct_active_fg.scope_sheet(account_coverage_sheet)
@@ -679,6 +685,9 @@ def _wire_date_range_filter(
                 time_granularity="DAY",
                 minimum=min_bound,
                 maximum=max_bound,
+                # AA.A.daterange — inclusive-both, see L1 _scope_one.
+                include_minimum=True,
+                include_maximum=True,
             )],
         ))
         fg.scope_sheet(sheet)
