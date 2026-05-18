@@ -540,10 +540,33 @@ before the AA.H.8 fix landed; the DOM-dump capture surfaced both
 the wrong popover-id assumption *and* the lazy-render quirk in one
 artifact.)
 
+**AA.A.993 (2026-05-18) — a hybrid variant.** The L1 Account /
+Transfer / etc. dropdowns wired by AA.E.2 (`LinkedValues.from_column(..)`)
+ship a *third* shape: the **simple-variant trigger**
+`sheet_control_value` (which `_open_control_dropdown`'s
+count-the-trigger dispatch picks), but the popover that opens is the
+search-enabled MUI Autocomplete. The Autocomplete's search input
+landed under a previously-unseen automation-id
+`[data-automation-id="dropdown-search_search_input"]` (a
+`MuiFormControl` wrapper, NOT the legacy
+`sheet_control_search_results_dropdown-menu` context). The legacy
+selector silently misses on this shape — search-fill is skipped,
+MUI's virtualized listbox shows the first ~12 alphabetical options
+unfiltered, and click times out for any value past position ~12.
+Symptom: Overdraft anchor `North Pool (north-pool)` at dropdown
+position 26/27 → 30 s `Locator.click` timeout. Both
+`_open_control_dropdown` (for the ArrowDown lazy-mount nudge) and
+`set_dropdown_value` (for the search-fill narrow) now probe both
+the legacy and modern selectors; first hit wins.
+
 **Suggested fix.** Document the cardinality threshold (or expose a
 stable variant-agnostic automation-id like
 `sheet_control_trigger`), so dashboard authors don't need to write
-DOM dispatchers per option-count tier.
+DOM dispatchers per option-count tier. AND publish a stable id for
+the search input that's variant-agnostic — the current pair
+(`sheet_control_search_results_dropdown-menu input` vs
+`dropdown-search_search_input input`) shifts per dropdown shape with
+no visible-state hint.
 
 ---
 

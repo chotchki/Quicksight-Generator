@@ -1957,17 +1957,30 @@ def _open_control_dropdown(page: Page, control_title: str, timeout_ms: int) -> N
     # mounts within 500 ms, this is the simple variant and ArrowDown
     # is unnecessary.
     from playwright.sync_api import TimeoutError as _PWTimeout
-    search_input_selector = (
-        '[data-automation-id="sheet_control_search_results_dropdown-menu"] input'
+    # AA.A.993, 2026-05-18 — modern MUI Autocomplete popovers mount the
+    # search input at ``[data-automation-id="dropdown-search_search_input"] input``
+    # (a MuiFormControl wrapper inside the anonymous select-NN popover),
+    # not the legacy ``sheet_control_search_results_dropdown-menu``
+    # context. Probe both — first hit wins the focus+ArrowDown nudge
+    # that forces MUI's lazy-mounted listbox to render. Critical for
+    # high-cardinality dropdowns like Transactions' 8k+ transfer_id
+    # picker: without the nudge the listbox never renders any options
+    # and the subsequent ``set_dropdown_value`` search-fill has nothing
+    # to narrow.
+    search_input_selectors = (
+        '[data-automation-id="sheet_control_search_results_dropdown-menu"] input',
+        '[data-automation-id="dropdown-search_search_input"] input',
     )
-    try:
-        page.wait_for_selector(
-            search_input_selector, timeout=1_000, state="visible",
-        )
-        page.locator(search_input_selector).first.click(timeout=timeout_ms)
-        page.keyboard.press("ArrowDown")
-    except _PWTimeout:
-        pass  # Simple variant — no search input to focus.
+    for search_input_selector in search_input_selectors:
+        try:
+            page.wait_for_selector(
+                search_input_selector, timeout=1_000, state="visible",
+            )
+            page.locator(search_input_selector).first.click(timeout=timeout_ms)
+            page.keyboard.press("ArrowDown")
+            break
+        except _PWTimeout:
+            continue  # Try the next selector; fall through if neither matches.
     # Wait for at least one ``[role="option"]`` under either popover
     # shape OR loose in a ``[role="listbox"]`` (some controls put
     # options directly under the popover without listbox role). The
@@ -2017,20 +2030,40 @@ def set_dropdown_value(
       without renderer-specific code in the test.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
-    popover_search = (
+    # MUI Autocomplete search input: AA.A.993, 2026-05-18 — QS now renders
+    # ``sheet_control_value``-triggered dropdowns with a MUI Autocomplete
+    # whose search input lives at
+    # ``[data-automation-id="dropdown-search_search_input"] input`` (a
+    # MuiFormControl wrapper inside the anonymous Material-UI popover —
+    # ``id="select-NN"``). The legacy ``sheet_control_search_results_dropdown-menu``
+    # context is no longer present for these dropdowns; matching only on
+    # that selector silently skipped the search-fill dance and left
+    # MUI's virtualized listbox showing its first ~12 alphabetical
+    # options. For dropdowns deep into the alphabet (e.g. Overdraft's
+    # "North Pool (north-pool)" at position 26/27) the click then timed
+    # out — the option was past the rendered window. Probe both
+    # selectors; fill whichever input is mounted. ``count()`` is DOM-only
+    # so the absence path stays cheap.
+    legacy_search_input = page.locator(
         f'[data-automation-id="sheet_control_search_results_dropdown-menu"]'
-        f'[data-automation-context="{control_title}"]'
-    )
-    search_input = page.locator(f'{popover_search} input').first
-    if search_input.count() > 0:
+        f'[data-automation-context="{control_title}"] input'
+    ).first
+    modern_search_input = page.locator(
+        '[data-automation-id="dropdown-search_search_input"] input'
+    ).first
+    search_input = None
+    if legacy_search_input.count() > 0:
+        search_input = legacy_search_input
+    elif modern_search_input.count() > 0:
+        search_input = modern_search_input
+    if search_input is not None:
         # MUI Autocomplete: narrow the listbox via the search input.
         # ``fill`` debounces + repaints the option list; wait for the
         # filtered ``[role="option"]`` to appear before clicking so
         # we don't race a stale option from the pre-filter listbox.
         search_input.fill(value, timeout=timeout_ms)
         page.wait_for_selector(
-            f'{popover_search} [role="option"], '
-            f'[role="listbox"] [role="option"]',
+            '[role="listbox"] [role="option"]',
             timeout=timeout_ms, state="visible",
         )
     page.locator(

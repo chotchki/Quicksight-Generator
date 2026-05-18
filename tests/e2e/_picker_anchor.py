@@ -140,6 +140,22 @@ class SheetAnchorSpec:
     ``pickers`` is the tuple of picker wirings. All ``column`` values
     must be keys in the dict ``fetch_anchor_row`` returns (i.e.
     projection columns from the dataset's CustomSql output).
+
+    ``anchor_where_template`` (optional) is an extra ``WHERE`` clause
+    appended to the anchor-row SELECT, formatted with
+    ``{prefix}=cfg.db_table_prefix`` at fetch time. AA.A.993 — needed
+    when the dataset's universe is wider than a picker's dropdown
+    universe. The Transactions dataset, for instance, queries
+    ``<prefix>_current_transactions`` which includes internal control
+    accounts (``clearing-suspense``, ``customer-ledger``) that have
+    transactions but no ``<prefix>_current_daily_balances`` rows. The
+    Account dropdown is sourced from ``current_daily_balances`` (see
+    ``build_l1_accounts_dataset``), so an anchor picked from the
+    transactions matview alone can be an account the dropdown never
+    advertises — the picker click times out (QS: option not in DOM;
+    App2: TomSelect setValue no-ops, no HTMX refetch fires). The fix:
+    intersect the anchor universe with the dropdown universe via this
+    template. Empty string = no extra constraint.
     """
     sheet_name: str
     target_visual: str
@@ -147,6 +163,7 @@ class SheetAnchorSpec:
     contract: DatasetContract
     anchor_order: str
     pickers: tuple[PickerSpec, ...]
+    anchor_where_template: str = ""
 
 
 def fetch_anchor_row(
@@ -208,7 +225,17 @@ def fetch_anchor_row(
     limit_clause = (
         "LIMIT 1" if cfg.dialect is Dialect.POSTGRES else "FETCH FIRST 1 ROWS ONLY"
     )
-    wrapped = f"SELECT * FROM ({resolved}) sub {order_clause}{limit_clause}"
+    # AA.A.993 — anchor_where_template intersects the anchor universe
+    # with a narrower dropdown universe when the dataset's own SQL
+    # returns rows for accounts (or other entities) the picker dropdown
+    # doesn't advertise. ``{prefix}`` is the only substitution; bare
+    # ``str.format`` keeps the spec authoring shape one-liner-simple.
+    where_clause = (
+        f"WHERE {spec.anchor_where_template.format(prefix=cfg.db_table_prefix)} "
+        if spec.anchor_where_template
+        else ""
+    )
+    wrapped = f"SELECT * FROM ({resolved}) sub {where_clause}{order_clause}{limit_clause}"
 
     with psycopg.connect(cfg.demo_database_url, connect_timeout=60) as conn:
         with conn.cursor() as cur:

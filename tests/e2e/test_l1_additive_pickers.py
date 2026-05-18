@@ -278,12 +278,44 @@ L1_PICKER_SPECS: tuple[SheetAnchorSpec, ...] = (
     # 5 dropdowns + date range — the densest picker landscape in L1.
     # ``posting`` is a timestamp; ``posting DESC`` lands on the most
     # recent leg in the default-param SQL output.
+    #
+    # AA.A.993 — constrain the anchor account to those advertised by the
+    # Account dropdown (which sources from current_daily_balances via
+    # ``build_l1_accounts_dataset``). The transactions matview includes
+    # internal control accounts (``clearing-suspense``,
+    # ``customer-ledger``) that have transactions but no daily-balance
+    # rows; with no constraint the anchor picks one of those and the
+    # Account picker can't find it (QS: option absent from listbox;
+    # App2: TomSelect setValue no-ops, no HTMX refetch fires → 15 s
+    # timeout). Same fix pattern as the AA.B.5 daily-statement helper's
+    # "narrow to dropdown's initial advertised universe".
+    #
+    # AA.A.993 — the Transfer dropdown is omitted from the picker spec
+    # for now. Its universe is ``SELECT DISTINCT transfer_id FROM
+    # <p>_current_transactions`` — 8k+ rows on a default-density
+    # ``spec_example`` deploy. App2 caps dataset-sourced dropdown
+    # options at ``_OPTIONS_CAP = 2000`` (see
+    # ``common/html/_tree_fetcher.py:367``) — a placeholder until
+    # typeahead / server-side search lands ("typeahead / server-side
+    # search for very large universes is a follow-on" — same module's
+    # comment). The anchor's ``transfer_id`` lands past the cap on most
+    # seeds (deterministic transfer_id sort orders the cap to the
+    # alphabetically-first bundle/inbound prefixes). Rather than game
+    # the anchor to land inside the cap — which would mask the same
+    # UX problem the cap signals — the spec drops the Transfer picker
+    # until the underlying typeahead lands. Re-include with the rest
+    # of the pickers once App2 grows typeahead support.
     SheetAnchorSpec(
         sheet_name="Transactions",
         target_visual="Posting Ledger",
         dataset_builder=build_transactions_dataset,
         contract=TRANSACTIONS_CONTRACT,
         anchor_order="account_id ASC, posting DESC",
+        anchor_where_template=(
+            "account_id IN ("
+            "SELECT account_id FROM {prefix}_current_daily_balances"
+            ")"
+        ),
         pickers=(
             PickerSpec(
                 label="Date From", kind="date_from", column="posting",
@@ -294,9 +326,6 @@ L1_PICKER_SPECS: tuple[SheetAnchorSpec, ...] = (
             PickerSpec(
                 label="Account", kind="dropdown", column="account_id",
                 format=lambda a: f"{a['account_name']} ({a['account_id']})",
-            ),
-            PickerSpec(
-                label="Transfer", kind="dropdown", column="transfer_id",
             ),
             PickerSpec(
                 label="Status", kind="dropdown", column="status",
