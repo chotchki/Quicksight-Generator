@@ -1,14 +1,18 @@
 # Recon Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps** plus a **regulator-ready PDF reconciliation report**, all L2-fed off one institution YAML (account, datasource, theme, per-instance schema prefix), sharing the CLI surface:
+Independent validation tool for midsize financial institutions: layers standard double-entry accounting invariants on top of the institution's unique shape (accounts, rails, templates, chains, limit schedules) declared in an L2 YAML. Ships three runtime fronts off one shared core:
 
-- **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). Configured by an L2 instance — feed any institution's L2 YAML once, dashboard renders against it.
-- **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
-- **Investigation** — 5 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail, Account Network. Compliance / AML triage flow.
-- **Executives** — 4 sheets: Getting Started, Account Coverage, Transaction Volume, Money Moved. Executive scorecard.
-- **Audit Reconciliation Report** — printable PDF generated from the same per-instance L1 invariant matviews. Cover + exec summary + per-invariant violation tables + per-account-day Daily Statement walks + sign-off block + cryptographic provenance fingerprint binding the PDF to its source data. Optionally auto-signs via pyHanko when `config.yaml` carries a `signing:` block.
+- **AWS QuickSight** — the original surface; four bundled apps (L1 Dashboard / L2 Flow Tracing / Investigation / Executives) emitted as JSON definitions and deployed via boto3.
+- **Self-hosted HTMX web app** (`recon-gen dashboards` / `recon-gen studio`) — same four apps served from a Starlette process, plus Studio implementation tools (diagram + L2 editor + data-shaping panel). Offline iteration loop; suitable for deployments that can't reach external SaaS.
+- **Regulator-ready PDF audit report** (`recon-gen audit apply`) — printable, cryptographically fingerprinted, optionally pyHanko-signed. End-of-pipeline 4-way agreement test gates that QS / self-hosted / PDF / direct-DB all agree on every L1 invariant violation set.
 
-The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
+Three database backends — PostgreSQL 17+, Oracle 19c+, SQLite 3.38+ — covering on-prem, cloud-managed, and integrator-laptop iteration.
+
+Audiences split across the surface: **integrators** wire the institution shape (Studio / L2FT); **trainers** shape the demo (data-shaping panel / scope knobs); **operators** drive L1 daily (L1 Dashboard / Daily Statement); **investigators / executives** triage on the shared base ledger (Investigation / Executives). Persona vocabulary is L2-driven — swap the YAML, swap the language.
+
+**Scope boundary:** Recon Generator validates data; it does not move it. Customer ETL feeds `<prefix>_transactions` and `<prefix>_daily_balances`; the Studio pipeline carries an ETL hook (`etl_hook`, X.4.g.4) for plugging in the customer's extract. On top of customer data, the test-data generator plants synthetic scenarios (`scope: full / uncovered_rails / exceptions_only / only_template`, `derive_balances`) so L1 invariants are exercisable before real-world examples land.
+
+Customer requirements are still evolving. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
 ## Quick Reference
 

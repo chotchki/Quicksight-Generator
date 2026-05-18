@@ -4,12 +4,55 @@
 [![Coverage](https://raw.githubusercontent.com/chotchki/recon-gen/badges/coverage-badge.svg)](https://github.com/chotchki/recon-gen/blob/badges/coverage-report.md)
 [![PyPI](https://img.shields.io/pypi/v/recon-gen.svg)](https://pypi.org/project/recon-gen/)
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four bundled QuickSight apps** plus a **regulator-ready PDF audit report**, all L2-fed off one institution YAML:
+## Outside validation that your financial system is sound
 
-- **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). 11 sheets. Configured by an L2 instance YAML; the same dashboard renders against any institution that declares its accounts / rails / templates / chains / limit schedules in L2 form.
-- **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
-- **Investigation** — compliance / AML triage: 4 question-shaped sheets — recipient fanout, volume anomalies, money-trail provenance, account-network graphs — over the shared base ledger.
-- **Executives** — board-cadence rollups: account coverage (open vs active), transaction volume over time, money moved (gross + net) over time. Reads only the shared base tables — no Executives-specific schema.
+Do you have a financial system you need to know is consistent and reconcilable? Recon Generator is an independent validation tool for midsize financial institutions: it tells you whether your books balance day to day, and when they don't, it tells you where to look first.
+
+Accounting is standard. Your institution is not. Recon Generator layers the two: standard double-entry invariants on top of the unique shape of your institution — your accounts, your rails, your multi-leg transfer templates, your bundling rules, your aging caps — so every way you actually move money is checked against the rules that govern it.
+
+## Built for the people who actually do the work
+
+Reconciliation needs more than one perspective because no single role has the full picture. Recon Generator carries specialized surfaces for:
+
+- **Integrators** — wiring the institution's shape into the tool (Studio editor, L2 Flow Tracing, Hygiene Exceptions).
+- **Trainers** — shaping the demo and seeded scenarios so the dashboards exercise every path before going live (data-shaping panel, scope knobs, plant overlays).
+- **Operators** — driving the L1 invariants daily, walking exceptions back to their cause (L1 Dashboard, Daily Statement, Today's Exceptions).
+- **Investigators / Executives** — compliance-AML triage and board-cadence rollups built on the same base ledger (Investigation + Executives apps).
+
+Every surface speaks **your** institution's vocabulary — account names, role labels, persona prose are all driven from the L2 institution YAML and substituted into the rendered output. Swap the L2, the language follows.
+
+**See it live.** The bundled Sasquatch example institution (`tests/l2/sasquatch_pr.yaml`) renders into the full training-materials surface at **[chotchki.github.io/recon-gen](https://chotchki.github.io/recon-gen/)** — the same persona-driven handbooks, walkthroughs, and per-sheet explainers your operators would see against your own L2 instance. It's both demo and template: read it to evaluate the tool, fork it to start your own.
+
+## Not an ETL tool — but we'll help you wire one in
+
+Recon Generator validates data; it doesn't move it. Your transactions and daily-balance feeds land in `<prefix>_transactions` and `<prefix>_daily_balances` (the Data Integration handbook documents the column contract) and Recon Generator reads from there.
+
+Two ways we close the loop:
+
+- **Documented carefully, supported responsively.** Wiring an upstream system into the L1 schema is real work — column mapping, type narrowing, metadata extraction, the supersession contract. The Data Integration handbook walks the path end-to-end, issues get a real response, and the Studio Deploy-changes pipeline carries an ETL hook so your existing extract can plug in without bolting code onto Recon Generator itself.
+- **Synthetic scenarios on top of your real data.** Once your data is flowing, the test-data generator plants additional scenarios on top — drift events, overdraft breaches, stuck-pending aging, supersession trails, fanout patterns, anomaly spikes — so you can validate every L1 invariant without delaying go-live. Trainer knobs (`scope: full / uncovered_rails / exceptions_only / only_template`, `derive_balances`) shape what gets generated.
+
+## Runs where you run
+
+Three database backends — **PostgreSQL 17+**, **Oracle 19c+**, and **SQLite 3.38+** — covering on-prem, cloud-managed, and zero-install integrator-laptop iteration.
+
+Three runtime environments — pick what your auditors and analysts already trust:
+
+- **AWS QuickSight** — managed BI, embeddable in your portal, role-aware permissions.
+- **Self-hosted HTMX web app** — same dashboards, no AWS dependency, offline-iteration-friendly. Suitable for sensitive deployments that can't reach external SaaS.
+- **Regulator-ready PDF audit report** — printable, cryptographically fingerprinted, optionally pyHanko-signed. Same source data as the dashboards (and an end-of-pipeline 4-way agreement test gates that they stay in agreement).
+
+## Heavily tested because trust is the product
+
+You can't ship a reconciliation tool on "trust me." This tool ships with:
+
+- **Layered test gates** that run in order — unit → DB → self-hosted app → deploy → API → browser — so a regression at layer N short-circuits before burning minutes on layer N+1.
+- **Strong typing throughout** (Pyright strict on the core, NewType-wrapped identifiers, dataclass invariants), so an entire class of bug becomes a type error at the wiring site instead of a silent zero-row dashboard.
+- **Fuzz testing as a property axis** — every test variant runs against random L2 institution shapes (`fuzz:N` for N seeds, pinned via `f<seed>_..` for repro), so the same invariants check against shapes nobody hand-wrote.
+- **Deterministic, exhaustive test-data generation** — your L2 institution shape drives positive and negative scenarios that the harness plants automatically: drift, overdraft, limit breach, stuck-pending, stuck-unbundled, supersession audit, fanout, anomaly spikes, money-trail chains. Each scenario is hash-locked per `(L2 instance, dialect)`.
+- **Cross-runtime parity** — the same scenario fans out into the QuickSight cell, the self-hosted cell, and the audit PDF, and a 4-way agreement test gates that all four agree on every L1 invariant violation set. A drift the dashboard shows must equal the drift the PDF prints.
+
+---
 
 CLI is organized as five artifact groups: `recon-gen schema|data|json|docs|audit`. Each artifact has `apply`/`clean`/`test` (plus a few extras); destructive operations default to emit and require `--execute` to actually run. The `audit` group also exposes a `verify` subcommand for recomputing a generated PDF's provenance fingerprint. Change the Python (or ask Claude), re-run `json apply --execute`, get a new dashboard.
 
