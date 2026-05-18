@@ -49,6 +49,24 @@ def find_account_day_with_data(cfg: Config) -> tuple[str, str, str]:
     ``LinkedValues.from_column(... account_role)``. ``business_day_iso``
     is ``YYYY-MM-DD`` (the protocol's date format).
 
+    Restricts the candidate (account, day) pairs to accounts whose
+    ``account_role`` is the **alphabetically-first role** in
+    ``<prefix>_current_daily_balances`` — i.e., the role that the
+    Daily Statement Role dropdown auto-selects on initial load (QS's
+    SINGLE_SELECT default picks the first ``LinkedValues`` option).
+    The Account dropdown is narrowed by the Role cascade
+    (``DS_L1_ACCOUNTS WHERE account_role IN (<<$pL1DsRole>>)``), and
+    that narrowing does NOT refresh after a runtime Role pick (the
+    standing QS quirk ``project_qs_url_parameter_no_control_sync`` —
+    explicit in ``test_daily_statement_role_then_account_populates_table``'s
+    docstring). So the helper must pick an account that the
+    initial-load-narrowed dropdown actually advertises. Pre-fix
+    (#991, 2026-05-18): helper picked the globally-most-active account
+    regardless of role — for spec_example that was
+    ``External Counterparty One (ExternalCounterparty)`` but the
+    dropdown was narrowed to ``CustomerSubledger`` accounts, and both
+    daily-statement browser tests failed at the picker click.
+
     Raises ``RuntimeError`` if the deployed DB has no rows at all
     (deploy step skipped? wrong cfg? wrong prefix?) — refusing to
     silently return a useless tuple.
@@ -74,10 +92,17 @@ def find_account_day_with_data(cfg: Config) -> tuple[str, str, str]:
     # planted scenario would be picked over a 10-row organic firing
     # on the same day if we ordered by bday alone with deterministic-
     # but-unhelpful tiebreaks.
+    #
+    # WHERE narrows to the alphabetically-first role from
+    # current_daily_balances — same universe the Daily Statement Role
+    # dropdown auto-selects. Subquery is portable across PG + Oracle.
     sql = (
         f"SELECT account_name, account_id, account_role, "
         f"       {bday_expr} AS bday, COUNT(*) AS n "
         f"FROM {prefix}_transactions "
+        f"WHERE account_role = ("
+        f"  SELECT MIN(account_role) FROM {prefix}_current_daily_balances"
+        f") "
         f"GROUP BY account_name, account_id, account_role, {bday_expr} "
         f"HAVING COUNT(*) > 0 "
         f"ORDER BY bday DESC, n DESC "
