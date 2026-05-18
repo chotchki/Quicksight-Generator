@@ -179,6 +179,15 @@ def html2_server(
             ),
         },
         dev_log=dev_log,
+        # AA.A.race.1 root-cause: the production default of max-age=60
+        # on /visuals/.../data causes WebKit to serve identical-URL
+        # follow-up picks (e.g. inverse → restore) from disk cache.
+        # Playwright's `page.expect_response` only fires on network
+        # responses, not cache hits, so App2Driver._wait_for_refetch
+        # times out at 15s even though the swap has completed.
+        # E2E never wants stale cache anyway — every render must
+        # reflect freshly-fetched data.
+        visual_data_cache_max_age_s=0,
     )
     # Y.2.gate.c.11.app2-server-logs — log_level lifts to "info" iff
     # capturing (otherwise stays "error" — keeps stderr quiet during

@@ -451,7 +451,7 @@
   }
 
   function wireRowDrills(section, target, data) {
-    var raw = section && section.getAttribute("data-row-drills");
+    var raw = section?.getAttribute("data-row-drills");
     if (!raw) return;
     var drills;
     var columns;
@@ -469,8 +469,8 @@
       return;
     }
     if (!Array.isArray(drills) || drills.length === 0) return;
-    columns = (data && data.columns) || [];
-    rows = (data && data.rows) || [];
+    columns = data?.columns || [];
+    rows = data?.rows || [];
     tbody = target.querySelector("tbody");
     if (!tbody) return;
     colIndex = {};
@@ -1114,7 +1114,15 @@
     const elt = evt.detail.elt;
     if (elt?.classList?.contains("visual-data")) {
       const params = evt.detail.requestConfig?.parameters || {};
-      elt.dataset.requestedParams = _serializeBoundParams(params);
+      const serialized = _serializeBoundParams(params);
+      elt.dataset.requestedParams = serialized;
+      // AA.A.race.1 — tracer
+      console.debug(
+        "[trace] htmx:beforeRequest visual=" +
+          (elt.id || "?") +
+          " params=" +
+          serialized,
+      );
       elt.innerHTML =
         '<div class="visual-loading" aria-hidden="true">' +
         '<div class="skeleton-block"></div>' +
@@ -1139,6 +1147,13 @@
       if (bp != null) {
         tgt.dataset.renderedParams = bp;
       }
+      // AA.A.race.1 — tracer
+      console.debug(
+        "[trace] htmx:afterSwap visual=" +
+          (tgt.id || "?") +
+          " rendered=" +
+          (bp == null ? "?" : bp),
+      );
     }
   });
 
@@ -1245,9 +1260,20 @@
     var form = document.getElementById("filter-form");
     if (!form) return;
     var timer = null;
-    form.addEventListener("change", () => {
+    form.addEventListener("change", (evt) => {
+      // AA.A.race.1 — tracer
+      var tgt = evt.target;
+      var tgtName = tgt?.name ? tgt.name : tgt?.id || "?";
+      console.debug(
+        "[trace] form.change source=" +
+          tgtName +
+          " value=" +
+          (tgt && tgt.value != null ? tgt.value : "?"),
+      );
       clearTimeout(timer);
       timer = setTimeout(() => {
+        // AA.A.race.1 — tracer
+        console.debug("[trace] debounce-fire");
         if (typeof htmx === "undefined") return;
         // AA.B.5.followon — iterate visuals explicitly instead of
         // broadcasting a body-level ``refresh`` event. The broadcast
@@ -1263,6 +1289,10 @@
         // (``this:queue last``) and either fires immediately or queues
         // for after its current request lands.
         var visuals = document.querySelectorAll(".visual-data[hx-get]");
+        // AA.A.race.1 — tracer
+        console.debug(
+          "[trace] htmx.trigger refresh on " + visuals.length + " visuals",
+        );
         visuals.forEach((div) => {
           htmx.trigger(div, "refresh");
         });
@@ -1351,7 +1381,14 @@
       // Tom Select syncs the underlying <select>'s selected options but
       // doesn't always re-fire a native `change` on it — do it
       // explicitly so wireFilterAutoRefresh sees the new value.
-      onChange: () => {
+      onChange: (value) => {
+        // AA.A.race.1 — tracer
+        console.debug(
+          "[trace] TomSelect.onChange name=" +
+            (el.name || "?") +
+            " value=" +
+            JSON.stringify(value),
+        );
         el.dispatchEvent(new Event("change", { bubbles: true }));
       },
     });

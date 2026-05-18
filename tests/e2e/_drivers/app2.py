@@ -471,9 +471,18 @@ class App2Driver:
                     }
                     const resolved = vals.map((v) => byText.has(v)
                         ? byText.get(v) : v);
-                    s.tomselect.setValue(s.multiple
+                    const target = s.multiple
                         ? resolved
-                        : (resolved[0] !== undefined ? resolved[0] : ''));
+                        : (resolved[0] !== undefined ? resolved[0] : '');
+                    // AA.A.race.1 — tracer
+                    const cur = s.tomselect.getValue();
+                    console.debug(
+                      '[trace] pick_filter.setValue name=' + (s.name || '?') +
+                      ' target=' + JSON.stringify(target) +
+                      ' current=' + JSON.stringify(cur) +
+                      ' noop=' + (JSON.stringify(cur) === JSON.stringify(target)),
+                    );
+                    s.tomselect.setValue(target);
                     return;
                 }
                 for (const o of s.options) {
