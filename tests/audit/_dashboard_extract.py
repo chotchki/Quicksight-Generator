@@ -23,7 +23,7 @@ Caller is responsible for ``driver.open(dashboard_id)`` before calling.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from tests.e2e._drivers import DashboardDriver
@@ -78,24 +78,16 @@ _DASHBOARD_LAYOUT: dict[L1Invariant, tuple[str, str, bool]] = {
 # ``l1_invariant_row_keys`` for the X.2.j 4-way agreement test's
 # row-identity asserts (flat-shape) — count-only suffices for the rest.
 #
-# Z.B (2026-05-15) subsumed ``transfer_type`` into the rail; the limit_breach
-# matview projects ``rail_name`` from the Z.B rewrite of the cap view.
-# The dashboard's Limit Breach Detail table reads
-# ``ds_lb["rail_name"].dim()`` (apps/l1_dashboard/app.py:1043), so the
-# row-identity key must match.
 # AA.A.995, 2026-05-18 — keyed by raw SQL column name, the matview /
 # scenario-plant / direct-SELECT contract. ``table_rows(columns=...)``
 # at the call site re-keys the renderer's row dicts to match (QS
 # normally stamps display labels on ``<th>``, App2 stamps raw names —
 # the param hides the difference inside the driver).
 #
-# Drift / overdraft: pre-existing 1-day-off mismatch between
-# ``_matview_extract`` (keys on ``business_day_start``) and the L1
-# dashboard's Drift / Overdraft tables (display ``business_day_end``).
-# Task #996 — pick whether the visual moves to start or the
-# matview/scenarios move to end. Until then, ``business_day_start`` is
-# kept here for matview-side alignment; the dashboard agreement test
-# stays a known-fail on drift / overdraft.
+# AA.A.996, 2026-05-18 — drift / overdraft visuals now display
+# ``business_day_start`` (matched here), one logical day per row at
+# SECOND-granularity timestamp so per-account boundary differences
+# stay visible. Daily Statement drill writes the same column.
 #
 # Z.B (2026-05-15) subsumed ``transfer_type`` into the rail; the
 # limit_breach matview projects ``rail_name`` from the Z.B rewrite of
@@ -116,6 +108,33 @@ _KEY_COLS: dict[L1Invariant, tuple[str, ...]] = {
 _DAY_COLS = frozenset(
     {"business_day_start", "business_day_end", "business_day"}
 )
+
+
+def _parse_day_cell(cell: str) -> date:
+    """Coerce a day cell from either renderer to a ``date``.
+
+    AA.A.996, 2026-05-18 — drift / overdraft now display
+    ``business_day_start`` at SECOND granularity so per-account
+    boundary timestamps stay visible. QS renders that as the locale
+    form ``"May 13, 2026 17:00:00"``; App2 renders the raw timestamp
+    ``"2026-05-13 17:00:00"``. The natural-key comparison needs the
+    date portion only — drop the time, parse either head shape.
+    """
+    iso_head = cell[:10]
+    try:
+        return date.fromisoformat(iso_head)
+    except ValueError:
+        pass
+    head = " ".join(cell.split()[:3])
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(head, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(
+        f"_parse_day_cell: cannot parse {cell!r} as ISO or "
+        f"locale-rendered date"
+    )
 
 
 def key_columns_for(invariant: L1Invariant) -> tuple[str, ...]:
@@ -199,7 +218,7 @@ def l1_invariant_row_keys(
         for sql_col in key_cols:
             cell = r[sql_col].strip()
             key.append(
-                date.fromisoformat(cell[:10]) if sql_col in _DAY_COLS else cell
+                _parse_day_cell(cell) if sql_col in _DAY_COLS else cell
             )
         out.add(tuple(key))
     return out

@@ -616,12 +616,28 @@ def _populate_drift_sheet(
         values=[ds_ledger_drift["account_id"].count()],
     )
 
-    # Row 2: leaf-drift table. Pull account_id + business_day_end Dims
+    # Row 2: leaf-drift table. Pull account_id + business_day_start Dims
     # local so the link tint + drill can reference the same field_id
     # as the columns. Right-click → View Daily Statement narrows the
     # forward investigation to that account-day.
+    #
+    # AA.A.996, 2026-05-18 — display ``business_day_start`` (the matview
+    # natural key + the timestamp the trading day BEGINS at for THIS
+    # account). One row = one logical day per account, but per-account
+    # business-day boundaries differ (a 17:00→17:00 customer DDA vs a
+    # midnight→midnight retail DDA are different actual windows even
+    # when the date portion matches), so render at SECOND granularity
+    # to keep the boundary timestamp visible — ``.date()`` (DAY) would
+    # truncate it. Aligns with ``_matview_extract`` + scenario plants
+    # + the universal date filter (see ``_scope_one`` at the bottom of
+    # this file). Bonus: the Daily Statement drill writes
+    # ``leaf_day_col`` into ``_DP_DS_BALANCE_DATE``, which Daily
+    # Statement filters by start-of-day — previously off by 1 day
+    # because the visual was showing end and the drill wrote end.
     leaf_account_col = ds_drift["account_id"].dim()
-    leaf_day_col = ds_drift["business_day_end"].date()
+    leaf_day_col = ds_drift["business_day_start"].date(
+        date_granularity="SECOND",
+    )
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Leaf Account Drift",
@@ -661,8 +677,12 @@ def _populate_drift_sheet(
     # Row 3: ledger (parent-account) drift table — same shape minus
     # account_parent_role (parents ARE the parents). Same Daily
     # Statement drill.
+    # AA.A.996 — see ``leaf_day_col`` above for the natural-key alignment
+    # + SECOND-granularity + per-account boundary rationale.
     parent_account_col = ds_ledger_drift["account_id"].dim()
-    parent_day_col = ds_ledger_drift["business_day_end"].date()
+    parent_day_col = ds_ledger_drift["business_day_start"].date(
+        date_granularity="SECOND",
+    )
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Parent Account Drift",
@@ -808,8 +828,12 @@ def _populate_overdraft_sheet(
         values=[ds_overdraft["account_id"].count()],
     )
 
+    # AA.A.996 — see leaf_day_col on the Drift sheet for the natural-key
+    # alignment + SECOND-granularity + per-account boundary rationale.
     account_col = ds_overdraft["account_id"].dim()
-    day_col = ds_overdraft["business_day_end"].date()
+    day_col = ds_overdraft["business_day_start"].date(
+        date_granularity="SECOND",
+    )
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Overdraft Violations",
