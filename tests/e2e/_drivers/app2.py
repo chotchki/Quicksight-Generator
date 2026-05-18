@@ -61,6 +61,7 @@ from recon_gen.common.html.render import FilterSpec
 from recon_gen.common.html.server import DataFetcher
 from recon_gen.common.tree.structure import App, Sheet
 from tests._test_helpers import make_test_config
+from tests.e2e._drivers.base import rekey_by_columns
 from tests.e2e._harness_html2 import html2_server
 
 
@@ -352,7 +353,12 @@ class App2Driver:
             timeout_ms,
         )
 
-    def table_rows(self, visual_title: str) -> list[dict[str, str]]:
+    def table_rows(
+        self,
+        visual_title: str,
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> list[dict[str, str]]:
         section = self._section(visual_title)
         table = section.locator("table.table-data").first
         table.wait_for(state="visible")
@@ -366,7 +372,11 @@ class App2Driver:
         for tr in table.locator("tbody tr").all():
             cells = [c.strip() for c in tr.locator("td").all_inner_texts()]
             rows.append(dict(zip(headers, cells, strict=False)))
-        return rows
+        # AA.A.995 — see ``DashboardDriver.table_rows``'s ``columns=``
+        # docstring. App2's ``<th>`` text is the raw SQL column name,
+        # which differs from QS's display-label header; passing
+        # ``columns`` re-keys both renderers identically.
+        return rekey_by_columns(rows, columns) if columns else rows
 
     def find_row(
         self, visual_title: str, predicate: Mapping[str, str],

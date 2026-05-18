@@ -31,6 +31,60 @@ from pathlib import Path
 from typing import Protocol
 
 
+def _title_case_header(sql_column: str) -> str:
+    """Mirror the auto-derived ``human_name`` rule QS uses for column
+    headers: ``account_id`` → ``"Account ID"``, ``rail_name`` →
+    ``"Rail Name"``. Preserves common all-caps initialisms (ID / SQL /
+    URL / API) so display labels match the dataset contract's
+    ``human_name`` default."""
+    _INITIALISMS = frozenset({"id", "sql", "url", "api", "css", "ip"})
+    parts: list[str] = []
+    for part in sql_column.split("_"):
+        if part.lower() in _INITIALISMS:
+            parts.append(part.upper())
+        else:
+            parts.append(part.capitalize())
+    return " ".join(parts)
+
+
+def rekey_by_columns(
+    rows: list[dict[str, str]], columns: Sequence[str],
+) -> list[dict[str, str]]:
+    """Return each row in ``rows`` projected to just the cells for
+    ``columns``, keyed by the raw SQL column names. Looks up each
+    requested column in the row by trying:
+
+    1. the raw SQL name verbatim (``"account_id"``) — what App2 stamps
+       on its ``<th>``; and
+    2. the title-case display label (``"Account ID"``) — what QS stamps
+       on its ``sn-table-column-N .title`` span (mirrors the dataset
+       contract's auto-derived ``human_name``).
+
+    Cells outside ``columns`` are dropped. Renderers that show extra
+    columns (App2 currently renders the full dataset projection, not
+    just visual-declared columns) are handled cleanly — the test only
+    sees what it asked for. Raises ``KeyError`` (with the row's actual
+    keys) when a column isn't findable under either form, so a typo or
+    a renamed column surfaces loudly."""
+    out: list[dict[str, str]] = []
+    for r in rows:
+        projected: dict[str, str] = {}
+        for sql_col in columns:
+            if sql_col in r:
+                projected[sql_col] = r[sql_col]
+                continue
+            display = _title_case_header(sql_col)
+            if display in r:
+                projected[sql_col] = r[display]
+                continue
+            raise KeyError(
+                f"rekey_by_columns: {sql_col!r} not found under raw "
+                f"name or {display!r}; row keys = {list(r.keys())!r}"
+            )
+        out.append(projected)
+    return out
+
+
 class DashboardDriver(Protocol):
     """The cross-renderer dashboard-driving interface (see module
     docstring). All reads return plain Python; all writes block until
@@ -89,14 +143,33 @@ class DashboardDriver(Protocol):
         table / number — not a spinner, not empty)."""
         ...
 
-    def table_rows(self, visual_title: str) -> list[dict[str, str]]:
+    def table_rows(
+        self,
+        visual_title: str,
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> list[dict[str, str]]:
         """Rows of a Table visual as dicts keyed by header text, in
         display order; cell values are the rendered (formatted) strings.
         Returns the *currently-rendered* window (QS virtualizes ~10 rows;
         App2 renders all rows in DOM). When the caller needs the
         post-filter total row count for a table that may exceed the
         viewport, ``table_row_count`` does the page-size-bump + scroll-
-        accumulate dance to surface the full number."""
+        accumulate dance to surface the full number.
+
+        AA.A.995 — by default rows are keyed by the rendered header text,
+        which differs by renderer: QS stamps ``column.human_name``
+        (``"Account ID"``); App2 stamps the raw SQL column name
+        (``"account_id"``). Tests that need to look up cells by a known
+        identity should pass ``columns`` — a sequence of raw SQL column
+        names. The driver projects each row to JUST those cells, looking
+        each one up by raw name (App2's path) or title-case display
+        label (QS's path). Cells outside ``columns`` are dropped, so
+        renderer differences in which columns get shown at all (App2
+        renders the full dataset projection; QS shows only visual-
+        declared columns) don't leak. ``KeyError`` (with the row's
+        actual keys) if a column isn't findable under either form.
+        """
         ...
 
     def table_row_count(self, visual_title: str) -> int:

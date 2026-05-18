@@ -83,6 +83,25 @@ _DASHBOARD_LAYOUT: dict[L1Invariant, tuple[str, str, bool]] = {
 # The dashboard's Limit Breach Detail table reads
 # ``ds_lb["rail_name"].dim()`` (apps/l1_dashboard/app.py:1043), so the
 # row-identity key must match.
+# AA.A.995, 2026-05-18 — keyed by raw SQL column name, the matview /
+# scenario-plant / direct-SELECT contract. ``table_rows(columns=...)``
+# at the call site re-keys the renderer's row dicts to match (QS
+# normally stamps display labels on ``<th>``, App2 stamps raw names —
+# the param hides the difference inside the driver).
+#
+# Drift / overdraft: pre-existing 1-day-off mismatch between
+# ``_matview_extract`` (keys on ``business_day_start``) and the L1
+# dashboard's Drift / Overdraft tables (display ``business_day_end``).
+# Task #996 — pick whether the visual moves to start or the
+# matview/scenarios move to end. Until then, ``business_day_start`` is
+# kept here for matview-side alignment; the dashboard agreement test
+# stays a known-fail on drift / overdraft.
+#
+# Z.B (2026-05-15) subsumed ``transfer_type`` into the rail; the
+# limit_breach matview projects ``rail_name`` from the Z.B rewrite of
+# the cap view. The dashboard's Limit Breach Detail table reads
+# ``ds_lb["rail_name"].dim()`` (apps/l1_dashboard/app.py:1043), so the
+# row-identity key must match.
 _KEY_COLS: dict[L1Invariant, tuple[str, ...]] = {
     "drift": ("account_id", "business_day_start"),
     "overdraft": ("account_id", "business_day_start"),
@@ -91,6 +110,8 @@ _KEY_COLS: dict[L1Invariant, tuple[str, ...]] = {
     "stuck_unbundled": ("transaction_id",),
     "supersession": ("transaction_id",),
 }
+
+
 
 _DAY_COLS = frozenset(
     {"business_day_start", "business_day_end", "business_day"}
@@ -166,14 +187,20 @@ def l1_invariant_row_keys(
     window, that assert catches it.
     """
     table_title = _go_to_invariant_sheet(driver, invariant, period)
-    rows = driver.table_rows(table_title)
+    # AA.A.995 — pass the SQL column names through ``columns=`` so the
+    # driver pluck-keys both renderers' row dicts to the SQL column
+    # names regardless of which header text each one stamps (App2 raw,
+    # QS display label).
     key_cols = _KEY_COLS[invariant]
+    rows = driver.table_rows(table_title, columns=key_cols)
     out: set[tuple[str | date, ...]] = set()
     for r in rows:
         key: list[str | date] = []
-        for col in key_cols:
-            cell = r[col].strip()
-            key.append(date.fromisoformat(cell[:10]) if col in _DAY_COLS else cell)
+        for sql_col in key_cols:
+            cell = r[sql_col].strip()
+            key.append(
+                date.fromisoformat(cell[:10]) if sql_col in _DAY_COLS else cell
+            )
         out.add(tuple(key))
     return out
 

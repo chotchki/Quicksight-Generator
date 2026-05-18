@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tests.e2e._drivers.base import rekey_by_columns
+
 from recon_gen.common.browser.helpers import (
     bump_table_page_size_to_10000,
     visual_error_text,
@@ -482,7 +484,12 @@ class QsEmbedDriver:
                 f"error overlay: {err}"
             )
 
-    def table_rows(self, visual_title: str) -> list[dict[str, str]]:
+    def table_rows(
+        self,
+        visual_title: str,
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> list[dict[str, str]]:
         # Headers from the `sn-table-column-N` divs (their `.title` span),
         # body cells from `sn-table-cell-{row}-{col}`, zipped by position.
         # Returns the DOM-visible window only (QS virtualizes ~10 rows) —
@@ -492,7 +499,14 @@ class QsEmbedDriver:
             self._page, visual_title, self._visual_timeout,
             wait_for_cells=False,
         )
-        return read_table_rows_dom(self._page, visual_title)
+        rows = read_table_rows_dom(self._page, visual_title)
+        # AA.A.995 — caller-supplied column names override the rendered
+        # ``.title`` text. QS stamps ``column.human_name`` on the visible
+        # header which differs from App2's raw-SQL stamping; passing
+        # ``columns`` lets the test key rows by a single canonical
+        # identity (typically the raw SQL column name). Zip positionally
+        # against the rendered header order.
+        return rekey_by_columns(rows, columns) if columns else rows
 
     def find_row(
         self, visual_title: str, predicate: Mapping[str, str],
