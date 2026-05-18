@@ -415,6 +415,42 @@ Investigation chain across two run cycles (`6632777` baseline + `6190c23` PoC) o
 - [x] **AA.A.race.3 — QS-side snapshot-then-wait + cache-equivalent fast-path.** Done. `_QsWsActivityTracker.snapshot()` returns a frozen `WsSnapshot(total_starts, pending)` captured BEFORE the action; `new_starts_since(snap)` and `new_pending_since(snap)` ask "did anything fire since the snapshot, and is it done?" rather than "is the current absolute state quiet?". `_settle_after_param_change` refactored: (1) snapshot on entry, (2) if new starts fired → wait for all new cids to drain + 300ms quiet window, (3) **cache-equivalent fast-path** — if no new starts fire after 500ms grace, return immediately (QS analogue of the App2 cache-vs-network bug race.1 root-caused). 10 unit tests in `tests/unit/test_qs_ws_activity_tracker.py` exercise the snapshot API with a mock page/websocket — no browser needed. Whether QS's client actually has a cache-hit-equivalent behavior is still unverified (no captured failure in hand), but the change is structurally safer than the prior `total_starts > baseline` heuristic which would spin until the 18s timeout in that case. Pyright strict-scope clean; full unit suite 1839 passed.
 - [x] **AA.A.race.4 — Spike doc capture.** Done — `docs/audits/aa_a_race_investigation.md` covers: the two-bugs-but-actually-one-with-a-cache-wrinkle arc, the freshness oracle PoC design + commit `6190c23` (kept — still closes the T2→T4 race even though it didn't fix the dominant case), the tracer instrumentation (race.1, kept in tree), the captured-failure evidence (console.txt + network.txt cross-reference), the cache-vs-network root cause, the App2/QS structural asymmetry, and why race.3 still matters as defense-in-depth. Anchor for future race investigations — no re-derivation needed.
 
+### AA.A.l2ft-rails-inverse — L2FT Rails inverse-picker doesn't decrease row count (umbrella, 2026-05-18, post-v11.0.1)
+
+Verification chain at v11.0.1 commit `403de34` (`sp_pg_aw.browser`, ~10 min wall): **11 failed / 80 passed / 11 skipped / 1 xfailed / 3 xpassed / 22 rerun**. Down from `0504756`-pre-L2FT-fix's 16 failures. L2FT additive (3/3) + 2/3 L2FT inverse closed by the inclusive-bounds fix. Persisting L2FT failure: `test_l2ft_dropdown_pickers_inverse_excludes_anchor[qs-Rails]` + same `[app2-Rails]` (parallel App2 variant).
+
+**Captured assertion** (`runs/20260518T065004Z-0504756/sp_pg_aw/browser/.../[qs-Rails]/`):
+
+```
+AssertionError: 'Rails' picker 'Rail': toggling to non-matching value
+'ExternalRailInbound' should reduce row count below the anchor-narrowed
+count (50). Got 50.
+assert 50 < 50
+```
+
+**Captured post-pick WS frame** (`ws_frames.txt`, last START_VIS): dates collapsed to 2026-05-18 = 2026-05-18 (NOT the cause — additive narrows fine with same date collapse, proving the v11.0.1 fix works for L2FT). Rail param substituted = `"ExternalRailInbound"` (the inverse-toggle value, NOT the anchor's rail).
+
+**Hypothesis bucket** (cheap probes first):
+
+- (a) `non_matching_dropdown_value(driver, "Rail", matching)` returns a value that **isn't actually non-matching** for spec_example's L2 → both additive and inverse fetch the same rows. Test-side bug.
+- (b) Anchor's rail IS `ExternalRailInbound` (the test's "non-matching" pick matches it) → same root cause as (a) but on the anchor side.
+- (c) `_match_all_in_clause('rail_name', 'pL2ftRail')` substitution doesn't actually narrow on rail_name → both queries return all 50 rows unfiltered. Production bug; would also imply additive PASSES trivially (only asserts `anchor_count > 0`). Most-load-bearing hypothesis since it explains all of additive-passing + inverse-failing + count-unchanged.
+
+**Triage steps** (cheapest first):
+
+- [ ] **AA.A.l2ft-rails-inverse.1 — Aurora-direct SQL probe.** Connect to Aurora (`database-2`, `qsgen_sp_pg_aw_*` tables), run the dataset's CustomSql with `pL2ftRail='ExternalRailOutbound'`, `pL2ftStatus='Posted'`, `pL2ftBundle='Unbundled'`, date range `[2026-05-17, 2026-05-19]`. Record row count. Repeat with `pL2ftRail='ExternalRailInbound'`. If counts equal → hypothesis (c). If counts differ → hypotheses (a)/(b).
+- [ ] **AA.A.l2ft-rails-inverse.2 — Inspect anchor row + non-matching pick.** From the same Aurora data, query `fetch_anchor_row` directly to confirm the anchor's `rail_name`. Compare against what `non_matching_dropdown_value` returned (read from captured WS frame's rail param = "ExternalRailInbound"). If anchor's rail name == "ExternalRailInbound" → hypothesis (b). If different → not (b).
+- [ ] **AA.A.l2ft-rails-inverse.3 — Fix the root cause.** Depending on outcome of .1/.2:
+  - (a)/(b): fix `non_matching_dropdown_value` to actually pick a different rail value OR fix `fetch_anchor_row` to return a different rail
+  - (c): fix the L2FT postings dataset SQL so `pL2ftRail` actually narrows. Inspect why additive passes (probably the sentinel default during additive's apply_anchor_to_pickers, while inverse's pick lands a non-sentinel but the SQL still doesn't filter)
+- [ ] **AA.A.l2ft-rails-inverse.4 — Verify against Aurora.** `up_to=browser --variants=sp_pg_aw` should drop to 9 failures (2 Rails inverse close). Cut v11.0.2 if the fix is small.
+
+**What we know does NOT cause this:**
+
+- Date filter (v11.0.1's inclusive-bounds fix works for L2FT — additive narrows correctly)
+- Picker-doesn't-fire-at-all (WS frame shows ExternalRailInbound IS being substituted into the param)
+- L1 Shape B (different sheets, different dataset SQL pattern)
+
 ### AA.A.qs-triage — 12 persistent QS-* picker failures (umbrella, 2026-05-18)
 
 Verification chain at commit `b7dcbff` (`sp_pg_aw.browser`, 612s wall): **14 failed / 65 passed / 11 skipped**. Down from `6190c23`'s 22 failures. Delta is **all App2** (10 → 2): the cache fix (`4c7e248`) closed `[app2-Drift/Limit Breach/Today's Exceptions/Pending Aging/Unbundled Aging/Overdraft]` × 2. **QS-* failures are unchanged at 12** — the App2 cache fix has no QS analogue (WebSocket protocol, no HTTP Cache-Control), and race.3's snapshot-then-wait + cache-equivalent fast-path didn't move the QS needle either. Persisting QS failure set:
