@@ -1445,104 +1445,110 @@ def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> in
 
 
 
-def read_all_table_rows_via_scroll(
-    page: Page, visual_title: str,
-) -> list[dict[str, str]]:
-    """AA.A.l2ft-rails-inverse.2.c — return EVERY rendered row as a
-    list of dicts keyed by column-header display text, walking the
+def find_row_in_table_via_scroll(
+    page: Page, visual_title: str, predicate: dict[str, str],
+) -> dict[str, str] | None:
+    """AA.A.l2ft-rails-inverse.2.e — return the first row whose visible
+    cells subset-match ``predicate`` (header → value), walking the
     scroll-accumulate dance so virtualized rows below the fold get
-    mounted before they're read.
+    mounted before they're checked. Returns ``None`` if no row matches
+    after scrolling to the bottom (or 500 stable steps).
 
-    Same scroll loop as ``count_table_total_rows`` — scroll the inner
-    ``.grid-container`` 400px at a time, settle 120ms per step,
-    exit on stable-for-3 or scroll-to-bottom. At each step,
-    accumulate ``{row_idx -> {col_idx -> value}}`` keyed by the
-    ``sn-table-cell-{r}-{c}`` automation IDs so re-mounted rows
-    don't double-count. After scrolling completes, project headers
-    (left-to-right ``sn-table-column-N`` titles) and zip them with
-    each row's cells (sorted by column index) to produce the per-
-    row dict.
+    Use case: the inverse-picker test asks "is there ANY row in the
+    post-pick result that still has the anchor's value for the toggled
+    column?". Early-exits the scroll loop on first match — typical
+    "yes, broken filter" returns in <500 ms; "no, anchor excluded"
+    walks to the bottom (~1-3s on a 100-row table at 120ms/step).
 
-    Use case: the inverse-picker test needs to verify the anchor row
-    is NOT in the post-pick result. The picker may filter the table
-    from 88 → 174 rows (different rail, different rows); reading only
-    the DOM-visible window misses rows below the fold and the test
-    can't distinguish "anchor excluded" from "anchor below the fold".
+    The membership check IS the contract — count-based assertions
+    can't tell apart "filter narrowed" from "filter returned different
+    rows for unrelated reasons", but "is the anchor's row excluded?"
+    is the actual question the picker test wants to answer.
 
-    Returns ``[]`` if the visual isn't on the page or has no
-    ``.grid-container`` (one-row table).
+    Returns ``None`` if the visual isn't on the page or has no
+    ``.grid-container``. The predicate's keys must match column-
+    header display labels (use ``visual_column_label`` to resolve
+    SQL column names → display labels).
     """
     return page.evaluate(
-        """async (title) => {
+        """async ({title, predicate}) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
             let target = null;
             for (const v of visuals) {
                 const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
                 if (t && t.innerText.trim() === title) { target = v; break; }
             }
-            if (!target) return [];
+            if (!target) return null;
             const container = target.querySelector('.grid-container');
-            // Cells map across scroll steps. Keyed by row_idx then col_idx
-            // so re-mounted rows just overwrite with the same value.
-            const cellsByRow = {};
-            const collect = () => {
+            const readHeaders = () => {
+                const headers = [];
+                target.querySelectorAll('[data-automation-id^="sn-table-column-"]').forEach(c => {
+                    if (!/sn-table-column-\\d+$/.test(c.getAttribute('data-automation-id'))) return;
+                    const titleEl = c.querySelector('.table-title .title')
+                        || c.querySelector('.title');
+                    headers.push(titleEl ? titleEl.innerText.trim() : c.innerText.trim());
+                });
+                return headers;
+            };
+            // Check currently-mounted rows against the predicate. Returns
+            // the matching row dict (header → value) or null.
+            const checkMounted = (headers) => {
+                const cellsByRow = {};
                 target.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
                     const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-(\\d+)/);
                     if (!m) return;
                     const r = parseInt(m[1], 10), col = parseInt(m[2], 10);
                     (cellsByRow[r] = cellsByRow[r] || {})[col] = c.innerText.trim();
                 });
+                for (const r of Object.keys(cellsByRow)) {
+                    const cols = cellsByRow[r];
+                    const ordered = Object.keys(cols).map(Number).sort((a, b) => a - b)
+                        .map(col => cols[col]);
+                    const row = {};
+                    for (let i = 0; i < headers.length && i < ordered.length; i++) {
+                        row[headers[i]] = ordered[i];
+                    }
+                    let matches = true;
+                    for (const [k, v] of Object.entries(predicate)) {
+                        if (row[k] !== v) { matches = false; break; }
+                    }
+                    if (matches) return row;
+                }
+                return null;
             };
+            const headers = readHeaders();
+            const initial = checkMounted(headers);
+            if (initial) return initial;
+            if (!container) return null;
+            let stable = 0;
+            let prevMax = -1;
             const getMaxRow = () => {
                 let max = -1;
-                for (const r of Object.keys(cellsByRow)) {
-                    const n = parseInt(r, 10);
-                    if (n > max) max = n;
-                }
+                target.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
+                    if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+                });
                 return max;
             };
-            collect();
-            if (container) {
-                let max = getMaxRow();
-                let stable = 0;
-                for (let step = 0; step < 500; step++) {
-                    const prev = max;
-                    container.scrollTop = container.scrollTop + 400;
-                    await new Promise(r => setTimeout(r, 120));
-                    collect();
-                    const now = getMaxRow();
-                    if (now > max) max = now;
-                    if (container.scrollTop + container.clientHeight >= container.scrollHeight - 1) {
-                        await new Promise(r => setTimeout(r, 400));
-                        collect();
-                        break;
-                    }
-                    if (now === prev) { stable++; if (stable > 3) break; }
-                    else { stable = 0; }
+            for (let step = 0; step < 500; step++) {
+                container.scrollTop = container.scrollTop + 400;
+                await new Promise(r => setTimeout(r, 120));
+                const hit = checkMounted(headers);
+                if (hit) return hit;
+                const now = getMaxRow();
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 1) {
+                    await new Promise(r => setTimeout(r, 400));
+                    const finalHit = checkMounted(headers);
+                    if (finalHit) return finalHit;
+                    break;
                 }
+                if (now === prevMax) { stable++; if (stable > 3) break; }
+                else { stable = 0; prevMax = now; }
             }
-            // Project headers left-to-right; zip with cells per row.
-            const headers = [];
-            target.querySelectorAll('[data-automation-id^="sn-table-column-"]').forEach(c => {
-                if (!/sn-table-column-\\d+$/.test(c.getAttribute('data-automation-id'))) return;
-                const titleEl = c.querySelector('.table-title .title')
-                    || c.querySelector('.title');
-                headers.push(titleEl ? titleEl.innerText.trim() : c.innerText.trim());
-            });
-            const rows = [];
-            Object.keys(cellsByRow).map(Number).sort((a, b) => a - b).forEach(r => {
-                const ordered = Object.keys(cellsByRow[r]).map(Number).sort((a, b) => a - b)
-                    .map(col => cellsByRow[r][col]);
-                const row = {};
-                for (let i = 0; i < headers.length && i < ordered.length; i++) {
-                    row[headers[i]] = ordered[i];
-                }
-                rows.push(row);
-            });
-            return rows;
+            return null;
         }""",
-        visual_title,
-    ) or []
+        {"title": visual_title, "predicate": predicate},
+    )
 
 
 def count_chart_categories(page: Page, visual_title: str) -> int:

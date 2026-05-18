@@ -38,7 +38,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,7 +55,7 @@ from recon_gen.common.browser.helpers import (
     generate_dashboard_embed_url,
     get_sheet_tab_names,
     get_visual_titles,
-    read_all_table_rows_via_scroll,
+    find_row_in_table_via_scroll,
     read_kpi_value,
     read_table_rows_dom,
     right_click_first_row_of_visual,
@@ -494,19 +494,24 @@ class QsEmbedDriver:
         )
         return read_table_rows_dom(self._page, visual_title)
 
-    def read_all_table_rows(
-        self, visual_title: str,
-    ) -> list[dict[str, str]]:
-        # AA.A.l2ft-rails-inverse.2.c — scroll the inner grid container
-        # to load every virtualized row, then dump headers + per-row
-        # cells. For the inverse-picker test's "is anchor excluded"
-        # check: needs the FULL filtered result, not just the visible
-        # window. ~1-3s wall on a 100-row table (one scroll step ≈ 120ms).
+    def find_row(
+        self, visual_title: str, predicate: Mapping[str, str],
+    ) -> dict[str, str] | None:
+        # AA.A.l2ft-rails-inverse.2.e — scroll the inner grid container
+        # checking each newly-mounted row against the predicate, early-
+        # exit on first match. ~500ms wall on the "fast-fail" path
+        # (broken filter → match on the visible window); ~1-3s on the
+        # "filter works" path (scroll to bottom of 100-row table at
+        # 120ms/step). Page-size bump deliberately skipped — the scroll
+        # loop reads virtualized rows as they mount, no need to flatten
+        # via pagination first.
         scroll_visual_into_view(
             self._page, visual_title, self._visual_timeout,
             wait_for_cells=False,
         )
-        return read_all_table_rows_via_scroll(self._page, visual_title)
+        return find_row_in_table_via_scroll(
+            self._page, visual_title, dict(predicate),
+        )
 
     def table_row_count(self, visual_title: str) -> int:
         # AA.H.11 — orchestrate {scroll-into-view → detect pagination → bump

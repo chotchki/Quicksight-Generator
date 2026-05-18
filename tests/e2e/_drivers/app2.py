@@ -368,26 +368,40 @@ class App2Driver:
             rows.append(dict(zip(headers, cells, strict=False)))
         return rows
 
-    def read_all_table_rows(
-        self, visual_title: str,
-    ) -> list[dict[str, str]]:
-        # App2 paginates server-side at ``_TABLE_PAGE_SIZE`` (50 rows/page,
-        # cap 10000). To surface ALL rows for identity-checks, re-navigate
-        # to the current page URL with ``?page_size=10000`` appended,
-        # preserving every other query param (picker state lives in
-        # ``?param_*``). Then read the now-single-page table.
-        from urllib.parse import (  # noqa: PLC0415 — local import keeps the cold path off general driver init
-            parse_qsl,
-            urlencode,
-            urlparse,
-            urlunparse,
-        )
-        current = urlparse(self.page.url)
-        qs = dict(parse_qsl(current.query, keep_blank_values=True))
-        qs["page_size"] = "10000"
-        bumped = urlunparse(current._replace(query=urlencode(qs)))
-        self.page.goto(bumped, wait_until="domcontentloaded")
-        return self.table_rows(visual_title)
+    def find_row(
+        self, visual_title: str, predicate: Mapping[str, str],
+    ) -> dict[str, str] | None:
+        # AA.A.l2ft-rails-inverse.2.e — walk pages via the rendered
+        # ".table-pager-next" anchor (hx-get + hx-push-url, fetches via
+        # HTMX form-submit so picker state in #filter-form survives).
+        # Early-exit on first match — broken filter → match on page 1.
+        #
+        # Why not just re-navigate to ``?page_size=10000``: ``pick_filter``
+        # currently mutates the HTMX form without updating the URL bar
+        # (filed as the "App2 URL-canonical" task), so ``self.page.url``
+        # is stale relative to the actual rendered picker state. Pager-
+        # next clicks go through HTMX which carries the live form state,
+        # avoiding the divergence entirely.
+        section = self._section(visual_title)
+        # Hard cap on pages walked — protects against runaway loops if
+        # the pager's aria-disabled isn't surfaced correctly.
+        for _ in range(200):
+            for row in self.table_rows(visual_title):
+                if all(row.get(k) == v for k, v in predicate.items()):
+                    return row
+            next_link = section.locator(".table-pager-next").first
+            if next_link.count() == 0:
+                return None
+            if next_link.get_attribute("aria-disabled") == "true":
+                return None
+            # Click + wait for HTMX swap — the new <table> mounts in
+            # place of the old, so re-querying ``table.table-data`` for
+            # ``state=visible`` settles on the swapped DOM.
+            next_link.click()
+            section.locator("table.table-data").first.wait_for(
+                state="visible",
+            )
+        return None
 
     def table_row_count(self, visual_title: str) -> int:
         # App2's Table renderer is server-side paginated

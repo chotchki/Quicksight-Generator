@@ -26,7 +26,7 @@ any caller of this protocol) talks ``DashboardDriver``, not ``Page`` /
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -108,20 +108,20 @@ class DashboardDriver(Protocol):
         table is small). Returns 0 for an empty table (not a sentinel)."""
         ...
 
-    def read_all_table_rows(
-        self, visual_title: str,
-    ) -> list[dict[str, str]]:
-        """Every row of a table visual as a list of header-keyed dicts,
-        including rows below the fold. On QS that's a scroll-accumulate
-        dance through the visual's inner grid container so virtualized
-        rows get mounted and read. On App2 it's just every rendered row
-        (the server-side pagination already returns all matching rows
-        in one fetch).
+    def find_row(
+        self, visual_title: str, predicate: Mapping[str, str],
+    ) -> dict[str, str] | None:
+        """Walk the table looking for a row whose visible cells subset-
+        match ``predicate`` (header → value). Return the first matching
+        row as a header-keyed dict, or ``None`` if no row matches after
+        walking the entire table (scroll-accumulated on QS, page-walked
+        on App2). Early-exits on first match — the inverse-picker test
+        only needs "is there ANY offending row?", not the full set.
 
-        Use case: identity-checks where you need to verify the presence
-        or absence of a specific row in the FULL filtered result, not
-        just the visible window. ``table_rows()`` returns the window;
-        this returns the universe."""
+        The predicate's keys are column-header DISPLAY labels (the
+        text the user sees as the column name) — use
+        ``visual_column_label`` to resolve SQL column names if
+        needed."""
         ...
 
     def kpi_value(self, visual_title: str) -> str | None:

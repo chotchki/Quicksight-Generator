@@ -451,29 +451,22 @@ def test_l1_dropdown_pickers_inverse_excludes_anchor(
             continue
 
         # Toggle to non-matching.
-        # AA.A.l2ft-rails-inverse.2.d — row-identity check, not row-count.
-        # Old `post_invert < anchor_count` baked in the wrong premise that
-        # non-matching values are always sparser (false when the anchor's
-        # rail/status/bundle happens to be less populated than the
-        # toggled-to value). The real contract: after the toggle, NO row
-        # in the result should still match the anchor's value for the
-        # toggled column. Walk the full filtered set (scroll-accumulated)
-        # and assert zero offenders.
+        # AA.A.l2ft-rails-inverse.2.e — row-identity check via find_row,
+        # not row-count. After the toggle, no row should still match the
+        # anchor's value for the toggled column; find_row early-exits on
+        # the first offender (fast-fail when the filter is broken).
         driver.pick_filter(picker.label, [non_matching])
         driver.wait_loaded(spec.target_visual)
-        post_invert_rows = driver.read_all_table_rows(spec.target_visual)
         visual_col = visual_column_label(spec, cfg, l2, picker.column)
-        offenders = [
-            r for r in post_invert_rows if r.get(visual_col) == matching
-        ]
-        assert not offenders, (
+        offender = driver.find_row(
+            spec.target_visual, {visual_col: matching},
+        )
+        assert offender is None, (
             f"{spec.sheet_name!r} picker {picker.label!r}: after "
             f"toggling to non-matching value {non_matching!r}, the "
             f"result should contain NO rows with {visual_col!r}="
-            f"{matching!r} (the anchor's value). Found "
-            f"{len(offenders)} offending row(s) out of "
-            f"{len(post_invert_rows)} total; first 3: "
-            f"{offenders[:3]!r}. Picker is wired to nothing, WHERE "
+            f"{matching!r} (the anchor's value). Found offending "
+            f"row {offender!r}. Picker is wired to nothing, WHERE "
             f"clause is too loose (LIKE/IN with wrong scope), or "
             f"binding is inverted."
         )
