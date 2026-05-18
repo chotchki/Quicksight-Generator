@@ -61,7 +61,6 @@ from recon_gen.common.browser.helpers import (
     scroll_visual_into_view,
     set_dropdown_value,
     set_multi_select_values,
-    table_is_paginated,
     set_parameter_datetime_value,
     set_parameter_slider_value,
     sheet_control_titles,
@@ -76,6 +75,40 @@ _TODO = "X.2.q — QsEmbedDriver verb not implemented yet"
 
 _DEFAULT_PAGE_TIMEOUT_MS = 30_000
 _DEFAULT_VISUAL_TIMEOUT_MS = 15_000
+
+
+def _table_has_scroll_overflow(page: Any, visual_title: str) -> bool:
+    """AA.A.l2ft-rails-inverse.2 — does the visual's inner
+    ``.grid-container`` have rows below the fold?
+
+    QS Tables come in two non-paginated shapes:
+
+    - Fits-in-viewport (e.g. L1 Drift with 10 rows on a tall sheet):
+      ``scrollHeight ≤ clientHeight``. The DOM holds every row;
+      ``count_table_rows`` is the exact total.
+    - Infinite-scroll virtualized (e.g. L2FT Rails with 88+ matching
+      rows): ``scrollHeight > clientHeight``. Only the visible window
+      is mounted (~10-50 rows); ``count_table_rows`` undercounts. The
+      caller must scroll-accumulate via ``count_table_total_rows``.
+
+    This is a cheap read — no clicks, no waits. Returns False if the
+    visual or its grid-container isn't on the page (let the cheap-path
+    return whatever ``count_table_rows`` sees).
+    """
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const c = v.querySelector('.grid-container');
+                if (!c) return false;
+                return c.scrollHeight > c.clientHeight + 1;
+            }
+            return false;
+        }""",
+        visual_title,
+    )
 
 
 @dataclass(frozen=True)
@@ -499,12 +532,31 @@ class QsEmbedDriver:
         # rely on this returning 0 to decide whether to `pytest.skip`.
         if visual_is_empty(self._page, visual_title):
             return 0
-        if not table_is_paginated(self._page, visual_title):
-            return max(0, count_table_rows(self._page, visual_title))
+        # AA.A.l2ft-rails-inverse.2 — three table shapes QS uses, three
+        # paths to the true row count:
+        #
+        # 1. **Paginated.** A ``simplePagedDisplayNav_dropdown_pageSize``
+        #    dropdown is in the DOM. Bump page size to 10000, WS-settle,
+        #    then scroll-accumulate. (The original AA.H.11 path.)
+        # 2. **Infinite-scroll virtualized.** No pagination dropdown but
+        #    the inner ``.grid-container`` scrollHeight > clientHeight
+        #    (more rows below the fold). ``count_table_rows`` returns
+        #    only the visible window (~10–50 rows depending on viewport).
+        #    Scroll-accumulate via ``count_table_total_rows`` to walk
+        #    every mounted row. This is the shape L2FT Rails uses at
+        #    spec_example data volumes (88+ matching rows) — the original
+        #    AA.H.11 code fell straight to ``count_table_rows`` for the
+        #    non-paginated case and silently saturated at the visible
+        #    window, masking broken narrows as ``visible == visible``.
+        # 3. **Fits-in-viewport.** No pagination dropdown AND no scroll
+        #    overflow (the entire result set is mounted). ``count_table_rows``
+        #    is the exact total — no scrolling needed.
         if bump_table_page_size_to_10000(
             self._page, visual_title, self._visual_timeout,
         ):
             self._settle_after_param_change()
+        elif not _table_has_scroll_overflow(self._page, visual_title):
+            return max(0, count_table_rows(self._page, visual_title))
         total = count_table_total_rows(
             self._page, visual_title, self._visual_timeout,
         )
