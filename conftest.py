@@ -93,5 +93,11 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             argv=[biome, "check", "--max-diagnostics=400"],
             cwd=rootpath,
             skip_env="RECON_GEN_SKIP_BIOME",
-            fail_msg="biome found lint errors — fix the App 2 JS before tests run.",
+            fail_msg=(
+                "biome found lint errors — fix the App 2 JS before tests run.\n"
+                "  Auto-fix formatting:  biome check --write "
+                "src/recon_gen/common/html/assets/js/\n"
+                "  Auto-fix incl. unsafe: biome check --write --unsafe "
+                "src/recon_gen/common/html/assets/js/"
+            ),
         )
