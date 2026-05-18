@@ -200,3 +200,75 @@ def test_snapshot_equality_for_use_in_assertions() -> None:
     snap1 = tracker.snapshot()
     snap2 = tracker.snapshot()
     assert snap1 == snap2  # frozen, structural equality
+
+
+# AA.A.qs-triage.1 — frame_sink wiring. The sink captures every framesent
+# payload (parseable or not) for the per-test ``ws_frames.txt`` artifact.
+# Confirms the tracker's parsed counters and the artifact sink stay
+# decoupled — a malformed frame still lands in the sink even though it's
+# ignored for ``total_starts`` / ``pending`` accounting.
+
+
+def test_frame_sink_appends_every_text_payload() -> None:
+    sink: list[str] = []
+    page = _MockPage()
+    tracker = _QsWsActivityTracker(page, frame_sink=sink)
+    ws = page.attach_ws()
+    ws.send(_start("c1"))
+    ws.send(_stop("c1"))
+    assert len(sink) == 2
+    assert sink[0].startswith("[framesent] ")
+    assert "START_VIS" in sink[0]
+    assert "STOP_VIS" in sink[1]
+    # Parsed state unchanged by sink wiring.
+    assert tracker.total_starts == 1
+    assert tracker.pending_count == 0
+
+
+def test_frame_sink_captures_malformed_payloads_too() -> None:
+    """Sink is the ARTIFACT log — it captures everything for forensic
+    replay even if the parser ignores it. The post-pick QS frame might
+    have an unexpected shape we want to inspect."""
+    sink: list[str] = []
+    page = _MockPage()
+    tracker = _QsWsActivityTracker(page, frame_sink=sink)
+    ws = page.attach_ws()
+    ws.send("not json at all")
+    ws.send(json.dumps({"type": "UNKNOWN_KIND", "details": 42}))
+    ws.send(_start("c1"))
+    # Sink captures all 3; tracker counts only the START_VIS.
+    assert len(sink) == 3
+    assert sink[0] == "[framesent] not json at all"
+    assert "UNKNOWN_KIND" in sink[1]
+    assert "START_VIS" in sink[2]
+    assert tracker.total_starts == 1
+
+
+def test_frame_sink_marks_binary_frames_without_dumping_bytes() -> None:
+    """Binary frames (QS heartbeats etc.) get a length marker rather
+    than raw bytes — keeps ws_frames.txt grep-friendly text."""
+    sink: list[str] = []
+    page = _MockPage()
+    tracker = _QsWsActivityTracker(page, frame_sink=sink)
+    ws = page.attach_ws()
+    ws.send(b"\x00\x01\x02\x03")  # type: ignore[arg-type]: deliberately wrong type to verify binary path
+    assert len(sink) == 1
+    assert sink[0] == "[framesent-binary len=4]"
+    # Parser ignores binary; counters stay zero.
+    assert tracker.total_starts == 0
+    assert tracker.pending_count == 0
+
+
+def test_no_sink_means_no_capture_overhead() -> None:
+    """Default ``frame_sink=None`` is a zero-cost path — the tracker
+    doesn't allocate or buffer anything, matching the pre-qs-triage.1
+    behavior for callers that don't need the artifact."""
+    page = _MockPage()
+    tracker = _QsWsActivityTracker(page)
+    ws = page.attach_ws()
+    ws.send(_start("c1"))
+    ws.send(_stop("c1"))
+    # No accessor for the sink; the only verification we can do is
+    # that the tracker still works correctly without one.
+    assert tracker.total_starts == 1
+    assert tracker.pending_count == 0

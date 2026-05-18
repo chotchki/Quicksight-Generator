@@ -164,6 +164,14 @@ def webkit_page(
       multiple ``404 Not Found`` responses paired with the
       ``Sample values not found`` JS errors — the URL pattern
       should disambiguate which QS-side resource is missing.
+    - ``ws_frames.txt`` (AA.A.qs-triage.1) — QS-only: every text
+      WebSocket frame the page sent (QS's data-layer protocol —
+      ``START_VIS`` carries the actual parameter substitution QS
+      made for the visual's CustomSql). Sink lives on
+      ``QsEmbedDriver._ws_frames`` and is attached to the page as
+      ``page._qs_gen_ws_frames_sink``; App2-only tests leave the
+      sink empty and land an empty file (signal that the test
+      didn't open a QS embed).
     - ``trace.zip`` (Y.2.gate.c.11) — Playwright trace bundle:
       full action timeline, DOM snapshots per action, screenshots,
       network, and console. Open with ``playwright show-trace
@@ -174,8 +182,8 @@ def webkit_page(
 
     - **Set** (running under the test layer chain runner):
       ``$RECON_GEN_RUN_DIR/browser/<test_id>/{screenshot.png,dom.html,
-      console.txt,qs_errors.txt,network.txt,trace.zip}`` — per-test
-      directory so artifacts cluster cleanly.
+      console.txt,qs_errors.txt,network.txt,ws_frames.txt,trace.zip}``
+      — per-test directory so artifacts cluster cleanly.
     - **Unset** (legacy ``./run_e2e.sh`` / direct ``pytest`` invocation):
       ``tests/e2e/screenshots/_failures/<test_id>.png`` etc., flat
       directory with per-file ``<test_id>_`` prefix to disambiguate.
@@ -257,6 +265,13 @@ def webkit_page(
             _capture_failure_console(console_messages, test_id)
             _capture_failure_qs_errors(page, test_id)
             _capture_failure_network(network_responses, test_id)
+            # AA.A.qs-triage.1 — QS-side ws_frames sink attaches in
+            # ``QsEmbedDriver.__init__``; App2-only tests never set it.
+            # getattr-with-None lets the unset case land an empty file.
+            _capture_failure_ws_frames(
+                getattr(page, "_qs_gen_ws_frames_sink", None) or [],
+                test_id,
+            )
             raise
         finally:
             # Track "did the fixture caller already trigger capture
@@ -335,6 +350,11 @@ def trigger_failure_capture(
     _capture_failure_console(console_messages, resolved_test_id)
     _capture_failure_qs_errors(page, resolved_test_id)
     _capture_failure_network(network_responses, resolved_test_id)
+    # AA.A.qs-triage.1 — QS-side ws_frames sink attaches in
+    # ``QsEmbedDriver.__init__``; App2-only tests never set it.
+    # getattr-with-None lets the unset case land an empty file.
+    ws_frames: list[str] = getattr(page, "_qs_gen_ws_frames_sink", None) or []
+    _capture_failure_ws_frames(ws_frames, resolved_test_id)
     if cfg is not None:
         _capture_failure_db_counts(cfg, resolved_test_id)
 
@@ -642,6 +662,35 @@ def _capture_failure_network(responses: list[str], test_id: str) -> None:
         path.write_text("\n".join(responses), encoding="utf-8")
     except Exception as exc:
         _warn_capture_failure("network.txt", exc)
+
+
+def _capture_failure_ws_frames(frames: list[str], test_id: str) -> None:
+    """Dump the captured QuickSight WebSocket frames to
+    ``<capture_dir>/ws_frames.txt`` (or legacy
+    ``<test_id>_ws_frames.txt``). QS-only artifact: the sink is wired
+    by ``QsEmbedDriver``; ``App2Driver`` doesn't use WebSockets and
+    leaves the sink ``None``, so this file appears only for QS-driven
+    tests (mirrors ``qs_errors.txt`` which is also QS-only).
+
+    AA.A.qs-triage.1 — every QS data-layer round-trip rides one
+    long-lived WebSocket; the frames are the ground truth for "what
+    parameter value did QS actually substitute into the picker", which
+    a DOM-only triage can only approximate. Without this artifact the
+    only way to see the post-pick START_VIS payload was to redeploy
+    the JS bootstrap with a ``console.debug`` tracer and re-run, which
+    burns a CI cycle per question. With it, every failing QS e2e drops
+    the full frame log alongside the screenshot and DOM dump.
+
+    Empty file when nothing was captured (so the artifact bundle
+    reliably contains the file and the absence of content is itself
+    a signal — e.g. App2-only test that never opened a QS embed).
+    """
+    try:
+        path = _capture_path("ws_frames.txt", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(frames), encoding="utf-8")
+    except Exception as exc:
+        _warn_capture_failure("ws_frames.txt", exc)
 
 
 def _capture_failure_qs_errors(page: Page, test_id: str) -> None:

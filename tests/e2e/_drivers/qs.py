@@ -140,21 +140,54 @@ class _QsWsActivityTracker:
     Best-effort: malformed payloads, binary frames, or missing keys
     are swallowed (the tracker degrades to "saw nothing" — better than
     crashing the test).
+
+    AA.A.qs-triage.1 — optional ``frame_sink`` accumulates every
+    framesent text payload (prefixed with ``[framesent]``, monotonic-
+    timestamped to disambiguate ordering when the same cid round-trips
+    multiple times in one test). ``QsEmbedDriver`` wires this into the
+    same ``trigger_failure_capture`` path the console / network / DOM
+    sinks use, so a failing QS-side e2e drops ``ws_frames.txt`` in the
+    per-test artifact dir alongside ``console.txt`` and ``network.txt``.
+    Mirror of the App2 race.1 root-cause path — the JS-side console
+    tracer made the cache-vs-network asymmetry obvious in retrospect;
+    same shape on the QS side means the next "QS WHERE clause didn't
+    match my picked value" investigation reads ``ws_frames.txt`` and
+    sees the actual START_VIS payload QS sent rather than re-deriving
+    via instrumented re-runs.
     """
 
-    def __init__(self, page: Any) -> None:
+    def __init__(self, page: Any, *, frame_sink: list[str] | None = None) -> None:
         self._pending: set[str] = set()
         self._total_starts: int = 0
         self._last_start_at: float = 0.0
+        self._frame_sink = frame_sink
         page.on("websocket", self._on_ws)
 
     def _on_ws(self, ws: Any) -> None:
         ws.on("framesent", self._on_frame)
 
     def _on_frame(self, payload: Any) -> None:
-        # Bytes / non-JSON frames: silently ignore. QS sends JSON text
-        # for the data-layer protocol; binary frames are likely
-        # heartbeats or something we don't care about.
+        # First: append the raw frame to the artifact sink (when wired).
+        # Non-string payloads (binary frames — QS uses these for heartbeats /
+        # protocol-level bookkeeping we don't care about) get a one-line
+        # marker rather than the bytes themselves so the artifact stays
+        # text-grepable. Sink-append is wrapped in a broad except so a
+        # misbehaving sink (full disk during list growth?) never aborts
+        # the page-event lifecycle.
+        sink = self._frame_sink
+        if sink is not None:
+            try:
+                if isinstance(payload, str):
+                    sink.append(f"[framesent] {payload}")
+                else:
+                    length = len(payload) if hasattr(payload, "__len__") else "?"
+                    sink.append(f"[framesent-binary len={length}]")
+            except Exception:
+                pass
+        # Bytes / non-JSON frames: silently ignore for the parsed
+        # tracker state. QS sends JSON text for the data-layer protocol;
+        # binary frames are likely heartbeats or something we don't care
+        # about.
         if not isinstance(payload, str):
             return
         try:
@@ -253,7 +286,14 @@ class QsEmbedDriver:
         # so the activity tracker captures every START_VIS / STOP_VIS
         # frame from now on. Used by ``_settle_after_param_change`` for
         # event-driven settle (no sleeps / DOM polls).
-        self._ws_tracker = _QsWsActivityTracker(page)
+        # AA.A.qs-triage.1 — also accumulate every framesent payload
+        # into a sink list; attach the sink to the page so
+        # ``trigger_failure_capture`` can dump it to ``ws_frames.txt``
+        # in the per-test artifact dir on test failure (same pattern as
+        # ``_qs_gen_console_sink`` / ``_qs_gen_network_sink``).
+        self._ws_frames: list[str] = []
+        self._ws_tracker = _QsWsActivityTracker(page, frame_sink=self._ws_frames)
+        page._qs_gen_ws_frames_sink = self._ws_frames  # type: ignore[attr-defined]: monkey-attach sink for trigger_failure_capture, matches _qs_gen_console_sink pattern
 
     # -- factories -------------------------------------------------------
 
