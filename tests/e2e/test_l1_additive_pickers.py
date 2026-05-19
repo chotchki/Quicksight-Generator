@@ -243,10 +243,22 @@ L1_PICKER_SPECS: tuple[SheetAnchorSpec, ...] = (
             ),
         ),
     ),
-    # Today's Exceptions — UNION ALL across 5 L1 invariant views,
-    # pre-filtered to the latest business_day at the SQL layer (so the
-    # dataset's default-param output IS "today" for the analyst).
-    # Date range + Check Type (closed enum) + Account + Transfer Type.
+    # Today's Exceptions — UNION ALL across 5 per-day L1 invariant
+    # views PLUS two currently-open branches (stuck_pending,
+    # stuck_unbundled). The stuck-* branches surface transactions on
+    # control accounts (``clearing-suspense``, ``customer-ledger``) that
+    # have no daily-balance rows, so those rows appear in the
+    # ``Exception Detail`` table but those account_ids are absent from
+    # the Account dropdown universe (which sources from
+    # ``current_daily_balances`` via ``build_l1_accounts_dataset``).
+    # Without the anchor constraint, the ``account_id ASC, magnitude
+    # DESC`` order lands on an alphabetically-first control account
+    # (e.g. ``clearing-suspense``) and the Account picker can't find
+    # it (QS: option absent; App2: TomSelect setValue no-ops, no
+    # /visuals/.../data refetch fires → 15s Playwright timeout).
+    #
+    # AA.A.qs-triage.5 — same shape as the Transactions fix (AA.A.993):
+    # constrain the anchor account to the dropdown's advertised universe.
     SheetAnchorSpec(
         sheet_name="Today's Exceptions",
         target_visual="Exception Detail",
@@ -255,6 +267,11 @@ L1_PICKER_SPECS: tuple[SheetAnchorSpec, ...] = (
         # Sorted-by-magnitude is the visual default — pick the top row
         # of the smallest cust-N for the MUI window bias (see Drift).
         anchor_order="account_id ASC, magnitude DESC",
+        anchor_where_template=(
+            "account_id IN ("
+            "SELECT account_id FROM {prefix}_current_daily_balances"
+            ")"
+        ),
         pickers=(
             PickerSpec(
                 label="Date From", kind="date_from", column="business_day",
