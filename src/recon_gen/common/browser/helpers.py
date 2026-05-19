@@ -18,6 +18,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, TypeVar
 
@@ -859,6 +860,52 @@ def _capture_failure_db_counts(
                 pass
     except Exception as exc:
         _warn_capture_failure("db_counts.txt", exc)
+
+
+def record_sql_trace(label: str, sql: str, summary: str) -> None:
+    """Append one SQL-query entry to ``<capture_dir>/sql_trace.txt``.
+
+    Browser-test helpers (``fetch_anchor_row``, future picker-universe
+    probes) call this after executing a query so the failure-capture
+    bundle records *what the test asked the DB for* alongside the DOM
+    + db_counts artifacts. When a dropdown later shows
+    ``MuiAutocomplete-noOptions`` for a value the test typed, the
+    triage answers "did the DB return that value" by reading
+    ``sql_trace.txt`` instead of re-running the queries by hand.
+
+    Format per entry (append-mode):
+
+      ## <label>
+      -- ran at <iso-timestamp>
+      <sql>
+      ---
+      <summary>
+
+    Test ID resolves from ``PYTEST_CURRENT_TEST`` — runs outside pytest
+    no-op the write. Sidecar contract: swallow exceptions; capture
+    failures must never mask the original test failure.
+    """
+    try:
+        test_id = _test_id_from_pytest_env()
+        if test_id == "unknown":
+            return
+        path = _capture_path("sql_trace.txt", test_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Failure-capture artifact records wall-clock time of the query so the
+        # human reader can correlate against CI logs / matview refresh windows.
+        # Never lands in hash-locked output.
+        timestamp = datetime.now(UTC).isoformat(timespec="seconds")  # typing-smell: ignore[no-datetime-now]: capture-artifact timestamp; not in hash-locked output
+        entry = (
+            f"\n## {label}\n"
+            f"-- ran at {timestamp}\n"
+            f"{sql.rstrip()}\n"
+            f"---\n"
+            f"{summary.rstrip()}\n"
+        )
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except Exception as exc:
+        _warn_capture_failure("sql_trace.txt", exc)
 
 
 def wait_for_dashboard_loaded(page: Page, timeout_ms: int) -> None:

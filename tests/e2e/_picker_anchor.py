@@ -43,6 +43,7 @@ from typing import Any, Literal
 
 import psycopg
 
+from recon_gen.common.browser.helpers import record_sql_trace
 from recon_gen.common.config import Config
 from recon_gen.common.dataset_contract import DatasetContract
 from recon_gen.common.html._sql_executor import apply_dataset_param_defaults
@@ -242,6 +243,22 @@ def fetch_anchor_row(
             cur.execute(wrapped)
             row = cur.fetchone()
             cols = [d.name for d in cur.description] if cur.description else []
+
+    # AA.A.qs-triage.5.followon — record the anchor SQL + result to the
+    # failure-capture bundle. Without it, a downstream picker failure
+    # (e.g. MuiAutocomplete-noOptions on a value the test typed) can't be
+    # split into "DB didn't return what we expected" vs "QS lost the
+    # option" without re-running the query by hand. record_sql_trace is
+    # sidecar-safe (swallows its own errors) so it can't mask a real
+    # fixture failure.
+    record_sql_trace(
+        label=f"anchor [{spec.sheet_name}]",
+        sql=wrapped,
+        summary=(
+            f"returned: {dict(zip(cols, row, strict=True)) if row else 'no rows'}"
+        ),
+    )
+
     if row is None:
         raise RuntimeError(
             f"fetch_anchor_row: {spec.sheet_name!r}'s dataset SQL "

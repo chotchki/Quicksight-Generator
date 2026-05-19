@@ -1099,6 +1099,11 @@ class CreateTagsCheck(Check):
 _NON_PLAYWRIGHT_BROWSER_HELPERS = frozenset({
     "get_user_arn",
     "generate_dashboard_embed_url",
+    # AA.A.qs-triage.5.followon — failure-capture sidecar; writes
+    # `<capture_dir>/sql_trace.txt`. No Playwright coupling. Lives in
+    # helpers.py because that's where the rest of the per-test capture
+    # primitives (`_capture_path`, `_test_id_from_pytest_env`) already are.
+    "record_sql_trace",
 })
 
 _BROWSER_HELPERS_MOD = "recon_gen.common.browser.helpers"
