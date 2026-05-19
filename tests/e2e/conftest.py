@@ -190,6 +190,63 @@ def l2(cfg):  # type: ignore[no-untyped-def]: return-type annotation would force
     return _resolve_test_l2_instance()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _refresh_matviews_once_per_session(cfg, l2):  # type: ignore[no-untyped-def]: see ``l2`` comment
+    """AA.A.qs-triage.5.followon — refresh deployed-DB matviews once per
+    test session so picker tests + agreement tests always see live data.
+
+    The picker tests (``test_l1_additive_pickers.py``) read the live
+    ``<prefix>_current_daily_balances`` and ``<prefix>_todays_exceptions``
+    matviews to (a) build the Account dropdown's option universe and
+    (b) source the anchor row the test pivots on. If a prior session
+    left those matviews stale (e.g. an ``exceptions_only``-scope run
+    that the picker test then reads as the demo seed), every dropdown
+    sees ~2 accounts and the test fails on a row-survival assertion.
+
+    The chain runner's ``seed_variant`` already runs ``data refresh``
+    after ``data apply`` (per runner.py:2565), so this fixture is a
+    safety net for direct ``pytest`` invocations + post-CLI-iteration
+    flows where the operator ran ``data apply --execute`` without a
+    matching ``data refresh --execute``.
+
+    Idempotent (refresh on top of fresh matviews is a no-op cost-wise).
+    Best-effort: any failure (no DB cfg, connection refused, missing
+    matviews) is logged and the session continues — the tests will
+    report their own DB-state-derived failures.
+    """
+    if not RECON_GEN_E2E.get_or_none():
+        return
+    try:
+        from recon_gen.common.db import connect_demo_db, execute_script
+        from recon_gen.common.l2.schema import refresh_matviews_sql
+    except ImportError as exc:
+        print(f"runner: matview-refresh fixture skipped (import: {exc!r})")
+        return
+    try:
+        conn = connect_demo_db(cfg)
+    except Exception as exc:
+        print(f"runner: matview-refresh fixture skipped (connect: {exc!r})")
+        return
+    try:
+        sql = refresh_matviews_sql(
+            l2, prefix=cfg.db_table_prefix, dialect=cfg.dialect,
+        )
+        with conn.cursor() as cur:
+            execute_script(cur, sql, dialect=cfg.dialect)
+        conn.commit()
+        print(
+            f"runner: matview-refresh fixture refreshed "
+            f"{cfg.db_table_prefix}_* matviews on {cfg.dialect.name}"
+        )
+    except Exception as exc:
+        print(f"runner: matview-refresh fixture FAILED ({exc!r}) — continuing")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @pytest.fixture(scope="session")
 def inv_dashboard_id(deployment_name) -> str:
     """Z.C — single-prefix ``<deployment_name>-investigation-dashboard``
